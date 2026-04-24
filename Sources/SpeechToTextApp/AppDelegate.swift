@@ -282,16 +282,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Observer for theme changes - applies NSAppearance app-wide
-        // Note: No Task wrapper - runs synchronously on main queue to prevent race conditions
+        // Observer for theme changes - applies NSAppearance app-wide.
+        //
+        // Intentionally *not* wrapped in `Task { @MainActor ... }`:
+        //   - We pass `queue: .main`, so the callback runs on the main
+        //     queue synchronously. Task dispatch would reorder rapid
+        //     theme toggles.
+        //   - `MainActor.assumeIsolated` is the Swift 6 tool for
+        //     "compiler, trust me, I know this runs on MainActor". It's
+        //     a zero-cost runtime-checked assertion, not a dispatch,
+        //     so the synchronous semantics survive. If our precondition
+        //     is ever wrong (callback invoked off-main), it traps
+        //     immediately — exactly the failure mode we want.
         themeChangeObserver = NotificationCenter.default.addObserver(
             forName: .themeDidChange,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            let settings = self.settingsService.load()
-            NSApp.appearance = settings.ui.theme.nsAppearance
+            MainActor.assumeIsolated {
+                // `guard let self` stays inside the isolated region so
+                // all `self.*` access happens in MainActor context —
+                // otherwise a future `self.foo` call added before the
+                // isolated block would regress the concurrency check.
+                guard let self else { return }
+                // `NSApp` is non-nil by construction: this observer is
+                // registered from `applicationDidFinishLaunching` (line 69),
+                // after the system has vended `NSApp`, and torn down in
+                // `applicationWillTerminate` before `NSApp` is released. If
+                // this observer setup is ever moved earlier in the lifecycle,
+                // the `NSApp.appearance` access below needs revisiting.
+                let settings = self.settingsService.load()
+                NSApp.appearance = settings.ui.theme.nsAppearance
+            }
         }
     }
 
