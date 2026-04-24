@@ -31,6 +31,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # Need history back to the PR base so pre-commit can diff against it
+          # and only check files changed in this PR.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -42,10 +46,33 @@ jobs:
           brew install swiftlint gitleaks
           npm install -g markdownlint-cli@0.43.0
 
-      # Runs all hooks configured in .pre-commit-config.yaml for the pre-commit
-      # stage (push-stage hooks like swift-build-check do not execute here).
-      - name: Run pre-commit
+      - name: Determine diff range
+        id: range
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base_ref="origin/${{ github.base_ref }}"
+          else
+            # push / workflow_dispatch: diff the pushed range if available,
+            # otherwise fall back to the previous commit.
+            raw="${{ github.event.before }}"
+            if [[ -z "$raw" || "$raw" == "0000000000000000000000000000000000000000" ]]; then
+              base_ref="HEAD~1"
+            else
+              base_ref="$raw"
+            fi
+          fi
+          echo "base_ref=${base_ref}" >> "$GITHUB_OUTPUT"
+          echo "using diff range: ${base_ref}...HEAD"
+
+      # Only check files changed in this PR (or push range) so we're not
+      # enforcing hook compliance retroactively on the whole repository. CI
+      # pre-commit exists to catch developers who bypass the local hook with
+      # `--no-verify`, not to block PRs on pre-existing legacy files.
+      - name: Run pre-commit on changed files
         uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: --from-ref ${{ steps.range.outputs.base_ref }} --to-ref HEAD
 
   test:
     name: Build and Test
