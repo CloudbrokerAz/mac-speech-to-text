@@ -406,9 +406,12 @@ final class PendingWritesCounterTests: XCTestCase {
         let elapsed = CFAbsoluteTimeGetCurrent() - startTime
 
         // Then
-        // Should wait at least 50ms but less than 200ms
+        // Should wait at least 50ms (proves the method actually blocks
+        // on the outstanding write) but comfortably under 500ms (catches
+        // a pathological "wait forever" regression). The upper bound was
+        // 200ms, which flaked on busy CI runners — see issue #38.
         XCTAssertGreaterThan(elapsed, 0.04)
-        XCTAssertLessThan(elapsed, 0.2)
+        XCTAssertLessThan(elapsed, 0.5)
         XCTAssertTrue(counter.isEmpty)
     }
 
