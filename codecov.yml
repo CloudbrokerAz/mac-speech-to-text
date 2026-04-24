@@ -1,0 +1,65 @@
+# Codecov configuration for mac-speech-to-text
+#
+# Docs: https://docs.codecov.com/docs/codecov-yaml
+#
+# The project has a set of services that are deliberately hardware-gated
+# from CI — they need a real microphone, Accessibility TCC grant, display
+# server, or a user keychain, and the macOS-14 GitHub Actions runner has
+# none of those. These files have real tests, but those tests run only
+# on the remote-Mac pre-push hook (see
+# `.claude/references/testing-conventions.md` and the `--skip` list in
+# `.github/workflows/ci.yml`).
+#
+# Without this config, every PR that touches one of those files has its
+# `codecov/patch` check fail with "0% of diff hit", which trains
+# reviewers to ignore the signal — worse than no check. We exclude the
+# hardware-gated paths from *coverage reporting* (not from CI), so the
+# patch/project checks stay honest on the code CI can actually exercise.
+
+coverage:
+  status:
+    project:
+      default:
+        # Baseline project coverage; small threshold to tolerate noise.
+        target: auto
+        threshold: 1%
+        # Don't fail the build on small drops — informational only. Real
+        # floor-enforcement would require deciding a project-wide target
+        # first; tracked for later.
+        informational: true
+    patch:
+      default:
+        # New code should be well-tested, but hardware-gated files are
+        # excluded via `ignore` below. For everything else, require the
+        # patch to meet the current project baseline.
+        target: auto
+        threshold: 5%
+        informational: false
+
+# Paths Codecov should not factor into the coverage report.
+#
+# Keep this list in lockstep with the `--skip` list in
+# `.github/workflows/ci.yml`'s `Run unit tests` step. If a file is
+# migrated off the skip list (its tests become hardware-free), drop it
+# from here too.
+ignore:
+  # Hardware-gated service sources — no CI test can reach them.
+  - "Sources/Services/AudioCaptureService.swift"
+  - "Sources/Services/PermissionService.swift"
+  - "Sources/Services/TextInsertionService.swift"
+  - "Sources/Services/VoiceTriggerMonitoringService.swift"
+  - "Sources/Services/WakeWordService.swift"
+  # Test files themselves — coverage of tests isn't a useful signal.
+  - "Tests/**"
+  - "UITests/**"
+  # Build + tooling.
+  - "scripts/**"
+  - ".claude/**"
+  - ".gemini/**"
+  - ".github/**"
+  # Generated / vendored.
+  - "Sources/Resources/**"
+  - "Vendor/**"
+
+# Comment on PRs is handled by codecov/codecov-action in the workflow;
+# keep the default layout.
