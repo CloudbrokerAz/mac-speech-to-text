@@ -233,8 +233,18 @@ class AudioCaptureService {
             return
         }
 
-        // Get the Core Audio device ID from the AVCaptureDevice
-        // AVCaptureDevice's uniqueID for audio devices corresponds to the Core Audio device UID
+        // Get the Core Audio device ID from the AVCaptureDevice.
+        // AVCaptureDevice's uniqueID for audio devices corresponds to the
+        // Core Audio device UID, and `kAudioHardwarePropertyDeviceForUID`
+        // translates a `CFStringRef` UID into an `AudioDeviceID`.
+        //
+        // We explicitly scope every pointer we hand to `AudioValueTranslation`
+        // with nested `withUnsafeMutablePointer(to:)`. `AudioValueTranslation`
+        // holds raw pointers, which under the old `&deviceUID` / `&deviceId`
+        // inout syntax outlived their guaranteed validity window — the
+        // Swift 6 compiler warned this was "likely incorrect because
+        // 'CFString' may contain an object reference" (see issue #40). The
+        // closure form pins the storage across the Core Audio call site.
         var deviceId: AudioDeviceID = 0
         let deviceIdSize = UInt32(MemoryLayout<AudioDeviceID>.size)
         var address = AudioObjectPropertyAddress(
@@ -242,25 +252,27 @@ class AudioCaptureService {
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-
-        // Create a CFString from the device UID
         var deviceUID: CFString = selectedDevice.uniqueID as CFString
-        var translation = AudioValueTranslation(
-            mInputData: &deviceUID,
-            mInputDataSize: UInt32(MemoryLayout<CFString>.size),
-            mOutputData: &deviceId,
-            mOutputDataSize: UInt32(MemoryLayout<AudioDeviceID>.size)
-        )
-        var translationSize = UInt32(MemoryLayout<AudioValueTranslation>.size)
 
-        let status = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &address,
-            0,
-            nil,
-            &translationSize,
-            &translation
-        )
+        let status = withUnsafeMutablePointer(to: &deviceUID) { uidPtr in
+            withUnsafeMutablePointer(to: &deviceId) { idPtr in
+                var translation = AudioValueTranslation(
+                    mInputData: UnsafeMutableRawPointer(uidPtr),
+                    mInputDataSize: UInt32(MemoryLayout<CFString>.size),
+                    mOutputData: UnsafeMutableRawPointer(idPtr),
+                    mOutputDataSize: UInt32(MemoryLayout<AudioDeviceID>.size)
+                )
+                var translationSize = UInt32(MemoryLayout<AudioValueTranslation>.size)
+                return AudioObjectGetPropertyData(
+                    AudioObjectID(kAudioObjectSystemObject),
+                    &address,
+                    0,
+                    nil,
+                    &translationSize,
+                    &translation
+                )
+            }
+        }
 
         guard status == noErr, deviceId != 0 else {
             AppLogger.warning(
