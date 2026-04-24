@@ -25,10 +25,65 @@ jobs:
       - name: Run SwiftLint
         run: swiftlint lint --strict
 
+  pre-commit:
+    name: pre-commit hooks
+    runs-on: macos-14
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Need history back to the PR base so pre-commit can diff against it
+          # and only check files changed in this PR.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install hook dependencies
+        run: |
+          brew install swiftlint gitleaks
+          npm install -g markdownlint-cli@0.43.0
+
+      - name: Determine diff range
+        id: range
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base_ref="origin/${{ github.base_ref }}"
+          else
+            # push / workflow_dispatch: diff the pushed range if available.
+            raw="${{ github.event.before }}"
+            if [[ -z "$raw" || "$raw" == "0000000000000000000000000000000000000000" ]]; then
+              # Initial push of a new branch, or force-push from empty:
+              # HEAD~1 does not exist. Fall back to the repository's first
+              # commit so pre-commit sees every file in the push as "new".
+              if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+                base_ref="HEAD~1"
+              else
+                base_ref="$(git rev-list --max-parents=0 HEAD | tail -1)"
+              fi
+            else
+              base_ref="$raw"
+            fi
+          fi
+          echo "base_ref=${base_ref}" >> "$GITHUB_OUTPUT"
+          echo "using diff range: ${base_ref}...HEAD"
+
+      # Only check files changed in this PR (or push range) so we're not
+      # enforcing hook compliance retroactively on the whole repository. CI
+      # pre-commit exists to catch developers who bypass the local hook with
+      # `--no-verify`, not to block PRs on pre-existing legacy files.
+      - name: Run pre-commit on changed files
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: --from-ref ${{ steps.range.outputs.base_ref }} --to-ref HEAD
+
   test:
     name: Build and Test
     runs-on: macos-14
-    needs: lint
+    needs: [lint, pre-commit]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -66,11 +121,91 @@ jobs:
       - name: Build
         run: swift build -c release
 
-      # Note: Tests require real macOS hardware with audio/accessibility permissions
-      # Tests run via pre-push hook on macdev remote Mac instead of GH Actions
-      # See docs/UI_TESTING.md for the testing workflow
-      # - name: Run tests
-      #   run: swift test --parallel
+      # Unit tests — the GitHub Actions runner has no microphone, no
+      # Accessibility (TCC) grant, no display server, and no user keychain.
+      # Classes that exercise those APIs are skipped here and run on the
+      # remote Mac via the pre-push hook instead. The by-name skip list is
+      # temporary; it migrates to a tag filter once the Swift Testing tag
+      # scheme lands (see the testing framework EPIC).
+      #
+      # Skipped classes and why:
+      #   AudioCaptureServiceTests          AVAudioEngine.start (real mic)
+      #   PermissionServiceTests            AXIsProcessTrustedWithOptions / TCC
+      #   TextInsertionServiceTests         CGEventPost + display server
+      #   VoiceTriggerMonitoringServiceTests transitively needs real mic
+      #   WakeWordServiceTests              reads real WAV fixtures from models
+      #   GeneralSectionPersistenceTests    shared UserDefaults race under --parallel;
+      #                                     tracked for fix, runs pre-push serially.
+      - name: Run unit tests (with coverage)
+        run: |
+          swift test --parallel --enable-code-coverage \
+            --skip AudioCaptureServiceTests \
+            --skip PermissionServiceTests \
+            --skip TextInsertionServiceTests \
+            --skip VoiceTriggerMonitoringServiceTests \
+            --skip WakeWordServiceTests \
+            --skip GeneralSectionPersistenceTests
+
+      # Coverage export is a *required* part of this job — the whole point is
+      # PR-visible coverage. A missing profdata / xctest bundle / binary
+      # means something is wrong with the test-run layout, not a soft edge
+      # case to warn past. Fail the step so we don't silently ship a PR
+      # with no coverage report.
+      - name: Export coverage (lcov)
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          BIN_PATH=$(swift build --show-bin-path)
+          PROF="${BIN_PATH}/codecov/default.profdata"
+          if [[ ! -f "${PROF}" ]]; then
+            echo "::error::profdata not found at ${PROF} — test run produced no coverage"
+            exit 1
+          fi
+          TEST_BUNDLE=$(find "${BIN_PATH}" -maxdepth 1 -name '*.xctest' -type d | head -1)
+          if [[ -z "${TEST_BUNDLE}" ]]; then
+            echo "::error::no .xctest bundle found in ${BIN_PATH}"
+            exit 1
+          fi
+          TEST_BIN=$(find "${TEST_BUNDLE}/Contents/MacOS" -type f -perm -u+x | head -1)
+          if [[ -z "${TEST_BIN}" ]]; then
+            echo "::error::no test binary found in ${TEST_BUNDLE}"
+            exit 1
+          fi
+          xcrun llvm-cov export \
+            --format=lcov \
+            --instr-profile="${PROF}" \
+            --ignore-filename-regex='(\.build|Tests|UITests|Frameworks|checkouts)/' \
+            "${TEST_BIN}" > coverage.lcov
+          echo "--- coverage summary ---"
+          xcrun llvm-cov report \
+            --instr-profile="${PROF}" \
+            --ignore-filename-regex='(\.build|Tests|UITests|Frameworks|checkouts)/' \
+            "${TEST_BIN}" | tail -3
+
+      # Codecov upload is best-effort until a CODECOV_TOKEN secret is
+      # configured on the repo (tokenless uploads require a Codecov account
+      # linked to the repo, which this one doesn't have yet). When the
+      # token is added, flip `continue-on-error` to `false` — or remove it
+      # — and the upload becomes a hard gate again. Coverage visibility is
+      # still preserved via the `coverage-report` artifact uploaded below.
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() && hashFiles('coverage.lcov') != '' }}
+        uses: codecov/codecov-action@v5
+        continue-on-error: true
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.lcov
+          fail_ci_if_error: false
+          flags: unit
+          disable_search: true
+
+      - name: Upload coverage artifact
+        if: ${{ !cancelled() && hashFiles('coverage.lcov') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.lcov
+          retention-days: 7
 
   build:
     name: Build Release
