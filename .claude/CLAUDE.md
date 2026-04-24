@@ -6,6 +6,65 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Language**: Swift 6.x (compiler) with Swift 5.9 language mode (Package.swift)
 **Platform**: macOS 14+ (minimum), macOS 26+ (development)
 
+## Current initiative (last updated 2026-04-24)
+
+**Clinical Notes Mode** — extend this app into a local-first clinical documentation assistant for chiropractors. Record consultation → local LLM (MLX Swift + Gemma 3 4B-IT v1; Gemma 4 E4B migration gated on ml-explore/mlx-swift#389) → structured SOAP notes → doctor review → Cliniko API export. 100% on-device. Session-only PHI. No cloud.
+
+**Work is tracked as GitHub issues** in `CloudbrokerAz/mac-speech-to-text`. Always start a session by reading the open EPICs + any assigned issues:
+
+```bash
+gh issue list -R CloudbrokerAz/mac-speech-to-text --state open --label epic
+gh issue view <N> --comments   # for any specific issue you pick up
+```
+
+**Two parallel EPICs**:
+- **#19 — Testing + Workflow Framework** (children #20–#25). Must land first; unblocks feature work. Order: F1 → (F2, F3 parallel) → F4 → F6 → F5.
+- **#1 — Clinical Notes Mode** (children #2–#18). Rides on top of #19 outputs.
+
+### Operating rules (binding)
+
+1. **Use multiple Opus subagents liberally.** For any research/exploration spanning more than a couple of files, spawn parallel `Explore` / `general-purpose` agents. Keep the main thread for decisions and orchestration. Review-type agents (`pr-review-toolkit:code-reviewer`) run after substantive changes.
+2. **Test everything.** Every new service gets a unit test; every new SwiftUI view gets a ViewInspector crash test; ReviewScreen + SafetyDisclaimer get snapshot tests. New pure-logic/async tests use **Swift Testing** (`@Test` / `#expect`); UI + ViewInspector stay on **XCTest**. Tag with `.fast` / `.slow` / `.requiresHardware` once #23 lands. Acceptance criteria in every GH issue call out the test expectations.
+3. **Talk to the tickets.** When starting an issue, post a plan comment. When closing, post the PR link + a one-line summary. Link PRs with `Closes #N` so the EPIC checklist auto-ticks. Keep discussion in GitHub, not in chat.
+4. **Point to docs, don't duplicate.** In PRs, issue comments, and subagent prompts, reference `AGENTS.md` (and, once #25 lands, `.claude/references/*.md` — a topic-router split) instead of restating context inline.
+5. **Security.** Never echo or reuse a GitHub PAT pasted in chat — `gh auth status` already has a valid token. Cliniko API keys live in Keychain only (#22 / #7); never logged, never in UserDefaults. PHI is in-memory only, plus the HTTPS body at the moment of POST to Cliniko — nowhere else (no logs, crash reports, audit files, or external tooling).
+6. **Respect pre-commit.** `pre-commit run --all-files` must pass; SwiftLint is strict; gitleaks is on. The custom rules `observable_actor_existential_warning` and `nonisolated_unsafe_warning` stay honoured.
+7. **Don't re-litigate locked decisions** (see below) without an explicit user ask.
+
+### Locked technical decisions (2026-04-24)
+
+| Area | Decision |
+|---|---|
+| LLM runtime | MLX Swift in-process (ml-explore/mlx-swift-examples) |
+| LLM model v1 | Gemma 3 4B-IT (MLX 4-bit); swap to Gemma 4 E4B when mlx-swift#389 lands (#18) |
+| Model delivery | Bundled in the .app (DMG distribution, not App Store) |
+| Persistence | Session-only, cleared on export/quit — no on-disk PHI |
+| Cliniko | API integration in v1, mirror patterns from [CloudbrokerAz/epc-letter-generation](https://github.com/CloudbrokerAz/epc-letter-generation/tree/main/Sources/Services) |
+| Manipulations | Placeholder JSON v1 (#6); user supplies real Cliniko taxonomy later |
+| UI entry | Settings toggle + "Generate Notes" action after recording |
+| Review layout | Two-column (SOAP editor left, Manipulations + Excluded drawer right) — wireframe embedded in #13 |
+| Safety | One-time "not a diagnostic tool" disclaimer, UserDefaults ack (#12) |
+| Test frameworks | Mixed: Swift Testing (new) + XCTest (UI + ViewInspector) |
+| HTTP mocking | Hand-rolled Sendable `URLProtocolStub` (#21) — zero deps |
+| Keychain mocking | `SecureStore` protocol + `InMemorySecureStore` actor fake (#22) |
+| LLM mocking | `MockLLMProvider` fast path; `RUN_MLX_GOLDEN=1` gated goldens nightly |
+| Snapshot testing | `pointfreeco/swift-snapshot-testing` v1.17+ — scoped to ReviewScreen + Disclaimer only |
+| Coverage | slather → `codecov-action@v5` on PR (#20) |
+| CI gains (#20) | `swift test --parallel -enableCodeCoverage` + pre-commit/action; UI + hardware-dependent tests skipped in CI, run pre-push on remote Mac |
+
+### Watch-list / blockers
+
+- **ml-explore/mlx-swift#389** — Gemma 4 E4B architecture support. Migration tracked in #18.
+- **Real Cliniko manipulations taxonomy** — user-supplied; placeholder in #6 for now.
+- **Disclaimer copy legal review** — draft in #12; must be reviewed before ship.
+
+### Reference projects
+
+- FluidAudio SDK: https://github.com/FluidInference/FluidAudio
+- Cliniko API: https://docs.api.cliniko.com/
+- Cliniko integration reference: https://github.com/CloudbrokerAz/epc-letter-generation/tree/main/Sources/Services
+- avdlee/swiftui-agent-skill (Topic Router pattern source): https://github.com/avdlee/swiftui-agent-skill
+
 ## Primary Reference
 
 Please see the root `./AGENTS.md` in this same directory for the main project documentation and guidance.
