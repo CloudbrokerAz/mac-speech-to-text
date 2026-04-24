@@ -142,8 +142,15 @@ class PermissionService: PermissionChecker {
     /// Flag to signal polling should stop
     private var shouldStopPolling: Bool = false
 
-    /// App activation observer for immediate permission detection
+    /// App activation observer for immediate permission detection.
+    /// The nonisolated copy is the one `deinit` reads — `deinit` runs
+    /// nonisolated and Swift 6 strict-concurrency warns when it accesses
+    /// a main-actor-isolated `NSObjectProtocol` property (which is not
+    /// `Sendable`). Keep `activationObserver` as the main-actor source
+    /// of truth and mirror every write into `deinitActivationObserver`
+    /// for cleanup. Pattern matches `VoiceTriggerMonitoringService.swift`.
     private var activationObserver: NSObjectProtocol?
+    private nonisolated(unsafe) var deinitActivationObserver: NSObjectProtocol?
 
     /// Callback for when permission is granted during polling with activation observer
     private var onPermissionGrantedCallback: (@MainActor @Sendable () -> Void)?
@@ -164,10 +171,13 @@ class PermissionService: PermissionChecker {
     }
 
     deinit {
-        // Clean up NotificationCenter observer to prevent memory leak
-        // Note: NotificationCenter.removeObserver is thread-safe, so we can call it from deinit
-        // even though the class is @MainActor isolated
-        if let observer = activationObserver {
+        // Clean up NotificationCenter observer to prevent memory leak.
+        // `NotificationCenter.removeObserver` is thread-safe, so calling
+        // it from a nonisolated `deinit` is fine — but reading the
+        // `@MainActor`-isolated `activationObserver` property from here
+        // isn't (NSObjectProtocol is not Sendable). Read from the
+        // nonisolated mirror instead.
+        if let observer = deinitActivationObserver {
             NotificationCenter.default.removeObserver(observer)
         }
     }
@@ -183,6 +193,7 @@ class PermissionService: PermissionChecker {
         if let observer = activationObserver {
             NotificationCenter.default.removeObserver(observer)
             activationObserver = nil
+            deinitActivationObserver = nil
         }
         onPermissionGrantedCallback = nil
     }
@@ -551,10 +562,11 @@ class PermissionService: PermissionChecker {
         if let existing = activationObserver {
             NotificationCenter.default.removeObserver(existing)
             activationObserver = nil
+            deinitActivationObserver = nil
         }
 
         // Create new observer
-        activationObserver = NotificationCenter.default.addObserver(
+        let observer = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: nil,
             queue: .main
@@ -583,6 +595,8 @@ class PermissionService: PermissionChecker {
                 }
             }
         }
+        activationObserver = observer
+        deinitActivationObserver = observer
     }
 
     // MARK: - Enhanced Permission Request with Validation
