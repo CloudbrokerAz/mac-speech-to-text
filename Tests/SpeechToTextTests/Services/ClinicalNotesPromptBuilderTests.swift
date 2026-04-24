@@ -278,7 +278,7 @@ struct ClinicalNotesPromptBuilderTests {
         #expect(!rendered.contains("424242"), "PHI-safe error must not quote the offending value")
     }
 
-    @Test("validate returns confidenceOutOfRange when confidence > 1")
+    @Test("validate returns confidenceOutOfRange with a structural keyPath when confidence > 1")
     func validate_confidenceAboveOne() {
         let json = #"""
         {
@@ -292,11 +292,11 @@ struct ClinicalNotesPromptBuilderTests {
         """#
         #expect(
             Self.builder().validate(json: json)
-            == .failure(.confidenceOutOfRange(name: "Activator", value: 1.25))
+            == .failure(.confidenceOutOfRange(keyPath: "manipulations.0.confidence", value: 1.25))
         )
     }
 
-    @Test("validate returns confidenceOutOfRange when confidence < 0")
+    @Test("validate returns confidenceOutOfRange with a structural keyPath when confidence < 0")
     func validate_confidenceBelowZero() {
         let json = #"""
         {
@@ -310,7 +310,59 @@ struct ClinicalNotesPromptBuilderTests {
         """#
         #expect(
             Self.builder().validate(json: json)
-            == .failure(.confidenceOutOfRange(name: "Gonstead", value: -0.1))
+            == .failure(.confidenceOutOfRange(keyPath: "manipulations.0.confidence", value: -0.1))
+        )
+    }
+
+    @Test("confidenceOutOfRange does not carry the LLM-returned name (prompt-injection / hallucination PHI guard)")
+    func validate_confidenceOutOfRange_doesNotCarryName() {
+        // If the LLM hallucinates a "name" that contains transcript-
+        // derived text (patient name, DOB, quoted symptom, …), the
+        // resulting error must not carry it. This test embeds a
+        // PHI-looking token in the manipulation name and asserts it
+        // never appears in the rendered error.
+        let phiLooking = "Alice Smith DOB 1983-04-12"
+        let json = """
+        {
+          "subjective": "",
+          "objective": "",
+          "assessment": "",
+          "plan": "",
+          "manipulations": [{ "name": "\(phiLooking)", "confidence": 1.9 }],
+          "excluded_content": []
+        }
+        """
+        let result = Self.builder().validate(json: json)
+        #expect(
+            result == .failure(.confidenceOutOfRange(keyPath: "manipulations.0.confidence", value: 1.9))
+        )
+        let rendered = String(describing: result)
+        #expect(!rendered.contains("Alice"), "PHI-safe error must not quote the LLM-returned name")
+        #expect(!rendered.contains("1983"), "PHI-safe error must not quote the LLM-returned name")
+    }
+
+    @Test("confidenceOutOfRange keyPath reports the first offender index for a later manipulation entry")
+    func validate_confidenceOutOfRange_reportsCorrectIndex() {
+        // Pins that `offender.offset` is the array index of the first
+        // offending entry, so downstream diagnostics can map back to
+        // exactly which manipulation misbehaved.
+        let json = #"""
+        {
+          "subjective": "",
+          "objective": "",
+          "assessment": "",
+          "plan": "",
+          "manipulations": [
+            { "name": "Activator", "confidence": 0.5 },
+            { "name": "Gonstead",  "confidence": 0.9 },
+            { "name": "Toggle Recoil", "confidence": 42.0 }
+          ],
+          "excluded_content": []
+        }
+        """#
+        #expect(
+            Self.builder().validate(json: json)
+            == .failure(.confidenceOutOfRange(keyPath: "manipulations.2.confidence", value: 42.0))
         )
     }
 

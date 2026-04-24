@@ -100,12 +100,12 @@ struct ClinicalNotesPromptBuilder: Sendable {
                 RawLLMDraft.self,
                 from: Data(object.utf8)
             )
-            if let offender = draft.manipulations.first(where: {
-                $0.confidence < 0 || $0.confidence > 1
+            if let offender = draft.manipulations.enumerated().first(where: { _, manipulation in
+                manipulation.confidence < 0 || manipulation.confidence > 1
             }) {
                 return .failure(.confidenceOutOfRange(
-                    name: offender.name,
-                    value: offender.confidence
+                    keyPath: "manipulations.\(offender.offset).confidence",
+                    value: offender.element.confidence
                 ))
             }
             return .success(draft)
@@ -241,10 +241,9 @@ private struct BraceScanner {
 /// Errors surfaced by `ClinicalNotesPromptBuilder.validate(json:)`.
 ///
 /// Every case is structural only. No PHI (transcript content, patient
-/// data, SOAP body text, or decoded values) is carried in any payload —
-/// payloads are schema key names, integer array indices, and the
-/// technique name returned by the model (which is drawn from the static
-/// taxonomy, not patient data).
+/// data, SOAP body text, LLM-returned names, or decoded values derived
+/// from patient input) is carried in any payload — payloads are schema
+/// key names, integer array indices, and numeric scores.
 enum SchemaError: Error, Equatable {
     /// Input was empty or whitespace-only.
     case emptyInput
@@ -255,9 +254,12 @@ enum SchemaError: Error, Equatable {
     /// never the offending value. See `DecodingFailureKind` for detail.
     case decodingFailed(DecodingFailureKind)
     /// A `manipulations[]` entry carried a `confidence` outside the
-    /// locked `[0, 1]` range. `name` is the technique name returned by
-    /// the model (one of the taxonomy entries); it is not patient data.
-    case confidenceOutOfRange(name: String, value: Double)
+    /// locked `[0, 1]` range. `keyPath` is the structural JSON path
+    /// (e.g. `"manipulations.0.confidence"`); `value` is the numeric
+    /// score. Neither is PHI — deliberately we do *not* carry the
+    /// model-returned `name`, which could contain hallucinated or
+    /// prompt-injected transcript content.
+    case confidenceOutOfRange(keyPath: String, value: Double)
 }
 
 /// PHI-safe structural description of a `DecodingError`.
