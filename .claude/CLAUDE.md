@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 🚨 Read this first — every session
+
+**Before responding to the user's first message in any new session, you MUST:**
+
+1. **Read `AGENTS.md` at the project root** — `/Users/aarone/Documents/repos/mac-speech-to-text/AGENTS.md` on the host, `/workspace/AGENTS.md` in the devcontainer. It holds the Correctness Checklist (always/never rules), the Topic Router for `.claude/references/*.md`, and the tech-stack + commands reference. The `@../AGENTS.md` import below is defence-in-depth; if it resolves, great — **either way, read the file explicitly with the `Read` tool before any substantive work.**
+2. **Read any `.claude/references/<topic>.md` files relevant to the task** — concurrency, testing conventions, PHI, Cliniko, MLX, menu-bar — per the Topic Router in AGENTS.md. Do not load all of them; load only what the task needs.
+3. **Pick up the GitHub issue(s) you've been asked to work on** with `gh issue view <N> -R CloudbrokerAz/mac-speech-to-text`.
+
+If the user asks "did you read AGENTS.md?" at any point in a session, the correct answer is "yes, I read it at session start" — not "let me check now." This checklist is the contract that makes that true.
+
+@../AGENTS.md
+
 **Project Type**: macOS native application for local speech-to-text capture
 **Language**: Swift 6.x (compiler) with Swift 5.9 language mode (Package.swift)
 **Platform**: macOS 14+ (minimum), macOS 26+ (development)
@@ -23,7 +35,7 @@ gh issue view <N> --comments   # for any specific issue you pick up
 
 ### Operating rules (binding)
 
-1. **Use multiple Opus subagents liberally.** For any research/exploration spanning more than a couple of files, spawn parallel `Explore` / `general-purpose` agents. Keep the main thread for decisions and orchestration. Review-type agents (`pr-review-toolkit:code-reviewer`) run after substantive changes.
+1. **Use Opus subagents liberally — and ALWAYS pass `model: "opus"` explicitly.** For any research/exploration spanning more than a couple of files, spawn parallel `Explore` / `general-purpose` agents with `model: "opus"` on every `Agent` tool call. Do not rely on the agent-definition default — several agents default to Sonnet and will silently downgrade if you omit the override. Review agents (`pr-review-toolkit:code-reviewer`, `pr-review-toolkit:comment-analyzer`, `pr-review-toolkit:silent-failure-hunter`, `pr-review-toolkit:type-design-analyzer`) run after substantive changes and **also** take `model: "opus"`. Keep the main thread for decisions and orchestration.
 2. **Test everything.** Every new service gets a unit test; every new SwiftUI view gets a ViewInspector crash test; ReviewScreen + SafetyDisclaimer get snapshot tests. New pure-logic/async tests use **Swift Testing** (`@Test` / `#expect`) — see `Tests/SpeechToTextTests/Utilities/SwiftTestingExemplarTests.swift` for the canonical idiom. UI + ViewInspector stay on **XCTest**. Tag Swift Testing tests with `.fast` / `.slow` / `.requiresHardware` from `Tests/SpeechToTextTests/Utilities/TestTags.swift`; CI filters via `--skip-tag requiresHardware` where applicable. Acceptance criteria in every GH issue call out the test expectations.
 3. **Talk to the tickets.** Three comment checkpoints per issue: (a) starting — plan + branch name, (b) PR opened — link + "awaiting CI", (c) **merged** — PR link + merge commit SHA + one-line summary. Link PRs with `Closes #N` so GitHub auto-closes. Also post an "unblocked by" comment on any downstream issue when its blocker merges. **Tick EPIC task-list checkboxes manually** when the child merges — GitHub only auto-ticks entries formatted as a bare `- [ ] #N`, which our EPICs usually aren't. **Always verify the post-merge main-branch workflow run** (`gh run list --branch main --limit 3`) before declaring a merge-batch done — the PR's CI and main's CI are separate runs. Keep discussion in GitHub, not in chat.
 4. **Point to docs, don't duplicate.** In PRs, issue comments, and subagent prompts, reference `AGENTS.md` (and, once #25 lands, `.claude/references/*.md` — a topic-router split) instead of restating context inline.
@@ -67,9 +79,7 @@ gh issue view <N> --comments   # for any specific issue you pick up
 
 ## Primary Reference
 
-Please see the root `./AGENTS.md` in this same directory for the main project documentation and guidance.
-
-@/workspace/AGENTS.md
+The root `AGENTS.md` (at the project root, one level up from this file) is the primary project documentation. The session-start checklist at the top of this file requires you to read it before doing any work — don't rely solely on the `@` import, as imports can silently fail when paths don't resolve (which is exactly what bit us when this file previously imported `@/workspace/AGENTS.md` from the host).
 
 ## Additional Component-Specific Guidance
 
@@ -77,10 +87,22 @@ For detailed module-specific implementation guides, also check for AGENTS.md fil
 
 These component-specific AGENTS.md files contain targeted guidance for working with those particular areas of the codebase.
 
-## Important: Use Subagents Liberally
+## Important: Use Subagents Liberally (and always Opus)
 
 When performing any research, concurrent subagents can be used for performance and isolation.
 Use parallel tool calls and tasks where possible.
+
+**Mandatory:** every `Agent` tool call must pass `model: "opus"`. Several subagent definitions default to Sonnet and will silently downgrade if you omit the override. This applies to `Explore`, `general-purpose`, and every `pr-review-toolkit:*` reviewer.
+
+## Code review pipeline (three layers)
+
+For every non-trivial PR, exercise all three:
+
+1. **Pre-PR (local):** spawn a `pr-review-toolkit:code-reviewer` subagent with `model: "opus"` over the diff before pushing. For PHI / concurrency / HTTP / Keychain work, also spawn `pr-review-toolkit:silent-failure-hunter` in parallel (and `pr-review-toolkit:type-design-analyzer` if new types are introduced). Apply blockers before pushing.
+2. **Automated (on PR open):** **Gemini Code Assist** runs automatically via the GitHub App, driven by `.gemini/config.yaml` + `.gemini/styleguide.md` at the repo root. Address its inline comments as peer review. Re-trigger with a `/gemini review` comment if the PR materially changed. Gemini Code Assist docs: https://developers.google.com/gemini-code-assist/docs/review-github-code
+3. **On-demand deep dive:** invoke the `/code-review` slash command (the `code-review:code-review` skill) for large, multi-subsystem, or comment-heavy PRs. It operates on the PR surface (including review comments) rather than the local diff.
+
+"Non-trivial" = any diff touching PHI, concurrency, HTTP, Keychain, `@Observable`, actors, or >~30 lines across Sources/. Pure test additions and doc-only changes can skip layer 1.
 
 ## Quick Reference: Project Structure
 
