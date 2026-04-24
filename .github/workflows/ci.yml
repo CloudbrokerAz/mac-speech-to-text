@@ -25,10 +25,32 @@ jobs:
       - name: Run SwiftLint
         run: swiftlint lint --strict
 
+  pre-commit:
+    name: pre-commit hooks
+    runs-on: macos-14
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install hook dependencies
+        run: |
+          brew install swiftlint gitleaks
+          npm install -g markdownlint-cli@0.43.0
+
+      # Runs all hooks configured in .pre-commit-config.yaml for the pre-commit
+      # stage (push-stage hooks like swift-build-check do not execute here).
+      - name: Run pre-commit
+        uses: pre-commit/action@v3.0.1
+
   test:
     name: Build and Test
     runs-on: macos-14
-    needs: lint
+    needs: [lint, pre-commit]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -66,11 +88,75 @@ jobs:
       - name: Build
         run: swift build -c release
 
-      # Note: Tests require real macOS hardware with audio/accessibility permissions
-      # Tests run via pre-push hook on macdev remote Mac instead of GH Actions
-      # See docs/UI_TESTING.md for the testing workflow
-      # - name: Run tests
-      #   run: swift test --parallel
+      # Unit tests — the GitHub Actions runner has no microphone, no
+      # Accessibility (TCC) grant, no display server, and no user keychain.
+      # Classes that exercise those APIs are skipped here and run on the
+      # remote Mac via the pre-push hook instead. Replace the --skip list
+      # with `--skip-tag requiresHardware` once #23 (Swift Testing tag
+      # scheme) lands.
+      #
+      # Skipped classes and why:
+      #   AudioCaptureServiceTests          AVAudioEngine.start (real mic)
+      #   PermissionServiceTests            AXIsProcessTrustedWithOptions / TCC
+      #   TextInsertionServiceTests         CGEventPost + display server
+      #   VoiceTriggerMonitoringServiceTests transitively needs real mic
+      #   WakeWordServiceTests              reads real WAV fixtures from models
+      - name: Run unit tests (with coverage)
+        run: |
+          swift test --parallel --enable-code-coverage \
+            --skip AudioCaptureServiceTests \
+            --skip PermissionServiceTests \
+            --skip TextInsertionServiceTests \
+            --skip VoiceTriggerMonitoringServiceTests \
+            --skip WakeWordServiceTests
+
+      - name: Export coverage (lcov)
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          BIN_PATH=$(swift build --show-bin-path)
+          PROF="${BIN_PATH}/codecov/default.profdata"
+          if [[ ! -f "${PROF}" ]]; then
+            echo "::warning::profdata not found at ${PROF} — skipping coverage export"
+            exit 0
+          fi
+          TEST_BUNDLE=$(find "${BIN_PATH}" -maxdepth 1 -name '*.xctest' -type d | head -1)
+          if [[ -z "${TEST_BUNDLE}" ]]; then
+            echo "::warning::no .xctest bundle found in ${BIN_PATH}"
+            exit 0
+          fi
+          TEST_BIN=$(find "${TEST_BUNDLE}/Contents/MacOS" -type f -perm -u+x | head -1)
+          if [[ -z "${TEST_BIN}" ]]; then
+            echo "::warning::no test binary found in ${TEST_BUNDLE}"
+            exit 0
+          fi
+          xcrun llvm-cov export \
+            --format=lcov \
+            --instr-profile="${PROF}" \
+            --ignore-filename-regex='(\.build|Tests|UITests|Frameworks|checkouts)/' \
+            "${TEST_BIN}" > coverage.lcov
+          echo "--- coverage summary ---"
+          xcrun llvm-cov report \
+            --instr-profile="${PROF}" \
+            --ignore-filename-regex='(\.build|Tests|UITests|Frameworks|checkouts)/' \
+            "${TEST_BIN}" | tail -3 || true
+
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() && hashFiles('coverage.lcov') != '' }}
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.lcov
+          fail_ci_if_error: false
+          flags: unit
+          disable_search: true
+
+      - name: Upload coverage artifact
+        if: ${{ !cancelled() && hashFiles('coverage.lcov') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.lcov
+          retention-days: 7
 
   build:
     name: Build Release
