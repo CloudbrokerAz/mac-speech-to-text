@@ -10,7 +10,7 @@ import Foundation
 /// Path convention: use forward-slash segments relative to `Fixtures/`,
 /// e.g. `cliniko/responses/users_me.json`.
 enum HTTPStubFixture {
-    enum FixtureError: Swift.Error, CustomStringConvertible {
+    enum FixtureError: Swift.Error, CustomStringConvertible, Equatable, Sendable {
         case notFound(path: String)
         case readFailed(path: String, underlying: Swift.Error)
 
@@ -22,10 +22,31 @@ enum HTTPStubFixture {
                 return "HTTPStubFixture: read failed for 'Fixtures/\(path)': \(underlying)"
             }
         }
+
+        // Ignore `underlying` in equality so `XCTAssertEqual`-style
+        // assertions work across Foundation's various `NSError` instances
+        // that represent the same failure.
+        static func == (lhs: FixtureError, rhs: FixtureError) -> Bool {
+            switch (lhs, rhs) {
+            case let (.notFound(l), .notFound(r)):
+                return l == r
+            case let (.readFailed(l, _), .readFailed(r, _)):
+                return l == r
+            default:
+                return false
+            }
+        }
     }
 
     /// Load a fixture's raw bytes.
     static func load(_ path: String) throws -> Data {
+        // Reject ambiguous paths up-front. Trailing "/" otherwise resolves
+        // to the directory itself, which Bundle happily returns a URL for
+        // and `Data(contentsOf:)` then fails on with a confusing
+        // "Is a directory" error. Empty paths have no filename to match.
+        guard !path.isEmpty, !path.hasSuffix("/") else {
+            throw FixtureError.notFound(path: path)
+        }
         let components = path.split(separator: "/").map(String.init)
         guard let filename = components.last, !filename.isEmpty else {
             throw FixtureError.notFound(path: path)

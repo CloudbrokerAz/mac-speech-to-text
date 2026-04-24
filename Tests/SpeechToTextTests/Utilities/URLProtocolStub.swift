@@ -7,8 +7,9 @@ import Foundation
 ///
 /// ```swift
 /// let config = URLProtocolStub.install { request in
+///     guard let url = request.url else { throw URLError(.badURL) }
 ///     let response = HTTPURLResponse(
-///         url: request.url!,
+///         url: url,
 ///         statusCode: 200,
 ///         httpVersion: "HTTP/1.1",
 ///         headerFields: ["Content-Type": "application/json"]
@@ -36,8 +37,8 @@ final class URLProtocolStub: URLProtocol, @unchecked Sendable {
     /// that session will be intercepted until `reset()` is called.
     static func install(_ responder: @escaping Responder) -> URLSessionConfiguration {
         lock.lock()
+        defer { lock.unlock() }
         currentResponder = responder
-        lock.unlock()
 
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [URLProtocolStub.self] + (config.protocolClasses ?? [])
@@ -47,8 +48,8 @@ final class URLProtocolStub: URLProtocol, @unchecked Sendable {
     /// Clear the current responder. Call from `tearDown` so tests don't leak state.
     static func reset() {
         lock.lock()
+        defer { lock.unlock() }
         currentResponder = nil
-        lock.unlock()
     }
 
     // MARK: - URLProtocol overrides
