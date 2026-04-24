@@ -236,7 +236,7 @@ class AudioCaptureService {
         // Get the Core Audio device ID from the AVCaptureDevice
         // AVCaptureDevice's uniqueID for audio devices corresponds to the Core Audio device UID
         var deviceId: AudioDeviceID = 0
-        var deviceIdSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let deviceIdSize = UInt32(MemoryLayout<AudioDeviceID>.size)
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDeviceForUID,
             mScope: kAudioObjectPropertyScopeGlobal,
