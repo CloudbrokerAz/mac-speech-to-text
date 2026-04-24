@@ -53,11 +53,17 @@ jobs:
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             base_ref="origin/${{ github.base_ref }}"
           else
-            # push / workflow_dispatch: diff the pushed range if available,
-            # otherwise fall back to the previous commit.
+            # push / workflow_dispatch: diff the pushed range if available.
             raw="${{ github.event.before }}"
             if [[ -z "$raw" || "$raw" == "0000000000000000000000000000000000000000" ]]; then
-              base_ref="HEAD~1"
+              # Initial push of a new branch, or force-push from empty:
+              # HEAD~1 does not exist. Fall back to the repository's first
+              # commit so pre-commit sees every file in the push as "new".
+              if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+                base_ref="HEAD~1"
+              else
+                base_ref="$(git rev-list --max-parents=0 HEAD | tail -1)"
+              fi
             else
               base_ref="$raw"
             fi
@@ -118,9 +124,9 @@ jobs:
       # Unit tests — the GitHub Actions runner has no microphone, no
       # Accessibility (TCC) grant, no display server, and no user keychain.
       # Classes that exercise those APIs are skipped here and run on the
-      # remote Mac via the pre-push hook instead. Replace the --skip list
-      # with `--skip-tag requiresHardware` once #23 (Swift Testing tag
-      # scheme) lands.
+      # remote Mac via the pre-push hook instead. The by-name skip list is
+      # temporary; it migrates to a tag filter once the Swift Testing tag
+      # scheme lands (see the testing framework EPIC).
       #
       # Skipped classes and why:
       #   AudioCaptureServiceTests          AVAudioEngine.start (real mic)
@@ -137,6 +143,11 @@ jobs:
             --skip VoiceTriggerMonitoringServiceTests \
             --skip WakeWordServiceTests
 
+      # Coverage export is a *required* part of this job — the whole point is
+      # PR-visible coverage. A missing profdata / xctest bundle / binary
+      # means something is wrong with the test-run layout, not a soft edge
+      # case to warn past. Fail the step so we don't silently ship a PR
+      # with no coverage report.
       - name: Export coverage (lcov)
         if: ${{ !cancelled() }}
         run: |
@@ -144,18 +155,18 @@ jobs:
           BIN_PATH=$(swift build --show-bin-path)
           PROF="${BIN_PATH}/codecov/default.profdata"
           if [[ ! -f "${PROF}" ]]; then
-            echo "::warning::profdata not found at ${PROF} — skipping coverage export"
-            exit 0
+            echo "::error::profdata not found at ${PROF} — test run produced no coverage"
+            exit 1
           fi
           TEST_BUNDLE=$(find "${BIN_PATH}" -maxdepth 1 -name '*.xctest' -type d | head -1)
           if [[ -z "${TEST_BUNDLE}" ]]; then
-            echo "::warning::no .xctest bundle found in ${BIN_PATH}"
-            exit 0
+            echo "::error::no .xctest bundle found in ${BIN_PATH}"
+            exit 1
           fi
           TEST_BIN=$(find "${TEST_BUNDLE}/Contents/MacOS" -type f -perm -u+x | head -1)
           if [[ -z "${TEST_BIN}" ]]; then
-            echo "::warning::no test binary found in ${TEST_BUNDLE}"
-            exit 0
+            echo "::error::no test binary found in ${TEST_BUNDLE}"
+            exit 1
           fi
           xcrun llvm-cov export \
             --format=lcov \
@@ -166,14 +177,16 @@ jobs:
           xcrun llvm-cov report \
             --instr-profile="${PROF}" \
             --ignore-filename-regex='(\.build|Tests|UITests|Frameworks|checkouts)/' \
-            "${TEST_BIN}" | tail -3 || true
+            "${TEST_BIN}" | tail -3
 
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() && hashFiles('coverage.lcov') != '' }}
         uses: codecov/codecov-action@v5
         with:
           files: coverage.lcov
-          fail_ci_if_error: false
+          # The job's sole purpose on PRs is coverage visibility. If Codecov
+          # upload fails, we want to know — not merge a PR with a hidden gap.
+          fail_ci_if_error: true
           flags: unit
           disable_search: true
 
