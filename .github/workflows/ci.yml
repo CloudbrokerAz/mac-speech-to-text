@@ -17,7 +17,7 @@ jobs:
     runs-on: macos-14
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install SwiftLint
         run: brew install swiftlint
@@ -30,14 +30,14 @@ jobs:
     runs-on: macos-14
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # Need history back to the PR base so pre-commit can diff against it
           # and only check files changed in this PR.
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -86,7 +86,7 @@ jobs:
     needs: [lint, pre-commit]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Select Xcode version
         run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
@@ -97,7 +97,7 @@ jobs:
           swift --version
 
       - name: Cache Swift Package Manager dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             .build
@@ -107,7 +107,7 @@ jobs:
             spm-${{ runner.os }}-
 
       - name: Cache sherpa-onnx xcframework
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: Frameworks/sherpa-onnx.xcframework
           key: sherpa-onnx-v1.12.20-${{ runner.os }}
@@ -219,7 +219,7 @@ jobs:
 
       - name: Upload coverage artifact
         if: ${{ !cancelled() && hashFiles('coverage.lcov') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: coverage-report
           path: coverage.lcov
@@ -260,13 +260,13 @@ jobs:
     needs: test
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Select Xcode version
         run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
 
       - name: Cache Swift Package Manager dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             .build
@@ -276,7 +276,7 @@ jobs:
             spm-${{ runner.os }}-
 
       - name: Cache sherpa-onnx xcframework
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: Frameworks/sherpa-onnx.xcframework
           key: sherpa-onnx-v1.12.20-${{ runner.os }}
@@ -292,7 +292,7 @@ jobs:
           swift build -c release 2>&1 | tee build.log
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: release-build
           path: .build/release/
