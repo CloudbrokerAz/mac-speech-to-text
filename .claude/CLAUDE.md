@@ -288,7 +288,7 @@ For CI or when developing on non-macOS:
 
 ### Concurrency Safety Patterns
 
-**CRITICAL**: Review `docs/CONCURRENCY_PATTERNS.md` before writing concurrency code.
+**CRITICAL**: Review [`.claude/references/concurrency.md`](references/concurrency.md) before writing concurrency code. The legacy `docs/CONCURRENCY_PATTERNS.md` now redirects there.
 
 #### 1. @Observable + Actor Existential (EXC_BAD_ACCESS)
 ```swift
