@@ -86,10 +86,71 @@ final class InMemorySecureStoreTests: XCTestCase {
         ]
         let store = InMemorySecureStore(initial: initial)
 
-        let keys = await store.keys()
-        XCTAssertEqual(keys, ["alpha", "bravo"])
-
+        // Assert via the public `get` API (not the `keys()` helper) so a
+        // future divergence between internal state and the public contract
+        // is caught.
         let alpha = try await store.get(forKey: "alpha")
         XCTAssertEqual(alpha, Data("A".utf8))
+
+        let bravo = try await store.get(forKey: "bravo")
+        XCTAssertEqual(bravo, Data("B".utf8))
+
+        let missing = try await store.get(forKey: "charlie")
+        XCTAssertNil(missing)
+    }
+
+    // MARK: - Byte-transparency
+
+    func test_roundTrip_preservesBinaryContent() async throws {
+        // Null bytes + non-UTF-8 bytes. Catches any future refactor that
+        // silently routes through `String` and corrupts arbitrary-byte secrets.
+        let store = InMemorySecureStore()
+        let bytes: [UInt8] = [0x00, 0xFF, 0xFE, 0x00, 0xC3, 0x28, 0x00]
+        let expected = Data(bytes)
+
+        try await store.set(expected, forKey: "binary-blob")
+        let actual = try await store.get(forKey: "binary-blob")
+
+        XCTAssertEqual(actual, expected)
+        XCTAssertEqual(actual?.count, expected.count)
+    }
+
+    // MARK: - Bulk delete edge
+
+    func test_deleteAll_onEmptyStore_isNoOp() async throws {
+        let store = InMemorySecureStore()
+        try await store.deleteAll()
+        let count = await store.count()
+        XCTAssertEqual(count, 0)
+    }
+
+    // MARK: - Concurrency contract
+
+    func test_concurrent_setsAndGets_doNotCorruptState() async throws {
+        // Fires N concurrent writes and reads through the actor to lock in
+        // the serialisation contract the type advertises. If the actor is
+        // ever refactored to a class with a data-race bug, this test should
+        // start failing under ThreadSanitizer.
+        let store = InMemorySecureStore()
+        let count = 128
+
+        await withTaskGroup(of: Void.self) { group in
+            for i in 0..<count {
+                group.addTask {
+                    let key = "key-\(i)"
+                    let value = Data("value-\(i)".utf8)
+                    try? await store.set(value, forKey: key)
+                    _ = try? await store.get(forKey: key)
+                }
+            }
+        }
+
+        let finalCount = await store.count()
+        XCTAssertEqual(finalCount, count)
+
+        for i in 0..<count {
+            let value = try await store.get(forKey: "key-\(i)")
+            XCTAssertEqual(value, Data("value-\(i)".utf8), "key-\(i) value mismatch")
+        }
     }
 }
