@@ -1,0 +1,163 @@
+import Foundation
+import os.log
+import Security
+
+/// Real Keychain-backed implementation of `SecureStore`. Uses
+/// `kSecClassGenericPassword` scoped by a service identifier that namespaces
+/// every item belonging to this store (e.g. `"com.speechtotext.cliniko"`).
+///
+/// Accessibility is pinned to
+/// `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` to prevent secrets from
+/// syncing via iCloud Keychain — important for credentials tied to a specific
+/// practitioner's workstation.
+///
+/// Item values are never logged. Error-path logs include the service and key
+/// name but never the value.
+public actor KeychainSecureStore: SecureStore {
+    public enum Failure: Swift.Error, CustomStringConvertible, Equatable, Sendable {
+        /// The keychain returned an unexpected OSStatus for an operation.
+        case osStatus(OSStatus, Operation)
+        /// `SecItemCopyMatching` succeeded but returned a value that was not
+        /// `Data`. Indicates keychain corruption or a cross-class match and
+        /// MUST NOT be silently mapped to "missing".
+        case unexpectedItemType(Operation)
+
+        public enum Operation: String, Sendable {
+            case set, get, delete, deleteAll
+        }
+
+        public var description: String {
+            switch self {
+            case let .osStatus(status, op):
+                return "KeychainSecureStore: \(op.rawValue) failed (OSStatus \(status))"
+            case let .unexpectedItemType(op):
+                return "KeychainSecureStore: \(op.rawValue) returned a non-Data item"
+            }
+        }
+    }
+
+    private let service: String
+    private let logger = Logger(subsystem: "com.speechtotext", category: "KeychainSecureStore")
+
+    public init(service: String) {
+        self.service = service
+    }
+
+    public func set(_ data: Data, forKey key: String) async throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key
+        ]
+        // Include accessibility in the update payload too. If an item already
+        // exists with a looser policy (e.g. created by an older build before
+        // the ThisDeviceOnly guard was introduced), `SecItemUpdate` otherwise
+        // leaves `kSecAttrAccessible` unchanged and silently preserves the
+        // looser policy — defeating the iCloud-sync guard.
+        let attributesToUpdate: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        ]
+        let updateStatus = SecItemUpdate(query as CFDictionary, attributesToUpdate as CFDictionary)
+
+        switch updateStatus {
+        case errSecSuccess:
+            return
+        case errSecItemNotFound:
+            try addItem(key: key, data: data, query: query, retryOnDuplicate: true)
+        default:
+            logger.error("set failed (update) service=\(self.service, privacy: .public) key=\(key, privacy: .public) status=\(updateStatus)")
+            throw Failure.osStatus(updateStatus, .set)
+        }
+    }
+
+    /// `SecItemAdd` with a one-shot retry when another process races us
+    /// between our `SecItemUpdate` miss and `SecItemAdd`. The alternative
+    /// (`errSecDuplicateItem` bubbling to the caller) is a flake that would
+    /// rarely fire but ship to users.
+    private func addItem(
+        key: String,
+        data: Data,
+        query: [String: Any],
+        retryOnDuplicate: Bool
+    ) throws {
+        var addQuery = query
+        addQuery[kSecValueData as String] = data
+        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+
+        switch addStatus {
+        case errSecSuccess:
+            return
+        case errSecDuplicateItem where retryOnDuplicate:
+            let updateStatus = SecItemUpdate(
+                query as CFDictionary,
+                [
+                    kSecValueData as String: data,
+                    kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+                ] as CFDictionary
+            )
+            if updateStatus != errSecSuccess {
+                logger.error("set failed (retry-update) service=\(self.service, privacy: .public) key=\(key, privacy: .public) status=\(updateStatus)")
+                throw Failure.osStatus(updateStatus, .set)
+            }
+        default:
+            logger.error("set failed (add) service=\(self.service, privacy: .public) key=\(key, privacy: .public) status=\(addStatus)")
+            throw Failure.osStatus(addStatus, .set)
+        }
+    }
+
+    public func get(forKey key: String) async throws -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        switch status {
+        case errSecSuccess:
+            // Keychain said "success" but returned something other than Data
+            // (class mismatch, corruption, etc.). The SecureStore contract is
+            // "missing returns nil, anything else throws" — silently returning
+            // nil here would hide a real problem.
+            guard let data = item as? Data else {
+                logger.error("get returned non-Data item service=\(self.service, privacy: .public) key=\(key, privacy: .public)")
+                throw Failure.unexpectedItemType(.get)
+            }
+            return data
+        case errSecItemNotFound:
+            return nil
+        default:
+            logger.error("get failed service=\(self.service, privacy: .public) key=\(key, privacy: .public) status=\(status)")
+            throw Failure.osStatus(status, .get)
+        }
+    }
+
+    public func delete(forKey key: String) async throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            logger.error("delete failed service=\(self.service, privacy: .public) key=\(key, privacy: .public) status=\(status)")
+            throw Failure.osStatus(status, .delete)
+        }
+    }
+
+    public func deleteAll() async throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            logger.error("deleteAll failed service=\(self.service, privacy: .public) status=\(status)")
+            throw Failure.osStatus(status, .deleteAll)
+        }
+    }
+}
