@@ -299,14 +299,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            // `NSApp` is non-nil by construction: this observer is
-            // registered from `applicationDidFinishLaunching` (line 69),
-            // after the system has vended `NSApp`, and torn down in
-            // `applicationWillTerminate` before `NSApp` is released. If
-            // this observer setup is ever moved earlier in the lifecycle,
-            // the `NSApp.appearance` access below needs revisiting.
             MainActor.assumeIsolated {
+                // `guard let self` stays inside the isolated region so
+                // all `self.*` access happens in MainActor context —
+                // otherwise a future `self.foo` call added before the
+                // isolated block would regress the concurrency check.
+                guard let self else { return }
+                // `NSApp` is non-nil by construction: this observer is
+                // registered from `applicationDidFinishLaunching` (line 69),
+                // after the system has vended `NSApp`, and torn down in
+                // `applicationWillTerminate` before `NSApp` is released. If
+                // this observer setup is ever moved earlier in the lifecycle,
+                // the `NSApp.appearance` access below needs revisiting.
                 let settings = self.settingsService.load()
                 NSApp.appearance = settings.ui.theme.nsAppearance
             }
