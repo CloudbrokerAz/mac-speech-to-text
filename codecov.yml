@@ -49,6 +49,19 @@ ignore:
   - "Sources/Services/TextInsertionService.swift"
   - "Sources/Services/VoiceTriggerMonitoringService.swift"
   - "Sources/Services/WakeWordService.swift"
+  # App-lifecycle code: NSApplicationDelegate callbacks, NSApp wiring,
+  # menu-bar / notification observer setup. Exercising these in a unit
+  # test would require mocking NSApplication, NSStatusBar, etc — not
+  # proportionate for lifecycle-only code. The AppStateTests suite
+  # covers the testable parts of app state; AppDelegate itself is
+  # functional under the pre-push smoke test on real hardware.
+  - "Sources/SpeechToTextApp/AppDelegate.swift"
+  # SwiftUI view components whose only logic is render + animation
+  # drivers. ViewInspector render-crash tests cover instantiation but
+  # don't fire `onAppear`-driven animation callbacks. Per-file crash
+  # tests are opt-in in this repo; coverage on these files is not an
+  # actionable signal.
+  - "Sources/Views/Components/ParticleVortexWaveform.swift"
   # Test files themselves — coverage of tests isn't a useful signal.
   - "Tests/**"
   - "UITests/**"
