@@ -182,20 +182,18 @@ jobs:
             --ignore-filename-regex='(\.build|Tests|UITests|Frameworks|checkouts)/' \
             "${TEST_BIN}" | tail -3
 
-      # Codecov upload is best-effort until a CODECOV_TOKEN secret is
-      # configured on the repo (tokenless uploads require a Codecov account
-      # linked to the repo, which this one doesn't have yet). When the
-      # token is added, flip `continue-on-error` to `false` — or remove it
-      # — and the upload becomes a hard gate again. Coverage visibility is
-      # still preserved via the `coverage-report` artifact uploaded below.
+      # Codecov upload is a hard gate on PRs: if the upload fails (token
+      # revoked, Codecov outage, malformed lcov), the job fails so we
+      # don't silently ship a PR with missing coverage visibility.
+      # Coverage is also attached as the `coverage-report` workflow
+      # artifact below so a reviewer can inspect it directly.
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() && hashFiles('coverage.lcov') != '' }}
         uses: codecov/codecov-action@v5
-        continue-on-error: true
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.lcov
-          fail_ci_if_error: false
+          fail_ci_if_error: true
           flags: unit
           disable_search: true
 

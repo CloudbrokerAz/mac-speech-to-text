@@ -271,7 +271,12 @@ resolve_packages() {
 run_tests() {
     print_header "Running Tests on ${SSH_HOST}"
 
-    print_status "Executing: swift test --parallel"
+    # Compose the swift test command with optional tag filters passed in
+    # via `SWIFT_TEST_EXTRA` (e.g. SWIFT_TEST_EXTRA="--skip-tag requiresHardware"
+    # or "--filter-tag fast"). Leave unset to run the full suite.
+    local test_args="--parallel${SWIFT_TEST_EXTRA:+ ${SWIFT_TEST_EXTRA}}"
+
+    print_status "Executing: swift test ${test_args}"
     print_status "Timeout: ${TEST_TIMEOUT} seconds"
     echo ""
 
@@ -283,7 +288,7 @@ run_tests() {
 
     # Use a temp file to capture both output and exit code
     set +e
-    test_output=$(timeout "${TEST_TIMEOUT}" ssh "${SSH_HOST}" "cd ${REMOTE_PROJECT_PATH} && swift test --parallel 2>&1; echo \"EXIT_CODE:\$?\"")
+    test_output=$(timeout "${TEST_TIMEOUT}" ssh "${SSH_HOST}" "cd ${REMOTE_PROJECT_PATH} && swift test ${test_args} 2>&1; echo \"EXIT_CODE:\$?\"")
     local timeout_exit=$?
     set -e
 
