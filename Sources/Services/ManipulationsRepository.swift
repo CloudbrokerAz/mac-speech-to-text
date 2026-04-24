@@ -1,0 +1,79 @@
+import Foundation
+
+/// Read-only snapshot of the chiropractic manipulations taxonomy loaded
+/// from a bundled JSON resource.
+///
+/// **Issue #6.** v1 ships with a seven-entry placeholder list at
+/// `Resources/Manipulations/placeholder.json`. The real Cliniko taxonomy
+/// replaces that file — the repository itself never changes, so the swap
+/// is one file and zero code changes (EPIC acceptance criterion).
+///
+/// **Call sites:**
+/// - `ClinicalNotesPromptBuilder` (#4) enumerates `.all` into the LLM
+///   prompt so the model knows which manipulation IDs it may select.
+/// - `ReviewScreen` (#13) renders `.all` as the practitioner checklist.
+/// - The Cliniko export mapping (#10) reads `clinikoCode` for each
+///   selected ID.
+///
+/// **Thread safety.** Immutable value type; `Sendable` by construction.
+///
+/// **Not PHI.** Static taxonomy; nothing patient-specific reaches this
+/// type.
+struct ManipulationsRepository: Sendable, Equatable {
+    /// Every manipulation in the taxonomy, in the order declared by the
+    /// source JSON. Stable order is a UI contract — the ReviewScreen
+    /// checklist renders entries in this order.
+    let all: [Manipulation]
+
+    // MARK: - Initialisation
+
+    /// Seam used by tests and by callers assembling a repository from an
+    /// already-decoded list.
+    init(all: [Manipulation]) {
+        self.all = all
+    }
+
+    /// Decode a taxonomy from raw JSON bytes.
+    init(data: Data, decoder: JSONDecoder = JSONDecoder()) throws {
+        self.all = try decoder.decode([Manipulation].self, from: data)
+    }
+
+    // MARK: - Bundle loader
+
+    /// Load the bundled taxonomy JSON.
+    ///
+    /// Defaults resolve to `Bundle.module` of the `SpeechToText` target
+    /// and `Resources/Manipulations/placeholder.json`. Production callers
+    /// should use the defaults; tests may pass a custom `bundle` to
+    /// point at test fixtures.
+    ///
+    /// - Throws: `ManipulationsRepositoryError.resourceNotFound` if the
+    ///   named file is missing from the bundle, or a `DecodingError` if
+    ///   the file is present but malformed.
+    static func loadFromBundle(
+        _ bundle: Bundle = .module,
+        resource: String = "placeholder",
+        subdirectory: String = "Manipulations"
+    ) throws -> ManipulationsRepository {
+        guard let url = bundle.url(
+            forResource: resource,
+            withExtension: "json",
+            subdirectory: subdirectory
+        ) else {
+            throw ManipulationsRepositoryError.resourceNotFound(
+                resource: resource,
+                subdirectory: subdirectory
+            )
+        }
+        let data = try Data(contentsOf: url)
+        return try ManipulationsRepository(data: data)
+    }
+}
+
+/// Failures surfaced by `ManipulationsRepository.loadFromBundle(_:)`.
+enum ManipulationsRepositoryError: Error, Equatable {
+    /// The named resource is missing from the bundle. Usually a
+    /// build-system misconfiguration (e.g. a missing `.copy(...)` entry
+    /// in `Package.swift`).
+    case resourceNotFound(resource: String, subdirectory: String)
+}

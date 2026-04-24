@@ -1,0 +1,9 @@
+[
+  { "id": "diversified_hvla", "display_name": "Diversified HVLA", "cliniko_code": null },
+  { "id": "gonstead", "display_name": "Gonstead", "cliniko_code": null },
+  { "id": "activator", "display_name": "Activator", "cliniko_code": null },
+  { "id": "thompson_drop", "display_name": "Thompson Drop", "cliniko_code": null },
+  { "id": "sacro_occipital_technique", "display_name": "Sacro-Occipital Technique (SOT)", "cliniko_code": null },
+  { "id": "toggle_recoil", "display_name": "Toggle Recoil", "cliniko_code": null },
+  { "id": "mobilisation_non_hvla", "display_name": "Mobilisation (non-HVLA)", "cliniko_code": null }
+]

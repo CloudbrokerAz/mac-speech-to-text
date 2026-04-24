@@ -36,7 +36,8 @@ let package = Package(
             exclude: [],
             resources: [
                 .process("Resources/app_logov2.png"),
-                .copy("Resources/Models")
+                .copy("Resources/Models"),
+                .copy("Resources/Manipulations")
             ],
             swiftSettings: [
                 .enableUpcomingFeature("BareSlashRegexLiterals"),
