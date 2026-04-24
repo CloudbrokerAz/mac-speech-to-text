@@ -118,8 +118,25 @@ jobs:
       - name: Resolve dependencies
         run: swift package resolve
 
+      # Sanity-check the CI summary parser before we commit to parsing real
+      # build/test logs with it. Cheap (<1s) and guarantees a broken
+      # regex change can't ship a silently-empty summary.
+      - name: ci-summary self-test
+        run: python3 scripts/ci-summary.py --self-test
+
+      # We `tee` build + test output to log files so the `CI summary` step
+      # below can parse them into `$GITHUB_STEP_SUMMARY`. `set -eo pipefail`
+      # preserves the underlying exit status across the pipe — without it,
+      # `tee` would mask a `swift build` failure. `touch` up-front so the
+      # file always exists even if the underlying command exits before
+      # emitting a single line, which lets `_log_status` distinguish
+      # "empty" from "missing" cleanly.
       - name: Build
-        run: swift build -c release
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > build.log
+          swift build -c release 2>&1 | tee build.log
 
       # Unit tests — the GitHub Actions runner has no microphone, no
       # Accessibility (TCC) grant, no display server, and no user keychain.
@@ -137,14 +154,17 @@ jobs:
       #   GeneralSectionPersistenceTests    shared UserDefaults race under --parallel;
       #                                     tracked for fix, runs pre-push serially.
       - name: Run unit tests (with coverage)
+        shell: bash
         run: |
+          set -euo pipefail
+          : > test.log
           swift test --parallel --enable-code-coverage \
             --skip AudioCaptureServiceTests \
             --skip PermissionServiceTests \
             --skip TextInsertionServiceTests \
             --skip VoiceTriggerMonitoringServiceTests \
             --skip WakeWordServiceTests \
-            --skip GeneralSectionPersistenceTests
+            --skip GeneralSectionPersistenceTests 2>&1 | tee test.log
 
       # Coverage export is a *required* part of this job — the whole point is
       # PR-visible coverage. A missing profdata / xctest bundle / binary
@@ -205,6 +225,35 @@ jobs:
           path: coverage.lcov
           retention-days: 7
 
+      # Parse the teed logs into a structured PR-visible summary. Runs even
+      # when earlier steps fail — the whole point is to make failures easy
+      # to triage without scrolling raw logs. See `scripts/ci-summary.py`.
+      #
+      # `|| true` at the end ensures the summary step itself never flips a
+      # green job red: a diagnostic tool that hides its own failures (or
+      # masks a real build failure behind a summary crash) is worse than
+      # useless. The script's internal try/except prints a visible
+      # fallback to the summary on crash.
+      #
+      # We deliberately do NOT upload `build.log` / `test.log` as
+      # workflow artifacts. They contain verbatim `swift test` output,
+      # and any future test fixture that accidentally echoes PHI (SOAP
+      # body, transcript, Cliniko request body) would egress for 7+ days
+      # to GitHub artifacts — exactly what `.claude/references/phi-handling.md`
+      # forbids. The rendered summary + the raw workflow log are enough
+      # for triage.
+      - name: CI summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          python3 scripts/ci-summary.py \
+            --job "Build and Test" \
+            --build-log build.log \
+            --test-log test.log \
+            --job-status "${{ job.status }}" \
+            --out "$GITHUB_STEP_SUMMARY" \
+            || echo "::warning::ci-summary.py exited non-zero; see raw log"
+
   build:
     name: Build Release
     runs-on: macos-14
@@ -236,7 +285,11 @@ jobs:
         run: ./scripts/setup-sherpa-onnx.sh
 
       - name: Build release
-        run: swift build -c release
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > build.log
+          swift build -c release 2>&1 | tee build.log
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -244,6 +297,22 @@ jobs:
           name: release-build
           path: .build/release/
           retention-days: 7
+
+      # Parse the teed build log into a PR-visible summary (warnings /
+      # errors by diagnostic category). Runs even on failure. See notes on
+      # the equivalent step in the `test` job — no log-artifact upload
+      # (PHI policy), `|| true` to isolate summary-script failures from
+      # the job's own exit status.
+      - name: CI summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          python3 scripts/ci-summary.py \
+            --job "Build Release" \
+            --build-log build.log \
+            --job-status "${{ job.status }}" \
+            --out "$GITHUB_STEP_SUMMARY" \
+            || echo "::warning::ci-summary.py exited non-zero; see raw log"
 
       # Note: Smoke tests require real macOS hardware with audio/accessibility
       # Use scripts/smoke-test.sh locally before merging
