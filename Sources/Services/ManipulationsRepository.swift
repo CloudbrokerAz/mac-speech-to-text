@@ -50,12 +50,12 @@ struct ManipulationsRepository: Sendable, Equatable {
     ///   corrupt selection state.
     init(data: Data, decoder: JSONDecoder = JSONDecoder()) throws {
         let decoded = try decoder.decode([Manipulation].self, from: data)
-        let duplicates = Dictionary(grouping: decoded.map(\.id), by: { $0 })
+        let duplicates = Dictionary(grouping: decoded, by: \.id)
             .filter { $0.value.count > 1 }
             .keys
             .sorted()
         guard duplicates.isEmpty else {
-            throw ManipulationsRepositoryError.duplicateIDs(Array(duplicates))
+            throw ManipulationsRepositoryError.duplicateIDs(duplicates)
         }
         self.all = decoded
     }
