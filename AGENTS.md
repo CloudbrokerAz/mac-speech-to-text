@@ -121,6 +121,34 @@ belong in PR review, not in the hard-rules file.
   testing stack) without an explicit user ask — they live in the
   EPIC body and `.claude/CLAUDE.md`.
 
+### Subagents & code review
+
+- **Always** pass `model: "opus"` explicitly when calling the `Agent`
+  tool. The parent session is Opus; several subagent definitions default
+  to Sonnet and will silently downgrade if you omit the override. This
+  applies to every `Agent` invocation — `Explore`, `general-purpose`,
+  and every `pr-review-toolkit:*` reviewer.
+- **Always** run the three-layer review pipeline on a non-trivial PR:
+  1. **Pre-PR (local):** spawn a `pr-review-toolkit:code-reviewer`
+     subagent with `model: "opus"` over the diff before you push, and
+     apply/fold in its blockers. For PHI-sensitive or concurrency-heavy
+     changes also spawn `pr-review-toolkit:silent-failure-hunter` and
+     (for new types) `pr-review-toolkit:type-design-analyzer` in
+     parallel.
+  2. **Automated (on PR open):** Gemini Code Assist runs automatically
+     via the GitHub App (see `.gemini/config.yaml` +
+     `.gemini/styleguide.md`). Its summary + inline comments are
+     treated as peer review; address them before merging. Re-trigger
+     with a `/gemini review` comment if the PR materially changed.
+  3. **On-demand deep dive:** invoke the `/code-review` skill
+     (`code-review:code-review`) when the PR is large, touches
+     multiple subsystems, or has review comments that need triage.
+     Prefer it over re-running the subagent because it operates on the
+     PR surface (including comments) rather than the local diff.
+- **Never** skip the pre-PR subagent pass on substantive changes. A
+  `wc -l` >~30 on the diff, or anything touching PHI / concurrency /
+  HTTP / Keychain, is substantive.
+
 ---
 
 ## Tech stack quick reference

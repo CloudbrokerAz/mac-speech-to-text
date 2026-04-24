@@ -1,0 +1,58 @@
+# Gemini Code Assist — repo-level configuration
+#
+# Docs: https://developers.google.com/gemini-code-assist/docs/customize-gemini-behavior-github
+# Style guide companion: see ./styleguide.md
+#
+# This config targets a single-repo macOS-Swift project that carries PHI
+# obligations. We keep the signal-to-noise ratio high (MEDIUM threshold,
+# capped comment count) and exclude machine-generated / vendored / binary
+# paths from analysis.
+
+have_fun: false
+
+# Paths excluded from analysis. Use glob syntax.
+ignore_patterns:
+  # Build outputs + IDE caches
+  - ".build/**"
+  - "build/**"
+  - "DerivedData/**"
+  - "xcode-project/**"
+  - "*.xcodeproj/**"
+  # Vendored dependencies
+  - "Vendor/**"
+  # Large on-disk ML / audio artifacts — not source code
+  - "Sources/Resources/Models/**"
+  - "**/*.onnx"
+  - "**/*.mlpackage/**"
+  - "**/*.wav"
+  # Test fixtures are curated by humans and must not contain PHI; the
+  # review signal here is low and false-positive noise is high.
+  - "Tests/SpeechToTextTests/Fixtures/**"
+  # Generated docs + checked-in lockfiles
+  - "Package.resolved"
+  # Claude tooling + skills (these are agent config, not product code)
+  - ".claude/**"
+
+memory_config:
+  # Enable cross-repo memory if the org turns it on — at single-repo scale
+  # this is a no-op.
+  disabled: false
+
+code_review:
+  disable: false
+  # Only surface MEDIUM+ findings by default — drops stylistic nits that
+  # SwiftLint --strict already enforces pre-push.
+  comment_severity_threshold: MEDIUM
+  # Keep reviews focused. If a PR genuinely needs more than 25 comments
+  # it probably needs a human reviewer first.
+  max_review_comments: 25
+  pull_request_opened:
+    # "Help" intro is noisy for a small team.
+    help: false
+    # Summary is genuinely useful — keep.
+    summary: true
+    # Full review on every PR open.
+    code_review: true
+    # Don't review drafts — they're still in flight and the author
+    # doesn't want early-stage feedback.
+    include_drafts: false
