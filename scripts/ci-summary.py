@@ -47,12 +47,18 @@ SWIFT_DIAG = re.compile(
     r"(?P<message>.+?)(?:\s+\[#(?P<category>[A-Za-z0-9_.\-]+)\])?$"
 )
 
-# Canary: anything diagnostic-shaped. If this matches but SWIFT_DIAG
-# doesn't, our regex is stale and we're silently dropping diagnostics —
-# the parser surfaces that in the summary rather than rendering a
-# misleading "✅ Clean".
+# Canary: anything that looks like a warning or error diagnostic. If this
+# matches but SWIFT_DIAG doesn't, our regex is stale and we're silently
+# dropping diagnostics — the parser surfaces that in the summary rather
+# than rendering a misleading "✅ Clean".
+#
+# We deliberately exclude `note:` and `remark:` from the canary. swiftc
+# emits them as continuation lines for the primary warning/error (e.g.
+# "note: insert 'try'" after a try-failure warning), they don't match
+# SWIFT_DIAG by design, and counting them here generates per-PR noise
+# without signalling real drift.
 SWIFT_DIAG_CANARY = re.compile(
-    r"^(?P<path>[^:\n]+\.swift):\d+:\d+:\s+(warning|error|note|remark):"
+    r"^(?P<path>[^:\n]+\.swift):\d+:\d+:\s+(warning|error):"
 )
 
 # Swift Testing failure marker.
@@ -449,8 +455,8 @@ SELF_TEST_BUILD = """\
 /Users/runner/work/mac-speech-to-text/mac-speech-to-text/Sources/SpeechToTextApp/AppDelegate.swift:293:49: warning: call to main actor-isolated instance method 'load()' in a synchronous nonisolated context [#ActorIsolatedCall]
 /Users/runner/work/mac-speech-to-text/mac-speech-to-text/Sources/Services/Future.swift:10:3: warning: dotted.compound category example [#StrictConcurrency.Availability]
 /Users/runner/work/mac-speech-to-text/mac-speech-to-text/.build/checkouts/FluidAudio/Sources/x.swift:10:1: warning: some dep warning
-/Users/runner/work/mac-speech-to-text/mac-speech-to-text/Sources/Mystery.swift:42:1: note: a note line that shouldn't bucket as a diagnostic
-/Users/runner/work/mac-speech-to-text/mac-speech-to-text/Sources/DriftTest.swift:99:9: warning: hypothetical future diagnostic with a never-seen tag {category=weirdFuture}
+/Users/runner/work/mac-speech-to-text/mac-speech-to-text/Sources/Mystery.swift:42:1: note: a note line must not bucket as diagnostic OR as canary
+/Users/runner/work/mac-speech-to-text/mac-speech-to-text/Sources/Drift.swift:7:1: warning hypothetical drift missing colon after severity
 Build complete!
 """
 
@@ -535,8 +541,8 @@ def _self_test() -> int:
         "build-cache diagnostics filtered",
     )
     _assert(
-        unrecognised >= 1,
-        "note-shaped line counted by the drift canary",
+        unrecognised == 0,
+        "note/remark lines do NOT bump the canary (continuation noise, not drift)",
     )
 
     # --- parse_test_failures ---
@@ -622,7 +628,21 @@ def _self_test() -> int:
     _assert("`#TemporaryPointers`" in body, "category heading rendered")
     _assert("PendingWritesCounterTests.test_waitForCompletion_waitsForPendingWrites" in body,
             "xctest case rendered")
-    _assert("regex drift" in body.lower(), "regex drift canary surfaced in render")
+
+    # Canary rendering — simulate drift by passing a non-zero count directly.
+    drift_body = render(
+        job="Build and Test",
+        warnings={},
+        unrecognised_diag_lines=3,
+        failures=[],
+        totals={"swift_testing": None, "xctest": None},
+        build_log_status="present",
+        test_log_status="present",
+    )
+    _assert("regex drift" in drift_body.lower(),
+            "non-zero canary count surfaces 'regex drift' section")
+    _assert("3 line" in drift_body,
+            "drift count rendered in copy")
 
     # --- render: missing/empty log must NOT claim "Clean" ---
 
