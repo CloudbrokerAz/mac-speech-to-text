@@ -28,14 +28,36 @@ struct ManipulationsRepository: Sendable, Equatable {
     // MARK: - Initialisation
 
     /// Seam used by tests and by callers assembling a repository from an
-    /// already-decoded list.
+    /// already-decoded list. Duplicate IDs are a programmer error — the
+    /// production `init(data:decoder:)` path enforces uniqueness at
+    /// runtime; this debug-only assertion flags fixtures that mis-declare.
     init(all: [Manipulation]) {
+        assert(
+            Set(all.map(\.id)).count == all.count,
+            "ManipulationsRepository: manipulation IDs must be unique"
+        )
         self.all = all
     }
 
     /// Decode a taxonomy from raw JSON bytes.
+    ///
+    /// - Throws: `DecodingError` if `data` cannot be parsed as the
+    ///   expected `[Manipulation]` shape, or
+    ///   `ManipulationsRepositoryError.duplicateIDs(_:)` if the parsed
+    ///   list contains duplicate `id` values. Uniqueness matters because
+    ///   `id` is the join key for `StructuredNotes.selectedManipulationIDs`
+    ///   and the Cliniko export mapping (#10); a dup would silently
+    ///   corrupt selection state.
     init(data: Data, decoder: JSONDecoder = JSONDecoder()) throws {
-        self.all = try decoder.decode([Manipulation].self, from: data)
+        let decoded = try decoder.decode([Manipulation].self, from: data)
+        let duplicates = Dictionary(grouping: decoded.map(\.id), by: { $0 })
+            .filter { $0.value.count > 1 }
+            .keys
+            .sorted()
+        guard duplicates.isEmpty else {
+            throw ManipulationsRepositoryError.duplicateIDs(Array(duplicates))
+        }
+        self.all = decoded
     }
 
     // MARK: - Bundle loader
@@ -70,10 +92,17 @@ struct ManipulationsRepository: Sendable, Equatable {
     }
 }
 
-/// Failures surfaced by `ManipulationsRepository.loadFromBundle(_:)`.
+/// Failures surfaced by `ManipulationsRepository` initialisers.
 enum ManipulationsRepositoryError: Error, Equatable {
     /// The named resource is missing from the bundle. Usually a
     /// build-system misconfiguration (e.g. a missing `.copy(...)` entry
     /// in `Package.swift`).
     case resourceNotFound(resource: String, subdirectory: String)
+
+    /// The parsed taxonomy contains duplicate `id` values. Associated
+    /// value lists the offending IDs (sorted, deduplicated) so callers
+    /// and test assertions have a concrete diagnostic without logging
+    /// anything PHI-adjacent — the taxonomy itself is static, not
+    /// patient data.
+    case duplicateIDs([String])
 }

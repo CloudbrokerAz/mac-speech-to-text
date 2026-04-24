@@ -71,6 +71,30 @@ struct ManipulationsRepositoryTests {
         #expect(repo.all.isEmpty)
     }
 
+    @Test("Duplicate id in JSON throws duplicateIDs with the offending ids")
+    func duplicateIDs_throwTyped() {
+        // A broken taxonomy swap must surface loudly — dup ids would
+        // silently corrupt StructuredNotes.selectedManipulationIDs
+        // matching and the #10 Cliniko export mapping.
+        let dupJSON = Data("""
+        [
+          { "id": "activator", "display_name": "Activator",       "cliniko_code": null },
+          { "id": "activator", "display_name": "Activator (copy)", "cliniko_code": null },
+          { "id": "gonstead",  "display_name": "Gonstead",        "cliniko_code": null },
+          { "id": "gonstead",  "display_name": "Gonstead (copy)",  "cliniko_code": null }
+        ]
+        """.utf8)
+
+        #expect {
+            _ = try ManipulationsRepository(data: dupJSON)
+        } throws: { error in
+            guard case let .duplicateIDs(ids) = error as? ManipulationsRepositoryError else {
+                return false
+            }
+            return ids == ["activator", "gonstead"]
+        }
+    }
+
     // MARK: - One-file-swap contract (future real taxonomy)
 
     @Test("Populated cliniko_code round-trips through the repository")
