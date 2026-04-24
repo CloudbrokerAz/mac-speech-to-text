@@ -93,7 +93,10 @@ let package = Package(
                 "SherpaOnnxSwift",
                 .product(name: "ViewInspector", package: "ViewInspector")
             ],
-            path: "Tests/SpeechToTextTests"
+            path: "Tests/SpeechToTextTests",
+            resources: [
+                .copy("Fixtures")
+            ]
         )
     ]
 )
