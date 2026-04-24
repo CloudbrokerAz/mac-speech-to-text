@@ -145,9 +145,31 @@ struct ParticleVortexWaveform: View {
     // MARK: - Animation Loop
 
     private func startAnimation() {
-        displayLink = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { _ in
-            updateParticles()
+        // Schedule the animation timer explicitly on `RunLoop.main` with
+        // `.common` mode:
+        //
+        //   - `RunLoop.main` (not `.scheduledTimer(...)`'s implicit
+        //     `RunLoop.current`) guarantees `MainActor.assumeIsolated`
+        //     holds even if a caller — SwiftUI previews in live mode,
+        //     or a future refactor that wraps `onAppear` in a detached
+        //     Task — isn't on the main run loop. `RunLoop.current` is
+        //     a footgun: the compiler can't check it, and a trap at
+        //     60 Hz is a bad outage.
+        //   - `.common` keeps the animation running during modal tracking
+        //     (menu bar, sheet). Default mode pauses — a pre-existing
+        //     quality-of-life bug picked up during the concurrency
+        //     audit.
+        //
+        // `assumeIsolated` is preferred over `Task { @MainActor in … }`
+        // because this timer fires 60× per second; Task dispatch would
+        // allocate + queue-hop every frame and drop animation frames.
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                updateParticles()
+            }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        displayLink = timer
     }
 
     private func stopAnimation() {
