@@ -8,11 +8,14 @@ import Foundation
 /// separate PR against this same ticket. Tests use `MockLLMProvider`
 /// (`Tests/SpeechToTextTests/Utilities/MockLLMProvider.swift`).
 ///
-/// Implementations must be `Sendable` and safe to share across tasks.
-/// If the concrete type is actor-backed (as `MLXGemmaProvider` will be)
-/// and a caller stores it on an `@Observable` class, that property must
-/// be annotated `@ObservationIgnored` to avoid the actor-existential
-/// crash — see `.claude/references/concurrency.md` §1.
+/// The protocol is `Actor`-constrained — both `MLXGemmaProvider` and
+/// `MockLLMProvider` are actors, and AGENTS.md / `.claude/references/concurrency.md`
+/// §6 require mockable services to go through an `Actor`-constrained
+/// protocol (Swift actors cannot be subclassed, so test-doubles can't
+/// inherit from the concrete type). Callers that store `any LLMProvider`
+/// on an `@Observable` class MUST annotate that property
+/// `@ObservationIgnored` to avoid the actor-existential crash — see
+/// `.claude/references/concurrency.md` §1.
 ///
 /// ### PHI
 /// Implementations MUST NOT log `prompt` content or the generated
@@ -22,7 +25,7 @@ import Foundation
 /// text in their `localizedDescription` (or any other field that callers
 /// might log) — `DecodingError`-style value-quoting is the classic leak
 /// vector. See `.claude/references/phi-handling.md`.
-public protocol LLMProvider: Sendable {
+public protocol LLMProvider: Actor {
     /// Generate a full completion for `prompt` using `options`.
     ///
     /// Implementations surface inference, tokenisation, and
@@ -42,7 +45,11 @@ public protocol LLMProvider: Sendable {
     /// cancels the underlying generation if the implementation supports
     /// it. Terminal errors are delivered via the stream, not thrown
     /// from this factory.
-    func generateStream(
+    ///
+    /// Declared `nonisolated` so callers can build the stream
+    /// synchronously from any context; implementations hop back into
+    /// the actor via `await` to drive generation.
+    nonisolated func generateStream(
         prompt: String,
         options: LLMOptions
     ) -> AsyncThrowingStream<String, any Error>
