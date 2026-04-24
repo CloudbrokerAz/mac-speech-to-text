@@ -14,7 +14,7 @@ concurrency:
 jobs:
   lint:
     name: SwiftLint
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -27,7 +27,7 @@ jobs:
 
   pre-commit:
     name: pre-commit hooks
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -82,7 +82,7 @@ jobs:
 
   test:
     name: Build and Test
-    runs-on: macos-14
+    runs-on: macos-15
     needs: [lint, pre-commit]
     steps:
       - name: Checkout code
@@ -256,7 +256,7 @@ jobs:
 
   build:
     name: Build Release
-    runs-on: macos-14
+    runs-on: macos-15
     needs: test
     steps:
       - name: Checkout code
