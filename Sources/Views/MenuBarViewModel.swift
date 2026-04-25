@@ -80,4 +80,10 @@ extension Notification.Name {
     static let switchLanguage = Notification.Name("switchLanguage")
     /// Posted when voice trigger monitoring state changes (userInfo contains "state": VoiceTriggerState)
     static let voiceTriggerStateChanged = Notification.Name("voiceTriggerStateChanged")
+    /// Posted when the practitioner taps "Generate Notes" in the recording
+    /// modal with Clinical Notes Mode (#11) enabled. `userInfo["transcript"]`
+    /// carries the just-finished transcript as `String`. The ReviewScreen
+    /// presenter (#13) listens for this; until that lands, the AppDelegate
+    /// listener is a no-op and the notification is purely a hand-off seam.
+    static let clinicalNotesGenerateRequested = Notification.Name("clinicalNotesGenerateRequested")
 }

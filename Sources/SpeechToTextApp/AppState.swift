@@ -24,6 +24,21 @@ class AppState {
     @ObservationIgnored let settingsService: SettingsService
     @ObservationIgnored let statisticsService: StatisticsService
 
+    /// In-memory clinical session lifecycle (#2). Always instantiated; cheap
+    /// and idle when Clinical Notes Mode (#11) is off. The active
+    /// `ClinicalSession` only ever exists between the end of a recording and
+    /// either successful Cliniko export, idle timeout, or app quit. PHI lives
+    /// here exclusively — see `.claude/references/phi-handling.md`.
+    ///
+    /// `clinicalNotesProcessor` (the `actor ClinicalNotesProcessor` from #5)
+    /// injection is deferred until the concrete `MLXGemmaProvider` lands —
+    /// only the `LLMProvider` protocol + `MockLLMProvider` shipped in #3, so
+    /// there is no production-shaped LLM to construct a default processor
+    /// against. Wiring is a one-line addition once that provider exists; the
+    /// store on its own is a no-op when the toggle is off and provides no
+    /// PHI surface area.
+    @ObservationIgnored let sessionStore: SessionStore
+
     /// Task for loading statistics - tracked for proper lifecycle management
     @ObservationIgnored private var loadingTask: Task<Void, Never>?
     /// nonisolated copy for deinit access (deinit cannot access MainActor-isolated state)
@@ -39,6 +54,7 @@ class AppState {
         self.permissionService = PermissionService()
         self.settingsService = SettingsService()
         self.statisticsService = StatisticsService()
+        self.sessionStore = SessionStore()
 
         // Load settings
         self.settings = settingsService.load()

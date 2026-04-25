@@ -20,6 +20,15 @@ final class ClinicalNotesSectionRenderTests: XCTestCase {
         return defaults
     }
 
+    private func makeSettingsService() -> SettingsService {
+        let suiteName = "ClinicalNotesSectionRenderTests-Settings-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            preconditionFailure("UserDefaults(suiteName:) returned nil")
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+        return SettingsService(userDefaults: defaults)
+    }
+
     private func makeViewModel() -> ClinicalNotesSectionViewModel {
         let store = ClinikoCredentialStore(
             secureStore: InMemorySecureStore(),
@@ -32,13 +41,19 @@ final class ClinicalNotesSectionRenderTests: XCTestCase {
 
     func test_clinicalNotesSection_instantiatesWithoutCrash() {
         let viewModel = makeViewModel()
-        let view = ClinicalNotesSection(viewModel: viewModel)
+        let view = ClinicalNotesSection(
+            viewModel: viewModel,
+            settingsService: makeSettingsService()
+        )
         XCTAssertNotNil(view)
     }
 
     func test_clinicalNotesSection_canBeInspected() throws {
         let viewModel = makeViewModel()
-        let view = ClinicalNotesSection(viewModel: viewModel)
+        let view = ClinicalNotesSection(
+            viewModel: viewModel,
+            settingsService: makeSettingsService()
+        )
         // ViewInspector forces SwiftUI's body to be evaluated; if any
         // @Observable + actor existential issue exists in the VM, this is
         // where it surfaces (EXC_BAD_ACCESS). Just touching the body counts.
@@ -49,7 +64,10 @@ final class ClinicalNotesSectionRenderTests: XCTestCase {
         let viewModel = makeViewModel()
         // Default state — no credentials saved.
         XCTAssertFalse(viewModel.hasStoredCredentials)
-        let view = ClinicalNotesSection(viewModel: viewModel)
+        let view = ClinicalNotesSection(
+            viewModel: viewModel,
+            settingsService: makeSettingsService()
+        )
         XCTAssertNoThrow(try view.inspect().findAll(ViewType.SecureField.self))
     }
 
@@ -64,7 +82,26 @@ final class ClinicalNotesSectionRenderTests: XCTestCase {
         let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: probe)
         await viewModel.refreshState()
 
-        let view = ClinicalNotesSection(viewModel: viewModel)
+        let view = ClinicalNotesSection(
+            viewModel: viewModel,
+            settingsService: makeSettingsService()
+        )
         XCTAssertNoThrow(try view.inspect().findAll(ViewType.SecureField.self))
+    }
+
+    // MARK: - #11 Clinical Notes Mode toggle
+
+    /// The toggle is rendered above the credentials block. Confirm it's reachable
+    /// via the accessibility identifier — that's the contract UI tests + future
+    /// snapshot tests will pivot on.
+    func test_clinicalNotesModeToggle_isPresent() throws {
+        let viewModel = makeViewModel()
+        let view = ClinicalNotesSection(
+            viewModel: viewModel,
+            settingsService: makeSettingsService()
+        )
+        XCTAssertNoThrow(
+            try view.inspect().find(viewWithAccessibilityIdentifier: "clinicalNotesModeToggle")
+        )
     }
 }

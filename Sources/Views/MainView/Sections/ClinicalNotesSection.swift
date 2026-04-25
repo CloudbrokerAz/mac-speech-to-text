@@ -1,24 +1,52 @@
 // ClinicalNotesSection.swift
 // macOS Local Speech-to-Text Application
 //
-// Cliniko credentials + Clinical Notes Mode settings (issue #7).
-// The Clinical Notes Mode toggle itself ships in #11; this section currently
-// owns only the Cliniko-export credentials surface.
+// Clinical Notes Mode toggle (#11) + Cliniko credentials (#7). The toggle is
+// gated on the credentials being present — see `viewModel.hasStoredCredentials`
+// (AC4 of #7). Disabling the toggle is one click; un-storing credentials also
+// implicitly disables the experience.
 
 import SwiftUI
 
-/// Settings section for Cliniko credentials. The doctor pastes their Cliniko
-/// API key, picks the regional shard, optionally tests the connection, and
-/// can clear credentials. Per `.claude/references/cliniko-api.md` the key is
-/// stored in Keychain via `ClinikoCredentialStore`; the shard goes to
-/// `UserDefaults`.
+/// Settings section for Clinical Notes Mode + Cliniko credentials. The doctor
+/// flips Clinical Notes Mode on, pastes their Cliniko API key, picks the
+/// regional shard, optionally tests the connection, and can clear credentials.
+/// Per `.claude/references/cliniko-api.md` the key is stored in Keychain via
+/// `ClinikoCredentialStore`; the shard goes to `UserDefaults`.
 struct ClinicalNotesSection: View {
     @Bindable var viewModel: ClinicalNotesSectionViewModel
+
+    // MARK: - Dependencies
+
+    let settingsService: SettingsService
+
+    // MARK: - State
+
+    @State private var settings: UserSettings
+    @State private var saveError: String?
+    @State private var errorDismissalTask: Task<Void, Never>?
+
+    // MARK: - Initialisation
+
+    init(
+        viewModel: ClinicalNotesSectionViewModel,
+        settingsService: SettingsService = SettingsService()
+    ) {
+        self.viewModel = viewModel
+        self.settingsService = settingsService
+        self._settings = State(initialValue: settingsService.load())
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                if let error = saveError {
+                    saveErrorBanner(message: error)
+                }
+
                 sectionHeader
+
+                clinicalNotesModeRow
 
                 connectionStatusCard
 
@@ -39,11 +67,28 @@ struct ClinicalNotesSection: View {
                 privacyFooter
             }
             .padding(20)
+            .animation(.easeInOut(duration: 0.3), value: saveError)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("clinicalNotesSection")
         .task {
             await viewModel.refreshState()
+            // Reload settings on appear so a toggle change made elsewhere is
+            // reflected the next time the user lands here.
+            settings = settingsService.load()
+        }
+        .onDisappear {
+            errorDismissalTask?.cancel()
+            errorDismissalTask = nil
+        }
+        .onChange(of: viewModel.credentialState) { _, newValue in
+            // If the doctor removes credentials, force the toggle off so
+            // Clinical Notes Mode can never appear "on" without a tenant to
+            // export to. Persist immediately so a quit before a save still
+            // disables the mode.
+            guard newValue == .absent, settings.general.clinicalNotesModeEnabled else { return }
+            settings.general.clinicalNotesModeEnabled = false
+            saveSettings()
         }
     }
 
@@ -61,6 +106,77 @@ struct ClinicalNotesSection: View {
                 .foregroundStyle(.secondary)
         }
         .accessibilityIdentifier("clinicalNotesSection.header")
+    }
+
+    // MARK: - Clinical Notes Mode Toggle
+
+    /// The mode toggle is gated on `hasStoredCredentials`: we do not let the
+    /// doctor enable Clinical Notes Mode without a Cliniko tenant configured,
+    /// because the post-recording "Generate Notes" flow ends in a Cliniko
+    /// POST. The card explains this when the toggle is disabled, so the user
+    /// is not left guessing why the switch won't move.
+    private var clinicalNotesModeRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: clinicalNotesModeBinding) {
+                HStack(spacing: 12) {
+                    Image(systemName: "stethoscope")
+                        .font(.system(size: 16))
+                        .foregroundStyle(Color.iconPrimaryAdaptive)
+                        .frame(width: 24)
+                        .accessibilityHidden(true)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Clinical Notes Mode")
+                            .font(.body)
+                            .foregroundStyle(.primary)
+
+                        Text("Generate structured SOAP notes after each recording")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiaryAdaptive)
+                    }
+                }
+            }
+            .toggleStyle(.switch)
+            .disabled(!viewModel.hasStoredCredentials)
+            .padding(.vertical, 4)
+            .accessibilityIdentifier("clinicalNotesModeToggle")
+            .accessibilityLabel("Clinical Notes Mode. Generate structured SOAP notes after each recording.")
+
+            if !viewModel.hasStoredCredentials {
+                Text("Add your Cliniko credentials below to enable Clinical Notes Mode.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .accessibilityIdentifier("clinicalNotesModeToggle.disabledHint")
+            }
+        }
+    }
+
+    private var clinicalNotesModeBinding: Binding<Bool> {
+        Binding(
+            get: { settings.general.clinicalNotesModeEnabled },
+            set: { newValue in
+                settings.general.clinicalNotesModeEnabled = newValue
+                saveSettings()
+            }
+        )
+    }
+
+    // MARK: - Save error banner
+
+    private func saveErrorBanner(message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.white)
+            Text(message)
+                .font(.callout)
+                .foregroundStyle(.white)
+            Spacer()
+        }
+        .padding(12)
+        .background(Color.red.opacity(0.9))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .transition(.move(edge: .top).combined(with: .opacity))
+        .accessibilityIdentifier("clinicalNotesSection.saveErrorBanner")
     }
 
     // MARK: - Connection Status Card
@@ -209,6 +325,39 @@ struct ClinicalNotesSection: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("clinicalNotesSection.statusBanner")
+    }
+
+    // MARK: - Persistence
+
+    private func saveSettings() {
+        do {
+            try settingsService.save(settings)
+            saveError = nil
+        } catch {
+            // Log the structural error class so a developer reading
+            // sysdiagnose can distinguish encoder failure from UserDefaults
+            // write failure. Never log `error.localizedDescription` directly
+            // — settings are PHI-adjacent (no PHI in the schema today, but
+            // the field set evolves). See `.claude/references/phi-handling.md`.
+            AppLogger.service.error(
+                "ClinicalNotesSection: settings save failed kind=\(String(describing: type(of: error)), privacy: .public)"
+            )
+            // Reload to drop the optimistic mutation so the UI reflects what
+            // is actually persisted. Then surface a transient banner.
+            settings = settingsService.load()
+            showSaveError("Could not save the Clinical Notes Mode setting. Please try again.")
+        }
+    }
+
+    private func showSaveError(_ message: String) {
+        saveError = message
+        errorDismissalTask?.cancel()
+        errorDismissalTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            if !Task.isCancelled {
+                saveError = nil
+            }
+        }
     }
 
     // MARK: - Privacy Footer
@@ -577,6 +726,9 @@ final class ClinicalNotesSectionViewModel {
 // MARK: - Previews
 
 #Preview("Clinical Notes Section") {
-    ClinicalNotesSection(viewModel: ClinicalNotesSectionViewModel())
-        .frame(width: 640, height: 700)
+    ClinicalNotesSection(
+        viewModel: ClinicalNotesSectionViewModel(),
+        settingsService: SettingsService()
+    )
+    .frame(width: 640, height: 700)
 }

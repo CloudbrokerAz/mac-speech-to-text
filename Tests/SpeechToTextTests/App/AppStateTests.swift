@@ -398,6 +398,17 @@ final class AppStateTests: XCTestCase {
         XCTAssertNotNil(appState.permissionService)
         XCTAssertNotNil(appState.settingsService)
         XCTAssertNotNil(appState.statisticsService)
+        XCTAssertNotNil(appState.sessionStore)
+    }
+
+    // MARK: - #11 Clinical Notes Mode wiring
+
+    /// `SessionStore` is always instantiated so the post-recording flow can
+    /// drop a `ClinicalSession` into it without conditional construction. It
+    /// must start empty — Clinical Notes Mode is opt-in.
+    func test_initialization_sessionStoreStartsEmpty() {
+        let appState = AppState()
+        XCTAssertNil(appState.sessionStore.active)
     }
 
     // MARK: - Concurrent Access Tests
