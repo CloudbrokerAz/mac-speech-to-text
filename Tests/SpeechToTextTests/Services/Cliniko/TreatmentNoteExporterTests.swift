@@ -97,9 +97,12 @@ final class TreatmentNoteExporterTests: XCTestCase {
         let audit = try await auditStore.loadAll()
         XCTAssertEqual(audit.count, 1)
         let entry = try XCTUnwrap(audit.first)
-        XCTAssertEqual(entry.patientID, "1001")
-        XCTAssertEqual(entry.appointmentID, "5001")
-        XCTAssertEqual(entry.noteID, "9876543")
+        // ID fields are `OpaqueClinikoID` (#59); the exporter type-tags
+        // the wire-shape Int into the opaque form when building the
+        // audit row. Wire format on disk is unchanged (bare strings).
+        XCTAssertEqual(entry.patientID, OpaqueClinikoID(1001))
+        XCTAssertEqual(entry.appointmentID, OpaqueClinikoID(5001))
+        XCTAssertEqual(entry.noteID, OpaqueClinikoID(9876543))
         XCTAssertEqual(entry.clinikoStatus, 201)
         XCTAssertEqual(entry.appVersion, "0.3.0-test")
         XCTAssertEqual(entry.timestamp, Date(timeIntervalSince1970: 1_777_320_000))

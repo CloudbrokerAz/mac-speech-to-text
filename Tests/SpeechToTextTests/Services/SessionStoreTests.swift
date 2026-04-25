@@ -58,13 +58,15 @@ struct SessionStoreTests {
         let store = SessionStore()
         let notes = StructuredNotes(subjective: "subjective-placeholder")
         let id = UUID()
+        let patientID = OpaqueClinikoID(rawValue: "patient-1")
+        let appointmentID = OpaqueClinikoID(rawValue: "appt-1")
         let session = ClinicalSession(
             id: id,
             recordingSession: RecordingSession(),
             draftNotes: notes,
             excludedReAdded: ["snippet-placeholder"],
-            selectedPatientID: "patient-1",
-            selectedAppointmentID: "appt-1"
+            selectedPatientID: patientID,
+            selectedAppointmentID: appointmentID
         )
 
         store.start(session)
@@ -73,8 +75,8 @@ struct SessionStoreTests {
         #expect(active.id == id)
         #expect(active.draftNotes == notes)
         #expect(active.excludedReAdded == ["snippet-placeholder"])
-        #expect(active.selectedPatientID == "patient-1")
-        #expect(active.selectedAppointmentID == "appt-1")
+        #expect(active.selectedPatientID == patientID)
+        #expect(active.selectedAppointmentID == appointmentID)
     }
 
     // MARK: - replace
@@ -130,14 +132,14 @@ struct SessionStoreTests {
     @Test("setSelectedPatient is a no-op when active is nil")
     func setSelectedPatient_noopWhenInactive() {
         let store = SessionStore()
-        store.setSelectedPatient(id: "patient-1")
+        store.setSelectedPatient(id: OpaqueClinikoID(rawValue: "patient-1"))
         #expect(store.active == nil)
     }
 
     @Test("setSelectedAppointment is a no-op when active is nil")
     func setSelectedAppointment_noopWhenInactive() {
         let store = SessionStore()
-        store.setSelectedAppointment(id: "appt-1")
+        store.setSelectedAppointment(id: OpaqueClinikoID(rawValue: "appt-1"))
         #expect(store.active == nil)
     }
 
@@ -196,8 +198,9 @@ struct SessionStoreTests {
         let store = SessionStore()
         store.start(from: RecordingSession())
 
-        store.setSelectedPatient(id: "patient-1")
-        #expect(store.active?.selectedPatientID == "patient-1")
+        let patientID = OpaqueClinikoID(rawValue: "patient-1")
+        store.setSelectedPatient(id: patientID)
+        #expect(store.active?.selectedPatientID == patientID)
 
         store.setSelectedPatient(id: nil)
         #expect(store.active?.selectedPatientID == nil)
@@ -208,8 +211,9 @@ struct SessionStoreTests {
         let store = SessionStore()
         store.start(from: RecordingSession())
 
-        store.setSelectedAppointment(id: "appt-1")
-        #expect(store.active?.selectedAppointmentID == "appt-1")
+        let appointmentID = OpaqueClinikoID(rawValue: "appt-1")
+        store.setSelectedAppointment(id: appointmentID)
+        #expect(store.active?.selectedAppointmentID == appointmentID)
 
         store.setSelectedAppointment(id: nil)
         #expect(store.active?.selectedAppointmentID == nil)
@@ -298,8 +302,8 @@ struct SessionStoreTests {
         store.start(from: RecordingSession())
         store.setDraftNotes(StructuredNotes(subjective: "subjective-placeholder"))
         store.markExcludedReAdded("snippet-placeholder")
-        store.setSelectedPatient(id: "patient-1")
-        store.setSelectedAppointment(id: "appt-1")
+        store.setSelectedPatient(id: OpaqueClinikoID(rawValue: "patient-1"))
+        store.setSelectedAppointment(id: OpaqueClinikoID(rawValue: "appt-1"))
         store.touch()
         _ = store.checkIdleTimeout()
         store.clear()
@@ -328,8 +332,8 @@ struct SessionStoreTests {
             assessment: "assessment-placeholder",
             plan: "plan-placeholder"
         ))
-        store.setSelectedPatient(id: "patient-1")
-        store.setSelectedAppointment(id: "appt-1")
+        store.setSelectedPatient(id: OpaqueClinikoID(rawValue: "patient-1"))
+        store.setSelectedAppointment(id: OpaqueClinikoID(rawValue: "appt-1"))
 
         store.clear()
 

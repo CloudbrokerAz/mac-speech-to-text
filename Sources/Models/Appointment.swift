@@ -10,8 +10,9 @@ import Foundation
 /// memory only — no logging beyond structural fields, no on-disk cache.
 public struct Appointment: Decodable, Identifiable, Sendable, Equatable, Hashable {
     /// Cliniko numeric appointment ID. Stored as `Int` to match the wire
-    /// shape; the picker converts it to `String` at the `SessionStore`
-    /// boundary (`ClinicalSession.selectedAppointmentID`).
+    /// shape; the picker type-tags it into `OpaqueClinikoID` at the
+    /// `SessionStore` boundary
+    /// (`ClinicalSession.selectedAppointmentID`) — see #59.
     public let id: Int
 
     /// Scheduled start time. Required by Cliniko's schema.

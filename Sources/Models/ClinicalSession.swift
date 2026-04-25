@@ -29,20 +29,22 @@ struct ClinicalSession: Sendable, Identifiable {
     /// purposes and the ReviewScreen drawer can hide re-added entries.
     var excludedReAdded: [String]
 
-    /// Cliniko patient ID selected for export. Opaque string; not
-    /// user-visible demographics.
-    var selectedPatientID: String?
+    /// Cliniko patient ID selected for export. Type-tagged as
+    /// `OpaqueClinikoID` (#59) so the type system refuses anything
+    /// other than a Cliniko-shaped opaque ID — no name, DOB, or
+    /// free-form string can land here.
+    var selectedPatientID: OpaqueClinikoID?
 
     /// Cliniko appointment ID selected for export.
-    var selectedAppointmentID: String?
+    var selectedAppointmentID: OpaqueClinikoID?
 
     init(
         id: UUID = UUID(),
         recordingSession: RecordingSession,
         draftNotes: StructuredNotes? = nil,
         excludedReAdded: [String] = [],
-        selectedPatientID: String? = nil,
-        selectedAppointmentID: String? = nil
+        selectedPatientID: OpaqueClinikoID? = nil,
+        selectedAppointmentID: OpaqueClinikoID? = nil
     ) {
         self.id = id
         self.recordingSession = recordingSession

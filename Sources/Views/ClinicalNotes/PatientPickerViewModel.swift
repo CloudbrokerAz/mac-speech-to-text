@@ -184,7 +184,7 @@ final class PatientPickerViewModel {
     /// selection without waiting on the appointment fetch.
     func selectPatient(_ patient: Patient) {
         selectedPatient = patient
-        sessionStore.setSelectedPatient(id: String(patient.id))
+        sessionStore.setSelectedPatient(id: OpaqueClinikoID(patient.id))
         sessionStore.setSelectedAppointment(id: nil)
         selectedAppointmentID = nil
         appointmentPhase = .loading
@@ -238,10 +238,11 @@ final class PatientPickerViewModel {
     }
 
     /// Select an appointment, or `nil` for "No appointment / general
-    /// note". Writes through to the session store.
+    /// note". Writes through to the session store, type-tagging the Int
+    /// into `OpaqueClinikoID` (#59) at the SessionStore boundary.
     func selectAppointment(id: Int?) {
         selectedAppointmentID = id
-        sessionStore.setSelectedAppointment(id: id.map(String.init))
+        sessionStore.setSelectedAppointment(id: id.map(OpaqueClinikoID.init))
     }
 
     /// Clear the entire selection state. Used by the host view when the

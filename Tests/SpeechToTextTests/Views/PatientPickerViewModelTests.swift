@@ -196,7 +196,7 @@ struct PatientPickerViewModelTests {
         let patient = Patient(id: 1234, firstName: "Sample", lastName: "Patient")
         vm.selectPatient(patient)
 
-        #expect(store.active?.selectedPatientID == "1234")
+        #expect(store.active?.selectedPatientID == OpaqueClinikoID(1234))
         #expect(vm.selectedPatient == patient)
         #expect(vm.appointmentPhase == .loading)
     }
@@ -216,7 +216,7 @@ struct PatientPickerViewModelTests {
         )
 
         vm.selectAppointment(id: 5678)
-        #expect(store.active?.selectedAppointmentID == "5678")
+        #expect(store.active?.selectedAppointmentID == OpaqueClinikoID(5678))
         #expect(vm.selectedAppointmentID == 5678)
 
         vm.selectAppointment(id: nil)

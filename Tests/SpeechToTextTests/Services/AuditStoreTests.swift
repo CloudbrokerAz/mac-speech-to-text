@@ -22,9 +22,9 @@ struct AuditStoreTests {
 
     private static func makeRecord(
         timestamp: Date = Date(timeIntervalSince1970: 1_777_320_000),
-        patientID: String = "1001",
-        appointmentID: String? = "5001",
-        noteID: String = "9876543",
+        patientID: OpaqueClinikoID = OpaqueClinikoID(rawValue: "1001"),
+        appointmentID: OpaqueClinikoID? = OpaqueClinikoID(rawValue: "5001"),
+        noteID: OpaqueClinikoID = OpaqueClinikoID(rawValue: "9876543"),
         clinikoStatus: Int = 201,
         appVersion: String = "0.3.0"
     ) -> AuditRecord {
@@ -70,11 +70,12 @@ struct AuditStoreTests {
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
 
         for index in 0..<5 {
-            try await store.record(Self.makeRecord(noteID: "note-\(index)"))
+            try await store.record(Self.makeRecord(noteID: OpaqueClinikoID(rawValue: "note-\(index)")))
         }
         let loaded = try await store.loadAll()
 
-        #expect(loaded.map(\.noteID) == ["note-0", "note-1", "note-2", "note-3", "note-4"])
+        let expected = (0..<5).map { OpaqueClinikoID(rawValue: "note-\($0)") }
+        #expect(loaded.map(\.noteID) == expected)
     }
 
     @Test("loadAll on a fresh store returns an empty array")
@@ -96,9 +97,9 @@ struct AuditStoreTests {
         let store = LocalAuditStore(fileURL: url)
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
 
-        try await store.record(Self.makeRecord(noteID: "first"))
-        try await store.record(Self.makeRecord(noteID: "second"))
-        try await store.record(Self.makeRecord(noteID: "third"))
+        try await store.record(Self.makeRecord(noteID: OpaqueClinikoID(rawValue: "first")))
+        try await store.record(Self.makeRecord(noteID: OpaqueClinikoID(rawValue: "second")))
+        try await store.record(Self.makeRecord(noteID: OpaqueClinikoID(rawValue: "third")))
 
         let raw = try Data(contentsOf: url)
         // Counting line-feed bytes — every record contributes a trailing
@@ -125,6 +126,50 @@ struct AuditStoreTests {
         // …and every required key is present (no field accidentally
         // omitted on the disk shape — required for replay parsing).
         #expect(Self.allowedKeys.isSubset(of: keys))
+    }
+
+    @Test("On-disk JSONL line carries OpaqueClinikoID values as bare strings (#59)")
+    func line_pins_opaque_id_byte_shape() async throws {
+        // Integration-level pin for the #59 wire-shape invariant:
+        // `OpaqueClinikoID` must encode as a bare JSON string, not as
+        // a wrapping `{"rawValue":"…"}` object. The type-level test
+        // (`OpaqueClinikoIDTests.codable_encodesAsBareString`) covers
+        // a single-value encode; this one covers the integration via
+        // `LocalAuditStore.makeEncoder()` so a future refactor that
+        // drops the custom `Codable` methods on the type-level
+        // doesn't pass the type-level test alone but break the
+        // disk-shape invariant the audit ledger depends on.
+        //
+        // The fixture rawValues here are the digit-shaped Cliniko IDs
+        // every production callsite uses (the picker writes
+        // `OpaqueClinikoID(Int)`); we don't pin the wrapping-object
+        // shape failure mode at this level because the type-level
+        // test already does.
+        let url = Self.tempAuditURL()
+        let store = LocalAuditStore(fileURL: url)
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+        try await store.record(Self.makeRecord(
+            patientID: OpaqueClinikoID(rawValue: "1001"),
+            appointmentID: OpaqueClinikoID(rawValue: "5001"),
+            noteID: OpaqueClinikoID(rawValue: "9876543")
+        ))
+
+        let raw = try Data(contentsOf: url)
+        let line = try #require(String(data: raw, encoding: .utf8))
+
+        // Bare-string fields, not wrapping objects.
+        #expect(line.contains("\"patient_id\":\"1001\""))
+        #expect(line.contains("\"appointment_id\":\"5001\""))
+        #expect(line.contains("\"note_id\":\"9876543\""))
+
+        // Negative pins — none of the wrapping-object byte sequences
+        // a regression to `RawRepresentable`'s synthesised `Codable`
+        // would emit.
+        #expect(!line.contains("\"patient_id\":{"))
+        #expect(!line.contains("\"appointment_id\":{"))
+        #expect(!line.contains("\"note_id\":{"))
+        #expect(!line.contains("\"rawValue\""))
     }
 
     @Test("Audit file is created with 0o600 permissions")
@@ -159,8 +204,8 @@ struct AuditStoreTests {
         let store = LocalAuditStore(fileURL: url)
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
 
-        try await store.record(Self.makeRecord(noteID: "good-1"))
-        try await store.record(Self.makeRecord(noteID: "good-2"))
+        try await store.record(Self.makeRecord(noteID: OpaqueClinikoID(rawValue: "good-1")))
+        try await store.record(Self.makeRecord(noteID: OpaqueClinikoID(rawValue: "good-2")))
         // Simulate a power-cut mid-write: append a partial line with no
         // trailing LF. Without tolerance, `loadAll` would throw on this
         // and the practitioner would lose visibility into every prior
@@ -172,7 +217,10 @@ struct AuditStoreTests {
 
         let loaded = try await store.loadAll()
 
-        #expect(loaded.map(\.noteID) == ["good-1", "good-2"])
+        #expect(loaded.map(\.noteID) == [
+            OpaqueClinikoID(rawValue: "good-1"),
+            OpaqueClinikoID(rawValue: "good-2")
+        ])
     }
 
     @Test("loadAll tolerates a corrupt middle line and surfaces the surrounding records")
@@ -181,18 +229,21 @@ struct AuditStoreTests {
         let store = LocalAuditStore(fileURL: url)
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
 
-        try await store.record(Self.makeRecord(noteID: "before"))
+        try await store.record(Self.makeRecord(noteID: OpaqueClinikoID(rawValue: "before")))
         // Corrupt middle line — synthesised by writing junk bytes
         // between two LF separators directly to the file.
         let handle = try FileHandle(forWritingTo: url)
         try handle.seekToEnd()
         try handle.write(contentsOf: Data("not valid json\n".utf8))
         try handle.close()
-        try await store.record(Self.makeRecord(noteID: "after"))
+        try await store.record(Self.makeRecord(noteID: OpaqueClinikoID(rawValue: "after")))
 
         let loaded = try await store.loadAll()
 
-        #expect(loaded.map(\.noteID) == ["before", "after"])
+        #expect(loaded.map(\.noteID) == [
+            OpaqueClinikoID(rawValue: "before"),
+            OpaqueClinikoID(rawValue: "after")
+        ])
     }
 
     // MARK: - InMemoryAuditStore parity
@@ -200,18 +251,21 @@ struct AuditStoreTests {
     @Test("InMemoryAuditStore round-trips records identically to LocalAuditStore")
     func inMemoryAuditStore_loadAll_returnsRecordedEntries() async throws {
         let store = InMemoryAuditStore()
-        try await store.record(Self.makeRecord(noteID: "a"))
-        try await store.record(Self.makeRecord(noteID: "b"))
+        try await store.record(Self.makeRecord(noteID: OpaqueClinikoID(rawValue: "a")))
+        try await store.record(Self.makeRecord(noteID: OpaqueClinikoID(rawValue: "b")))
 
         let loaded = try await store.loadAll()
 
-        #expect(loaded.map(\.noteID) == ["a", "b"])
+        #expect(loaded.map(\.noteID) == [
+            OpaqueClinikoID(rawValue: "a"),
+            OpaqueClinikoID(rawValue: "b")
+        ])
     }
 
     @Test("InMemoryAuditStore.reset clears recorded entries")
     func inMemoryAuditStore_reset_clearsEntries() async throws {
         let store = InMemoryAuditStore()
-        try await store.record(Self.makeRecord(noteID: "a"))
+        try await store.record(Self.makeRecord(noteID: OpaqueClinikoID(rawValue: "a")))
 
         await store.reset()
 

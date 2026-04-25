@@ -36,23 +36,29 @@ public protocol AuditStore: Sendable {
 /// names match the doc's example; deliberate snake_case via explicit
 /// `CodingKeys` (not `convertToSnakeCase`) so the encoder swap can't
 /// drift the on-disk shape.
+///
+/// ID fields are `OpaqueClinikoID` (issue #59) so the type system
+/// refuses non-Cliniko-shaped strings at compile time. The on-disk
+/// JSON shape is **unchanged** — `OpaqueClinikoID` encodes as a bare
+/// string, so a row written before #59 (`"patient_id": "1001"`) and a
+/// row written after look byte-identical.
 public struct AuditRecord: Codable, Sendable, Equatable {
     /// When the export landed, in UTC. Encoded as ISO8601 (see
     /// `LocalAuditStore.encoder`).
     public let timestamp: Date
 
-    /// Cliniko patient ID stored as an opaque string — `Patient.id` on
-    /// the wire is `Int`, but the UI layer (`ClinicalSession.selectedPatientID`)
-    /// already converts to `String` at its boundary, so we accept that
-    /// shape here for symmetry.
-    public let patientID: String
+    /// Cliniko patient ID. The wire shape is `Int`; the UI layer holds
+    /// it as `OpaqueClinikoID` (`ClinicalSession.selectedPatientID`),
+    /// and the exporter type-tags the Int into `OpaqueClinikoID(_:)`
+    /// at the audit-write boundary.
+    public let patientID: OpaqueClinikoID
 
     /// Optional Cliniko appointment ID. Practitioners may export against
     /// the patient only, in which case this is `nil`.
-    public let appointmentID: String?
+    public let appointmentID: OpaqueClinikoID?
 
     /// Cliniko `treatment_note.id` from the 201 response body.
-    public let noteID: String
+    public let noteID: OpaqueClinikoID
 
     /// HTTP status from Cliniko. The exporter only writes audit records
     /// on success, so this is always 2xx in practice — kept structural
@@ -68,9 +74,9 @@ public struct AuditRecord: Codable, Sendable, Equatable {
 
     public init(
         timestamp: Date,
-        patientID: String,
-        appointmentID: String?,
-        noteID: String,
+        patientID: OpaqueClinikoID,
+        appointmentID: OpaqueClinikoID?,
+        noteID: OpaqueClinikoID,
         clinikoStatus: Int,
         appVersion: String
     ) {

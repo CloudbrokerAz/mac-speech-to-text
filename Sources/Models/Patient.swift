@@ -14,8 +14,8 @@ import Foundation
 /// `.claude/references/phi-handling.md`.
 public struct Patient: Decodable, Identifiable, Sendable, Equatable, Hashable {
     /// Cliniko numeric patient ID. Stored as `Int` to match the wire shape;
-    /// the picker converts it to `String` at the `SessionStore` boundary
-    /// (`ClinicalSession.selectedPatientID` is opaque-string-typed).
+    /// the picker type-tags it into `OpaqueClinikoID` at the `SessionStore`
+    /// boundary (`ClinicalSession.selectedPatientID`) — see #59.
     public let id: Int
 
     /// Patient's first / given name. Required by Cliniko's schema, so the
