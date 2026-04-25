@@ -58,7 +58,10 @@ public actor ClinikoClient {
         public static let `default` = RetryPolicy(
             delays: [1.0, 2.0],
             sleep: { interval in
-                try await Task.sleep(nanoseconds: UInt64(max(0, interval) * 1_000_000_000))
+                // `Task.sleep(for:)` is the modern replacement for the
+                // nanosecond-based variant; available on macOS 13+ which
+                // is below our `macOS 14` deployment target.
+                try await Task.sleep(for: .seconds(max(0, interval)))
             }
         )
 
@@ -81,6 +84,21 @@ public actor ClinikoClient {
     private let retryPolicy: RetryPolicy
     private let decoder: JSONDecoder
     private let logger = Logger(subsystem: "com.speechtotext", category: "ClinikoClient")
+
+    /// RFC 7231 IMF-fixdate parser. Used for `Retry-After: <http-date>`.
+    /// Held as an *instance* property (not `static`) because `DateFormatter`
+    /// is documented as thread-unsafe under mutation; even though we never
+    /// mutate this one after construction, sharing a single static across
+    /// multiple `ClinikoClient` actor instances would still trip Swift 6
+    /// strict-concurrency checking (`DateFormatter` is not `Sendable`).
+    /// Actor isolation makes the per-instance copy provably safe.
+    private let httpDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        return formatter
+    }()
 
     // MARK: - Init
 
@@ -366,7 +384,7 @@ public actor ClinikoClient {
         // "Wed, 21 Oct 2026 07:28:00 GMT"), which Cliniko emits during
         // scheduled-maintenance windows. Parse it and convert to a forward-
         // looking interval; floor at zero in case the server-clock drifted.
-        if let date = ClinikoClient.httpDateFormatter.date(from: trimmed) {
+        if let date = httpDateFormatter.date(from: trimmed) {
             return max(0, date.timeIntervalSinceNow)
         }
         logger.error(
@@ -374,17 +392,6 @@ public actor ClinikoClient {
         )
         return nil
     }
-
-    /// RFC 7231 IMF-fixdate parser. Used for `Retry-After: <http-date>`.
-    /// `ISO8601DateFormatter` does NOT accept the HTTP-date format — distinct
-    /// formatter required.
-    private static let httpDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(identifier: "GMT")
-        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
-        return formatter
-    }()
 
     private func parseValidationErrors(from data: Data) -> [String: [String]] {
         // Best-effort decode of the two response shapes Cliniko documents
