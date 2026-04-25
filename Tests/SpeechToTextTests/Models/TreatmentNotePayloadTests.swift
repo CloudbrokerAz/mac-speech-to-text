@@ -170,6 +170,38 @@ struct TreatmentNotePayloadTests {
         #expect(created.id == 9876543)
     }
 
+    // MARK: - Redaction
+
+    @Test("description redacts the notes body but keeps opaque IDs visible")
+    func description_redactsNotesBody() {
+        let payload = TreatmentNotePayload(
+            patientID: 1001,
+            appointmentID: 5001,
+            notes: "## Subjective\nVERY_SECRET_PHI_TO_BE_REDACTED"
+        )
+
+        let described = String(describing: payload)
+        let debugDescribed = String(reflecting: payload)
+
+        // Opaque numeric IDs are fine to surface — they're not PHI on
+        // their own. SOAP body must not appear at any privacy posture.
+        #expect(described.contains("1001"))
+        #expect(described.contains("5001"))
+        #expect(described.contains("<redacted>"))
+        #expect(!described.contains("VERY_SECRET_PHI_TO_BE_REDACTED"))
+        #expect(!debugDescribed.contains("VERY_SECRET_PHI_TO_BE_REDACTED"))
+    }
+
+    @Test("description handles nil appointmentID without crashing or leaking")
+    func description_nilAppointmentID() {
+        let payload = TreatmentNotePayload(patientID: 7, appointmentID: nil, notes: "x")
+        let described = String(describing: payload)
+        #expect(described.contains("appointmentID: nil"))
+        #expect(described.contains("<redacted>"))
+    }
+
+    // MARK: - Encoding
+
     @Test("Encoded payload survives decode without losing fields")
     func payload_codableRoundTrip() throws {
         let original = TreatmentNotePayload(

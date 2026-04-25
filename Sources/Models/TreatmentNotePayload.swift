@@ -24,7 +24,8 @@ import Foundation
 /// **not** customised — never log a `TreatmentNotePayload`; the
 /// `ClinikoClient` body-redaction contract (`.claude/references/cliniko-api.md`
 /// §Redaction) is what protects the payload at the network layer.
-public struct TreatmentNotePayload: Codable, Sendable, Equatable {
+public struct TreatmentNotePayload: Codable, Sendable, Equatable,
+    CustomStringConvertible, CustomDebugStringConvertible {
     /// Cliniko numeric patient ID (the resource the note attaches to).
     public let patientID: Int
 
@@ -44,6 +45,21 @@ public struct TreatmentNotePayload: Codable, Sendable, Equatable {
         self.appointmentID = appointmentID
         self.notes = notes
     }
+
+    /// Belt-and-braces redaction. `notes` is patient data; if a future
+    /// contributor accidentally interpolates a payload into a log,
+    /// `String(describing:)`, or a crash-report message, this `description`
+    /// keeps the SOAP body off the wire. Mirrors the pattern used by
+    /// `ClinikoCredentials` for the API-key field.
+    public var description: String {
+        let appointment = appointmentID.map(String.init) ?? "nil"
+        return "TreatmentNotePayload(patientID: \(patientID), appointmentID: \(appointment), notes: <redacted>)"
+    }
+
+    /// Same redaction for `String(reflecting:)` / `dump(_:)` callers —
+    /// debugger inspection still works on the actual fields, but any
+    /// log-style stringification gets the safe form.
+    public var debugDescription: String { description }
 
     /// Explicit snake_case keys instead of `keyEncodingStrategy =
     /// .convertToSnakeCase` so the wire shape can't drift if a future
