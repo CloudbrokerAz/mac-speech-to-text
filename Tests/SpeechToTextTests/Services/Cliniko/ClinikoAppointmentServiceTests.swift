@@ -50,7 +50,7 @@ final class ClinikoAppointmentServiceTests: XCTestCase {
             return (response, body)
         }
 
-        let reference = ISO8601DateFormatter().date(from: "2026-04-25T12:00:00Z") ?? Date()
+        let reference = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-04-25T12:00:00Z"))
         let appointments = try await service.recentAndTodayAppointments(
             forPatientID: "1001",
             reference: reference

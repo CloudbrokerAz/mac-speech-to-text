@@ -49,8 +49,20 @@ public actor ClinikoAppointmentService: ClinikoAppointmentLoading {
         forPatientID patientID: String,
         reference: Date
     ) async throws -> [Appointment] {
-        let from = reference.addingTimeInterval(-7 * 24 * 60 * 60)
-        let to = reference.addingTimeInterval(24 * 60 * 60)
+        // Use a UTC-pinned `Calendar` so day arithmetic is timezone-stable
+        // (the underlying endpoint emits ISO8601 in UTC). Gregorian + UTC
+        // sidesteps both wall-clock DST shifts and any locale-induced
+        // calendar drift; falling back to seconds-arithmetic on a
+        // `preconditionFailure` is purely defensive — Calendar+Gregorian
+        // never returns nil for ±N day offsets from a valid `Date`.
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC") ?? .gmt
+        guard
+            let from = utc.date(byAdding: .day, value: -7, to: reference),
+            let to = utc.date(byAdding: .day, value: 1, to: reference)
+        else {
+            preconditionFailure("ClinikoAppointmentService: ±day arithmetic returned nil for a valid reference date")
+        }
         let response: AppointmentListResponse = try await client.send(
             .patientAppointments(patientID: patientID, from: from, to: to)
         )
