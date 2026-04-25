@@ -159,8 +159,8 @@ struct ClinikoCredentialStoreTests {
         }
     }
 
-    @Test("deleteCredentials still clears the shard even when SecureStore.delete throws")
-    func deleteCredentialsClearsShardOnSecureStoreFailure() async throws {
+    @Test("deleteCredentials retains the shard when SecureStore.delete throws")
+    func deleteCredentialsRetainsShardOnSecureStoreFailure() async throws {
         // Pre-seed the shard via a working store, then swap in a throwing
         // SecureStore that shares the same UserDefaults instance.
         let userDefaults = makeUserDefaults()
@@ -174,10 +174,13 @@ struct ClinikoCredentialStoreTests {
         await #expect(throws: ClinikoCredentialStore.Failure.self) {
             try await store.deleteCredentials()
         }
-        // The shard MUST be removed even though Keychain delete failed —
-        // otherwise the user's next probe would point at a stale tenant.
+        // On Keychain failure the shard MUST remain — the API key is still
+        // there too, and clearing the shard alone would amputate the pair so
+        // that `loadCredentials` returns au1 (the default) against the user's
+        // real uk2 key, which would 401. Retaining both halves preserves
+        // user intent until a retry succeeds.
         let storedShard = userDefaults.string(forKey: ClinikoCredentialStore.shardUserDefaultsKey)
-        #expect(storedShard == nil, "shard must be cleared via defer even on Keychain failure")
+        #expect(storedShard == "uk2", "shard must be retained when Keychain delete fails")
     }
 
     // MARK: - Service / account constants are pinned

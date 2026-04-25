@@ -69,11 +69,28 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.apiKeyDraft, "")
         XCTAssertEqual(vm.selectedShard, .default)
         XCTAssertFalse(vm.hasStoredCredentials)
+        XCTAssertFalse(vm.isApiKeyDraftValid)
         XCTAssertEqual(vm.credentialState, .unknown)
         XCTAssertEqual(vm.verificationStatus, .absent)
         XCTAssertEqual(vm.connectionStatus, .idle)
         XCTAssertNil(vm.statusMessage)
         XCTAssertFalse(vm.isBusy)
+    }
+
+    func test_isApiKeyDraftValid_reflectsTrimmedDraft() {
+        let (store, _, _) = makeStore()
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: neverInvokedProbe())
+
+        XCTAssertFalse(vm.isApiKeyDraftValid, "empty draft is invalid")
+
+        vm.apiKeyDraft = "   "
+        XCTAssertFalse(vm.isApiKeyDraftValid, "whitespace-only draft is invalid")
+
+        vm.apiKeyDraft = "MS-test-au1"
+        XCTAssertTrue(vm.isApiKeyDraftValid)
+
+        vm.apiKeyDraft = "  MS-trim  "
+        XCTAssertTrue(vm.isApiKeyDraftValid, "trimmable non-empty draft is valid")
     }
 
     // MARK: - Refresh
@@ -304,17 +321,16 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
         XCTAssertNil(userDefaults.string(forKey: ClinikoCredentialStore.shardUserDefaultsKey))
     }
 
-    func test_remove_keychainFailure_keepsHasStoredCredentialsAndShowsBanner() async throws {
+    func test_remove_keychainFailure_retainsShardAndShowsBanner() async throws {
         // Pre-seed the shard but back the store with a throwing SecureStore.
         let userDefaults = makeUserDefaults()
-        userDefaults.set("au1", forKey: ClinikoCredentialStore.shardUserDefaultsKey)
+        userDefaults.set("uk2", forKey: ClinikoCredentialStore.shardUserDefaultsKey)
         let store = ClinikoCredentialStore(
             secureStore: ThrowingSecureStore(),
             userDefaults: userDefaults
         )
 
         let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: neverInvokedProbe())
-        // Force the VM to think it has credentials.
         vm.apiKeyDraft = "leftover"
         // Refresh will fail (read failure) and mark .readFailed.
         await vm.refreshState()
@@ -324,10 +340,12 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
 
         XCTAssertEqual(vm.connectionStatus, .failure)
         XCTAssertNotNil(vm.statusMessage)
-        // The shard MUST still be cleared via the store's `defer` even though
-        // the Keychain delete threw — otherwise the next probe would point
-        // at a stale tenant.
-        XCTAssertNil(userDefaults.string(forKey: ClinikoCredentialStore.shardUserDefaultsKey))
+        // On Keychain delete failure the store retains the shard so the
+        // surviving API key + shard remain a valid pair the user can either
+        // retry or keep using. The VM's banner tells the user the key may
+        // still be in Keychain; the shard just stays consistent with that.
+        XCTAssertEqual(userDefaults.string(forKey: ClinikoCredentialStore.shardUserDefaultsKey), "uk2",
+                       "shard must be retained when Keychain delete fails so the on-disk pair stays consistent")
     }
 
     // MARK: - Shard picker

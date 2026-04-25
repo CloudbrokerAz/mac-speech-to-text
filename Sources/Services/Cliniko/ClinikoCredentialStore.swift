@@ -148,12 +148,21 @@ public actor ClinikoCredentialStore {
         userDefaults.set(shard.rawValue, forKey: Self.shardUserDefaultsKey)
     }
 
-    /// Delete every Cliniko credential and forget the shard. The shard write
-    /// happens unconditionally inside `defer` so the two halves never drift:
-    /// a Keychain delete failure must not leave `cliniko.shard` cached
-    /// pointing at a tenant the user can no longer authenticate against.
+    /// Delete every Cliniko credential and forget the shard. The Keychain
+    /// delete runs first; only on success do we clear the shard. This keeps
+    /// the on-disk pair consistent across failure modes:
+    ///
+    /// - Keychain delete **fails** → key + shard both remain. `loadCredentials`
+    ///   still returns a usable pair pointed at the correct tenant, so a user
+    ///   who retries (or who chooses to keep using Cliniko while we sort out
+    ///   the Keychain error) hits the right shard.
+    /// - Keychain delete **succeeds** → shard cleared. No stale tenant
+    ///   reference outlives the secret it authenticated against.
+    ///
+    /// The reverse asymmetry (Keychain succeeds + UserDefaults remove fails)
+    /// is a non-failure mode in practice — `UserDefaults.removeObject` is a
+    /// documented thread-safe call with no failure path on a writable suite.
     public func deleteCredentials() async throws {
-        defer { userDefaults.removeObject(forKey: Self.shardUserDefaultsKey) }
         do {
             try await secureStore.delete(forKey: Self.apiKeyAccount)
         } catch {
@@ -162,5 +171,6 @@ public actor ClinikoCredentialStore {
             )
             throw Failure.deleteFailed(underlying: error)
         }
+        userDefaults.removeObject(forKey: Self.shardUserDefaultsKey)
     }
 }

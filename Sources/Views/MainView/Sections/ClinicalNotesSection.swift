@@ -157,7 +157,7 @@ struct ClinicalNotesSection: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(Color.warmAmber)
-            .disabled(viewModel.isBusy || viewModel.apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(viewModel.isBusy || !viewModel.isApiKeyDraftValid)
             .accessibilityIdentifier("clinicalNotesSection.saveButton")
 
             Button {
@@ -282,6 +282,13 @@ final class ClinicalNotesSectionViewModel {
     /// The user's in-flight API-key input. Cleared after a successful save so
     /// the secret only lives in VM memory for the duration of the entry.
     var apiKeyDraft: String = ""
+
+    /// Whether the current draft is non-empty after trimming. Centralises the
+    /// "is the save button enabled" check so both the view's button and the
+    /// VM's `saveAndTest` guard apply the same rule.
+    var isApiKeyDraftValid: Bool {
+        !apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     /// Picker selection. Changes are persisted to UserDefaults via the store
     /// when the user hits Save; merely changing the picker without saving is
@@ -526,11 +533,10 @@ final class ClinicalNotesSectionViewModel {
             verificationStatus = .unverified
             connectionStatus = .failure
             statusMessage = "Cliniko returned an unexpected response. Try again."
-        } catch ClinikoAuthProbeError.unknown {
-            verificationStatus = .unverified
-            connectionStatus = .failure
-            statusMessage = "Unexpected error contacting Cliniko."
         } catch {
+            // Catches `.unknown(typeName:)` and any unexpected throw type
+            // with the same message — splitting them adds no UX value while
+            // duplicating the branch arm.
             verificationStatus = .unverified
             connectionStatus = .failure
             statusMessage = "Unexpected error contacting Cliniko."
