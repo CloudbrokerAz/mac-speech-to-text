@@ -302,7 +302,10 @@ struct MainView: View {
             }
         case .clinicalNotes:
             if let clinicalNotesVM = clinicalNotesViewModel {
-                ClinicalNotesSection(viewModel: clinicalNotesVM)
+                ClinicalNotesSection(
+                    viewModel: clinicalNotesVM,
+                    settingsService: settingsService
+                )
             } else {
                 ClinicalNotesSectionPlaceholder()
             }

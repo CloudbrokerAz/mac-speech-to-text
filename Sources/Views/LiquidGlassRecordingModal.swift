@@ -429,32 +429,78 @@ struct LiquidGlassRecordingModal: View {
                 EmptyView()
 
             } else if !viewModel.transcribedText.isEmpty {
-                // Success indicator
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [Color.liquidPrismaticGreen, Color.liquidPrismaticCyan],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
+                if viewModel.isClinicalNotesEnabled {
+                    // Clinical Notes Mode (#11): show "Generate Notes" + "Done"
+                    // instead of auto-dismissing. Tap surfaces the transcript
+                    // to whoever listens for `.clinicalNotesGenerateRequested`
+                    // (ReviewScreen presenter wires up in #13).
+                    Button {
+                        handleGenerateNotes()
+                    } label: {
+                        Text("Generate Notes")
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(
+                                LinearGradient(
+                                    colors: [Color.liquidPrismaticGreen, Color.liquidPrismaticCyan],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
                             )
-                        )
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .shadow(color: Color.liquidPrismaticGreen.opacity(0.4), radius: 8, y: 4)
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(.return)
+                    .accessibilityIdentifier("generateNotesButton")
 
-                    Text(viewModel.lastTranscriptionCopiedToClipboard ? "Copied!" : "Inserted!")
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [Color.liquidPrismaticGreen, Color.liquidPrismaticCyan],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                }
-                .onAppear {
-                    Task {
-                        try? await Task.sleep(nanoseconds: 900_000_000)
+                    Button {
                         handleDismiss()
+                    } label: {
+                        Text("Done")
+                            .font(.system(size: 14, weight: .medium, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(.ultraThinMaterial)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("doneAfterTranscriptionButton")
+                } else {
+                    // Default: success indicator + auto-dismiss after 0.9s
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [Color.liquidPrismaticGreen, Color.liquidPrismaticCyan],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+
+                        Text(viewModel.lastTranscriptionCopiedToClipboard ? "Copied!" : "Inserted!")
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [Color.liquidPrismaticGreen, Color.liquidPrismaticCyan],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                    }
+                    .onAppear {
+                        Task {
+                            try? await Task.sleep(nanoseconds: 900_000_000)
+                            handleDismiss()
+                        }
                     }
                 }
 
@@ -606,6 +652,43 @@ struct LiquidGlassRecordingModal: View {
         }
 
         dismissTaskId = UUID()
+    }
+
+    /// Hand the just-finished transcript to the Clinical Notes pipeline
+    /// (#13's ReviewScreen presenter listens). Posting via `NotificationCenter`
+    /// keeps the modal decoupled from `AppState` and lets #13 land its
+    /// presenter in one place without further changes here.
+    ///
+    /// Until the ReviewScreen presenter lands in #13, this post has no
+    /// observers and the modal dismisses with the transcript only present on
+    /// `RecordingViewModel.transcribedText` (cleared on next start). When #13
+    /// opens the review screen it must also defensively re-check Cliniko
+    /// credential presence before allowing export — the toggle's disabled
+    /// state can desynchronise from on-disk credential state if a settings
+    /// save fails on the credential-removal auto-disable path. #14's export
+    /// flow is the consumer-side enforcement point for that invariant.
+    private func handleGenerateNotes() {
+        let transcript = viewModel.transcribedText
+        guard !transcript.isEmpty else {
+            // Defence-in-depth: parent `if !viewModel.transcribedText.isEmpty`
+            // already gates rendering of this branch. If we reach here, the
+            // invariant is broken and a developer should notice.
+            AppLogger.viewModel.warning(
+                "handleGenerateNotes called with empty transcript — unexpected"
+            )
+            return
+        }
+        // Log the post so the listener gap (until #13 lands) is at least
+        // visible in sysdiagnose. Length only — never the transcript body.
+        AppLogger.viewModel.info(
+            "clinicalNotesGenerateRequested posted length=\(transcript.count, privacy: .public)"
+        )
+        NotificationCenter.default.post(
+            name: .clinicalNotesGenerateRequested,
+            object: nil,
+            userInfo: ["transcript": transcript]
+        )
+        handleDismiss()
     }
 }
 

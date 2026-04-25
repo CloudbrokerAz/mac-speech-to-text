@@ -62,6 +62,14 @@ final class RecordingViewModel {
     /// Whether the last transcription was copied to clipboard (not inserted)
     var lastTranscriptionCopiedToClipboard: Bool = false
 
+    /// Whether Clinical Notes Mode (#11) is enabled in Settings. Read on
+    /// demand from `SettingsService` so a toggle change made in the
+    /// Main window during a recording is honoured by the next read; the
+    /// modal evaluates this only after transcription completes.
+    var isClinicalNotesEnabled: Bool {
+        settingsService.load().general.clinicalNotesModeEnabled
+    }
+
     // MARK: - Dependencies
     // All services are @ObservationIgnored to prevent @Observable from tracking them
     // This is critical for fluidAudioService which is an actor existential type -

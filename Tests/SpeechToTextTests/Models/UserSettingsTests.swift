@@ -35,6 +35,9 @@ final class UserSettingsTests: XCTestCase {
         XCTAssertTrue(general.copyToClipboard)
         XCTAssertFalse(general.accessibilityPromptDismissed)
         XCTAssertFalse(general.clipboardOnlyMode)
+        // #11: Clinical Notes Mode is opt-in. Existing users see the recording
+        // flow unchanged on update — must remain false by default.
+        XCTAssertFalse(general.clinicalNotesModeEnabled)
     }
 
     func test_defaultSettings_language_hasCorrectDefaults() {

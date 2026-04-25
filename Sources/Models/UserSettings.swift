@@ -66,7 +66,8 @@ struct UserSettings: Codable, Sendable {
             autoInsertText: true,
             copyToClipboard: true,
             accessibilityPromptDismissed: false,
-            clipboardOnlyMode: false
+            clipboardOnlyMode: false,
+            clinicalNotesModeEnabled: false
         ),
         hotkey: HotkeyConfiguration(
             enabled: true,
@@ -139,8 +140,15 @@ struct GeneralConfiguration: Codable, Sendable {
     var accessibilityPromptDismissed: Bool
     var clipboardOnlyMode: Bool
     var pasteBehavior: PasteBehavior
+    /// Clinical Notes Mode (#11). When `true`, the recording-completion modal
+    /// surfaces a "Generate Notes" action that drives the SOAP-note pipeline
+    /// (#5 + #13) instead of auto-dismissing after paste. Default `false` so
+    /// existing users see no behavioural change until they opt in.
+    var clinicalNotesModeEnabled: Bool
 
-    // Custom decoder to handle missing pasteBehavior in existing settings
+    // Custom decoder to handle missing pasteBehavior / clinicalNotesModeEnabled
+    // in existing settings. New optional fields use `decodeIfPresent` so saved
+    // settings from older builds still load.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         launchAtLogin = try container.decode(Bool.self, forKey: .launchAtLogin)
@@ -149,6 +157,7 @@ struct GeneralConfiguration: Codable, Sendable {
         accessibilityPromptDismissed = try container.decode(Bool.self, forKey: .accessibilityPromptDismissed)
         clipboardOnlyMode = try container.decode(Bool.self, forKey: .clipboardOnlyMode)
         pasteBehavior = try container.decodeIfPresent(PasteBehavior.self, forKey: .pasteBehavior) ?? .pasteOnly
+        clinicalNotesModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .clinicalNotesModeEnabled) ?? false
     }
 
     init(
@@ -157,7 +166,8 @@ struct GeneralConfiguration: Codable, Sendable {
         copyToClipboard: Bool = true,
         accessibilityPromptDismissed: Bool = false,
         clipboardOnlyMode: Bool = false,
-        pasteBehavior: PasteBehavior = .pasteOnly
+        pasteBehavior: PasteBehavior = .pasteOnly,
+        clinicalNotesModeEnabled: Bool = false
     ) {
         self.launchAtLogin = launchAtLogin
         self.autoInsertText = autoInsertText
@@ -165,6 +175,7 @@ struct GeneralConfiguration: Codable, Sendable {
         self.accessibilityPromptDismissed = accessibilityPromptDismissed
         self.clipboardOnlyMode = clipboardOnlyMode
         self.pasteBehavior = pasteBehavior
+        self.clinicalNotesModeEnabled = clinicalNotesModeEnabled
     }
 }
 
