@@ -86,6 +86,13 @@ struct ClinicalNotesSection: View {
             // Clinical Notes Mode can never appear "on" without a tenant to
             // export to. Persist immediately so a quit before a save still
             // disables the mode.
+            //
+            // Bypasses `applyClinicalNotesMode(_:)` deliberately: that
+            // helper resets the Safety Disclaimer ack on off→on
+            // transitions (#12), and a credential-removal force-off is
+            // not a re-enable gesture. `applyClinicalNotesMode(false)`
+            // would short-circuit the reset anyway, but the direct write
+            // makes the intent unambiguous at the call site.
             guard newValue == .absent, settings.general.clinicalNotesModeEnabled else { return }
             settings.general.clinicalNotesModeEnabled = false
             saveSettings()
@@ -155,7 +162,12 @@ struct ClinicalNotesSection: View {
         Binding(
             get: { settings.general.clinicalNotesModeEnabled },
             set: { newValue in
-                settings.general.clinicalNotesModeEnabled = newValue
+                // Apply via the model helper so off→on transitions reset the
+                // Safety Disclaimer ack (#12 AC item 3). The helper leaves
+                // the flag alone on on→off and on→on, matching the spec
+                // "resets if user disables and re-enables Clinical Notes
+                // Mode."
+                settings.general.applyClinicalNotesMode(newValue)
                 saveSettings()
             }
         )

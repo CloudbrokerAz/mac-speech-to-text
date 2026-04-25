@@ -41,6 +41,19 @@ struct LiquidGlassRecordingModal: View {
             liquidGlassModal
                 .scaleEffect(isVisible ? 1.0 : 0.85)
                 .opacity(isVisible ? 1.0 : 0.0)
+
+            // Safety Disclaimer overlay (#12). Covers the modal so the
+            // close button and other actions are blocked while the doctor
+            // confirms the "drafting assistant, not a diagnostic tool"
+            // notice. The disclaimer view enforces its own single-action
+            // dismissal contract.
+            if viewModel.showSafetyDisclaimer {
+                SafetyDisclaimerView(
+                    onAcknowledge: handleSafetyDisclaimerAcknowledged
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                .zIndex(1)
+            }
         }
         .onAppear {
             withAnimation(.spring(response: 0.6, dampingFraction: 0.75)) {
@@ -72,18 +85,33 @@ struct LiquidGlassRecordingModal: View {
         .onDisappear {
             recordingTaskId = nil
             dismissTaskId = nil
+            // If the window closes while the Safety Disclaimer overlay
+            // (#12) is still up — e.g. AppKit teardown or a Cmd+W-equivalent
+            // bypass we missed — log structurally so the recording loss is
+            // visible in sysdiagnose. PHI rule: length only, never the
+            // transcript body.
+            if viewModel.showSafetyDisclaimer {
+                AppLogger.viewModel.info(
+                    "Recording modal dismissed while safety disclaimer was up — discarding transcript length=\(viewModel.transcribedText.count, privacy: .public)"
+                )
+            }
             guard !isDismissing else { return }
             Task.detached { @MainActor in
                 await viewModel.cancelRecording()
             }
         }
         .onKeyPress(.escape) {
+            // Block dismissal via ESC while the Safety Disclaimer (#12) is
+            // showing — the disclaimer enforces a single "I understand,
+            // continue" path and must not be dismissable by keyboard.
+            guard !viewModel.showSafetyDisclaimer else { return .handled }
             handleDismiss()
             return .handled
         }
         .onChange(of: viewModel.errorMessage) { _, newValue in
             showError = newValue != nil
         }
+        .animation(.spring(response: 0.5, dampingFraction: 0.7), value: viewModel.showSafetyDisclaimer)
     }
 
     // MARK: - Ambient Background
@@ -92,6 +120,10 @@ struct LiquidGlassRecordingModal: View {
         Color.black.opacity(0.01)
             .ignoresSafeArea()
             .onTapGesture {
+                // Block ambient-tap dismissal while the Safety Disclaimer
+                // (#12) is showing. The disclaimer must not be dismissable
+                // by clicking outside it; only its single button advances.
+                guard !viewModel.showSafetyDisclaimer else { return }
                 handleDismiss()
             }
     }
@@ -643,6 +675,12 @@ struct LiquidGlassRecordingModal: View {
     // MARK: - Private Methods
 
     private func handleDismiss() {
+        // Defence-in-depth (#12): the Safety Disclaimer overlay's
+        // full-bleed dimmer hit-test-blocks the close button today, but a
+        // future ZStack refactor could let dismissal through. The
+        // disclaimer enforces a single "I understand, continue" path, so
+        // refuse to dismiss while it's up.
+        guard !viewModel.showSafetyDisclaimer else { return }
         guard !isDismissing else { return }
         isDismissing = true
         recordingTaskId = nil
@@ -667,6 +705,13 @@ struct LiquidGlassRecordingModal: View {
     /// state can desynchronise from on-disk credential state if a settings
     /// save fails on the credential-removal auto-disable path. #14's export
     /// flow is the consumer-side enforcement point for that invariant.
+    ///
+    /// Safety Disclaimer gate (#12): on the first invocation of a fresh
+    /// Clinical Notes Mode session, the doctor must acknowledge the
+    /// "drafting assistant, not a diagnostic tool" notice. The
+    /// acknowledgement handler calls `postGenerateNotesAndDismiss(transcript:)`
+    /// directly on success — no re-entrancy here, so a save failure can't
+    /// silently re-present the overlay in the same gesture.
     private func handleGenerateNotes() {
         let transcript = viewModel.transcribedText
         guard !transcript.isEmpty else {
@@ -678,8 +723,35 @@ struct LiquidGlassRecordingModal: View {
             )
             return
         }
-        // Log the post so the listener gap (until #13 lands) is at least
-        // visible in sysdiagnose. Length only — never the transcript body.
+
+        // Safety Disclaimer (#12): present the one-time acknowledgement
+        // overlay before surfacing the transcript to any downstream listener.
+        // `handleSafetyDisclaimerAcknowledged` continues the flow on success.
+        guard viewModel.isSafetyDisclaimerAcknowledged else {
+            AppLogger.viewModel.info(
+                "Safety disclaimer required — presenting before clinicalNotesGenerateRequested post"
+            )
+            viewModel.presentSafetyDisclaimer()
+            return
+        }
+
+        postGenerateNotesAndDismiss(transcript: transcript)
+    }
+
+    /// Post the transcript to the Clinical Notes pipeline and dismiss the
+    /// modal. Extracted so both the ack-already-true fast path and the
+    /// post-acknowledge bridge can call it directly without re-entering
+    /// the gating logic. PHI rule: length only — never the transcript body.
+    private func postGenerateNotesAndDismiss(transcript: String) {
+        // The empty-transcript guard in `handleGenerateNotes` is
+        // structurally upstream of every caller; defensively re-check so
+        // a future caller can't post an empty payload.
+        guard !transcript.isEmpty else {
+            AppLogger.viewModel.warning(
+                "postGenerateNotesAndDismiss called with empty transcript — refusing to post"
+            )
+            return
+        }
         AppLogger.viewModel.info(
             "clinicalNotesGenerateRequested posted length=\(transcript.count, privacy: .public)"
         )
@@ -689,6 +761,31 @@ struct LiquidGlassRecordingModal: View {
             userInfo: ["transcript": transcript]
         )
         handleDismiss()
+    }
+
+    /// Bridge between the disclaimer overlay and the Clinical Notes flow.
+    /// Persists the ack flag and proceeds to post + dismiss directly on
+    /// success. On persistence failure the view model surfaces a banner
+    /// via `errorMessage`, dismisses the overlay so the banner is visible,
+    /// and we abort the flow without posting.
+    ///
+    /// Single-shot: a rapid double-tap (or Return-Return on the
+    /// `borderedProminent` button) could enqueue two actions before
+    /// SwiftUI removes the disclaimer from the tree. The disclaimer's
+    /// own `hasAcknowledged` guard absorbs the second `onAcknowledge`
+    /// invocation; this `isDismissing` check is the modal-side belt to
+    /// that braces, ensuring no duplicate `clinicalNotesGenerateRequested`
+    /// post even if the view-side guard ever regresses.
+    private func handleSafetyDisclaimerAcknowledged() {
+        guard !isDismissing else { return }
+        let transcript = viewModel.transcribedText
+        guard viewModel.acknowledgeSafetyDisclaimer() else {
+            AppLogger.viewModel.warning(
+                "Safety disclaimer ack failed to persist — aborting clinical-notes post"
+            )
+            return
+        }
+        postGenerateNotesAndDismiss(transcript: transcript)
     }
 }
 

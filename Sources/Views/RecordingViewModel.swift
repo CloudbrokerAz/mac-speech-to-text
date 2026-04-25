@@ -70,6 +70,21 @@ final class RecordingViewModel {
         settingsService.load().general.clinicalNotesModeEnabled
     }
 
+    /// Whether to overlay the one-time Safety Disclaimer (#12) on the
+    /// recording modal. Set by `presentSafetyDisclaimer()` when the doctor
+    /// taps "Generate Notes" without a prior ack; cleared by
+    /// `acknowledgeSafetyDisclaimer()`.
+    var showSafetyDisclaimer: Bool = false
+
+    /// Whether the doctor has previously acknowledged the Safety Disclaimer
+    /// (#12). Read on demand so a settings reset (e.g. Clinical Notes Mode
+    /// toggled off→on, which clears the ack via
+    /// `GeneralConfiguration.applyClinicalNotesMode(_:)`) is honoured the
+    /// next time the modal asks.
+    var isSafetyDisclaimerAcknowledged: Bool {
+        settingsService.load().general.clinicalNotesDisclaimerAcknowledged
+    }
+
     // MARK: - Dependencies
     // All services are @ObservationIgnored to prevent @Observable from tracking them
     // This is critical for fluidAudioService which is an actor existential type -
@@ -461,6 +476,56 @@ final class RecordingViewModel {
             AppLogger.debug(AppLogger.viewModel, "[\(viewModelId)] Saved accessibilityPromptDismissed=true")
         } catch {
             AppLogger.error(AppLogger.viewModel, "[\(viewModelId)] Failed to save settings: \(error.localizedDescription)")
+        }
+    }
+
+    /// Show the one-time Safety Disclaimer overlay (#12). Called by the
+    /// recording modal when the doctor taps "Generate Notes" and no prior
+    /// ack has been recorded for the current Clinical Notes Mode session.
+    /// Idempotent — a second call while the overlay is already up is a
+    /// no-op so log signal stays clean.
+    func presentSafetyDisclaimer() {
+        guard !showSafetyDisclaimer else { return }
+        AppLogger.info(AppLogger.viewModel, "[\(viewModelId)] Safety disclaimer presented")
+        showSafetyDisclaimer = true
+    }
+
+    /// Persist the Safety Disclaimer acknowledgement (#12) and dismiss the
+    /// overlay. Returns `true` on success so the caller can proceed to
+    /// post `.clinicalNotesGenerateRequested`; `false` if the persistence
+    /// failed, in which case the overlay still closes (so the doctor is
+    /// not trapped) but `errorMessage` is set to a PHI-free banner the
+    /// modal already renders, and the caller MUST NOT post the
+    /// notification — re-running the flow with an unpersisted ack would
+    /// re-present the disclaimer in the same gesture.
+    ///
+    /// PHI: the structural error class only is logged. No transcript or
+    /// patient data crosses the log boundary — see
+    /// `.claude/references/phi-handling.md`.
+    @discardableResult
+    func acknowledgeSafetyDisclaimer() -> Bool {
+        AppLogger.info(AppLogger.viewModel, "[\(viewModelId)] Safety disclaimer acknowledged")
+        var settings = settingsService.load()
+        settings.general.clinicalNotesDisclaimerAcknowledged = true
+        do {
+            try settingsService.save(settings)
+            AppLogger.debug(AppLogger.viewModel, "[\(viewModelId)] Saved clinicalNotesDisclaimerAcknowledged=true")
+            showSafetyDisclaimer = false
+            return true
+        } catch {
+            // `SettingsService.save` only throws on `JSONEncoder.encode`
+            // failure — every `UserSettings` field is simple `Codable
+            // Sendable`, so this is functionally a developer bug rather
+            // than a transient. Surface a banner via the existing
+            // `errorMessage` channel so the doctor isn't left silently
+            // re-presented with the same disclaimer.
+            AppLogger.error(
+                AppLogger.viewModel,
+                "[\(viewModelId)] Failed to persist disclaimer ack kind=\(String(describing: type(of: error)))"
+            )
+            errorMessage = "Couldn't save your acknowledgement. Please try again."
+            showSafetyDisclaimer = false
+            return false
         }
     }
 

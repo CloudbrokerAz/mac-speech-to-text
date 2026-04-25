@@ -67,7 +67,8 @@ struct UserSettings: Codable, Sendable {
             copyToClipboard: true,
             accessibilityPromptDismissed: false,
             clipboardOnlyMode: false,
-            clinicalNotesModeEnabled: false
+            clinicalNotesModeEnabled: false,
+            clinicalNotesDisclaimerAcknowledged: false
         ),
         hotkey: HotkeyConfiguration(
             enabled: true,
@@ -145,10 +146,17 @@ struct GeneralConfiguration: Codable, Sendable {
     /// (#5 + #13) instead of auto-dismissing after paste. Default `false` so
     /// existing users see no behavioural change until they opt in.
     var clinicalNotesModeEnabled: Bool
+    /// Safety Disclaimer ack (#12). Flips to `true` the first time the doctor
+    /// confirms the "drafting assistant, not a diagnostic tool" disclaimer
+    /// before generating notes. Reset to `false` whenever Clinical Notes Mode
+    /// is toggled off→on so each fresh enable forces re-confirmation — apply
+    /// transitions through `applyClinicalNotesMode(_:)` to keep that invariant.
+    var clinicalNotesDisclaimerAcknowledged: Bool
 
     // Custom decoder to handle missing pasteBehavior / clinicalNotesModeEnabled
-    // in existing settings. New optional fields use `decodeIfPresent` so saved
-    // settings from older builds still load.
+    // / clinicalNotesDisclaimerAcknowledged in existing settings. New optional
+    // fields use `decodeIfPresent` so saved settings from older builds still
+    // load.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         launchAtLogin = try container.decode(Bool.self, forKey: .launchAtLogin)
@@ -158,6 +166,10 @@ struct GeneralConfiguration: Codable, Sendable {
         clipboardOnlyMode = try container.decode(Bool.self, forKey: .clipboardOnlyMode)
         pasteBehavior = try container.decodeIfPresent(PasteBehavior.self, forKey: .pasteBehavior) ?? .pasteOnly
         clinicalNotesModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .clinicalNotesModeEnabled) ?? false
+        clinicalNotesDisclaimerAcknowledged = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .clinicalNotesDisclaimerAcknowledged
+        ) ?? false
     }
 
     init(
@@ -167,7 +179,8 @@ struct GeneralConfiguration: Codable, Sendable {
         accessibilityPromptDismissed: Bool = false,
         clipboardOnlyMode: Bool = false,
         pasteBehavior: PasteBehavior = .pasteOnly,
-        clinicalNotesModeEnabled: Bool = false
+        clinicalNotesModeEnabled: Bool = false,
+        clinicalNotesDisclaimerAcknowledged: Bool = false
     ) {
         self.launchAtLogin = launchAtLogin
         self.autoInsertText = autoInsertText
@@ -176,6 +189,21 @@ struct GeneralConfiguration: Codable, Sendable {
         self.clipboardOnlyMode = clipboardOnlyMode
         self.pasteBehavior = pasteBehavior
         self.clinicalNotesModeEnabled = clinicalNotesModeEnabled
+        self.clinicalNotesDisclaimerAcknowledged = clinicalNotesDisclaimerAcknowledged
+    }
+
+    /// Apply a Clinical Notes Mode toggle change with the disclaimer-reset
+    /// side effect. On every off→on transition the safety-disclaimer ack is
+    /// reset to `false`, so the doctor re-confirms the "drafting assistant,
+    /// not a diagnostic tool" notice each time they re-enable the mode (#12
+    /// AC item 3). Force-off paths (e.g. credentials removed) leave the ack
+    /// flag alone — they do not represent a re-enable gesture.
+    mutating func applyClinicalNotesMode(_ enabled: Bool) {
+        let previous = clinicalNotesModeEnabled
+        clinicalNotesModeEnabled = enabled
+        if enabled, !previous {
+            clinicalNotesDisclaimerAcknowledged = false
+        }
     }
 }
 
