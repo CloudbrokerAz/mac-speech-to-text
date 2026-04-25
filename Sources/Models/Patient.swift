@@ -18,9 +18,11 @@ public struct Patient: Decodable, Identifiable, Sendable, Equatable, Hashable {
     /// (`ClinicalSession.selectedPatientID` is opaque-string-typed).
     public let id: Int
 
-    /// Patient's first / given name. Required by Cliniko's schema; we still
-    /// guard against `null` by decoding via the optional initializer, but a
-    /// missing first-name is exceedingly rare in practice.
+    /// Patient's first / given name. Required by Cliniko's schema, so the
+    /// model declares it non-optional — a missing or `null` first-name in
+    /// the wire payload will surface as `ClinikoError.decoding(...)` from
+    /// the client, which is the right outcome for "Cliniko returned a
+    /// patient row that violates its own schema."
     public let firstName: String
 
     /// Patient's last / family name.

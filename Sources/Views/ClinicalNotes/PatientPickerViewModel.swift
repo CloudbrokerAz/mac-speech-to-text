@@ -139,11 +139,21 @@ final class PatientPickerViewModel {
             }
             searchPhase = patients.isEmpty ? .empty : .results(patients)
         } catch let error as ClinikoError {
-            // `.cancelled` is the user-typing-faster-than-the-network
-            // case: swallow silently so the UI doesn't flash an error,
-            // but reset stale `.searching` so the UI doesn't get stuck.
+            // For `.cancelled`, only swallow + reset to `.idle` if our
+            // local task was actually cancelled (the typing-race case
+            // — `searchTask?.cancel()` propagates `Task.isCancelled =
+            // true` through structured concurrency to the awaited
+            // service call). A `.cancelled` arriving without
+            // `Task.isCancelled` would be a URLSession-level cancel
+            // (session invalidation, etc.) — surface that as an error
+            // so the UI doesn't silently lose state. Mirrors the
+            // identical check in `loadAppointments`.
             if case .cancelled = error {
-                if searchPhase == .searching { searchPhase = .idle }
+                if Task.isCancelled {
+                    if searchPhase == .searching { searchPhase = .idle }
+                    return
+                }
+                searchPhase = .error(error)
                 return
             }
             searchPhase = .error(error)

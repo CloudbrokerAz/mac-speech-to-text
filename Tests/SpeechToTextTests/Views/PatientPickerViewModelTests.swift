@@ -148,8 +148,13 @@ struct PatientPickerViewModelTests {
         #expect(vm.searchPhase == .error(.unauthenticated))
     }
 
-    @Test(".cancelled service errors are swallowed silently")
-    func search_cancelled_silent() async throws {
+    @Test("service .cancelled with no task-level cancel surfaces as .error")
+    func search_cancelled_noTaskCancel_isError() async throws {
+        // The VM swallows `.cancelled` only when our local task was
+        // actually cancelled (typing-race propagation). A `.cancelled`
+        // arriving from the service layer without `Task.isCancelled`
+        // means a URLSession-level cancel (session invalidation, etc.)
+        // — surface that so the UI doesn't silently lose state.
         let patients = FakePatientSearcher(result: .failure(.cancelled))
         let appointments = FakeAppointmentLoader(result: .success([]))
         let store = SessionStore()
@@ -163,11 +168,7 @@ struct PatientPickerViewModelTests {
         vm.updateQuery("anything")
         try await Task.sleep(nanoseconds: 50_000_000)
 
-        // `.cancelled` doesn't render an error to the user (the typing-
-        // race case), but the VM resets the stuck `.searching` phase to
-        // `.idle` so the UI never spins forever waiting for a result
-        // that won't come.
-        #expect(vm.searchPhase == .idle)
+        #expect(vm.searchPhase == .error(.cancelled))
     }
 
     // MARK: - Patient selection
