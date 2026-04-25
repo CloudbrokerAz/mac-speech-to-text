@@ -38,6 +38,9 @@ final class UserSettingsTests: XCTestCase {
         // #11: Clinical Notes Mode is opt-in. Existing users see the recording
         // flow unchanged on update — must remain false by default.
         XCTAssertFalse(general.clinicalNotesModeEnabled)
+        // #12: Safety Disclaimer must be presented on first "Generate Notes"
+        // tap of a Clinical Notes Mode session, so the ack defaults to false.
+        XCTAssertFalse(general.clinicalNotesDisclaimerAcknowledged)
     }
 
     func test_defaultSettings_language_hasCorrectDefaults() {
@@ -290,11 +293,15 @@ final class UserSettingsTests: XCTestCase {
         var general = UserSettings.default.general
         general.accessibilityPromptDismissed = true
         general.clipboardOnlyMode = true
+        // #12: pin the disclaimer-ack flag round-trip alongside the older
+        // additions so a future encoder/decoder change can't silently drop it.
+        general.clinicalNotesDisclaimerAcknowledged = true
 
         let data = try JSONEncoder().encode(general)
         let decoded = try JSONDecoder().decode(GeneralConfiguration.self, from: data)
 
         XCTAssertEqual(decoded.accessibilityPromptDismissed, true)
         XCTAssertEqual(decoded.clipboardOnlyMode, true)
+        XCTAssertEqual(decoded.clinicalNotesDisclaimerAcknowledged, true)
     }
 }
