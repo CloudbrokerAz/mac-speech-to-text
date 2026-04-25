@@ -42,32 +42,35 @@ struct ClinicalSessionTests {
             excluded: ["smalltalk"]
         )
         let id = UUID()
+        let patientID = OpaqueClinikoID(rawValue: "patient-1")
+        let appointmentID = OpaqueClinikoID(rawValue: "appt-1")
         let session = ClinicalSession(
             id: id,
             recordingSession: recording,
             draftNotes: notes,
             excludedReAdded: ["weather"],
-            selectedPatientID: "patient-1",
-            selectedAppointmentID: "appt-1"
+            selectedPatientID: patientID,
+            selectedAppointmentID: appointmentID
         )
 
         #expect(session.id == id)
         #expect(session.draftNotes == notes)
         #expect(session.excludedReAdded == ["weather"])
-        #expect(session.selectedPatientID == "patient-1")
-        #expect(session.selectedAppointmentID == "appt-1")
+        #expect(session.selectedPatientID == patientID)
+        #expect(session.selectedAppointmentID == appointmentID)
     }
 
     @Test("Mutating draftNotes leaves other fields untouched")
     func mutate_draftNotesIsIsolated() {
+        let patientID = OpaqueClinikoID(rawValue: "p")
         var session = ClinicalSession(
             recordingSession: RecordingSession(),
-            selectedPatientID: "p"
+            selectedPatientID: patientID
         )
         session.draftNotes = StructuredNotes(subjective: "x")
 
         #expect(session.draftNotes?.subjective == "x")
-        #expect(session.selectedPatientID == "p")
+        #expect(session.selectedPatientID == patientID)
     }
 }
 

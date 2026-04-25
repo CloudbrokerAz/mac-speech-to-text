@@ -294,7 +294,7 @@ struct ReviewViewModelTests {
         let viewModel = ReviewViewModel(sessionStore: store, manipulations: stubManipulations())
         #expect(!viewModel.canExport)
 
-        store.setSelectedPatient(id: "42")
+        store.setSelectedPatient(id: OpaqueClinikoID(42))
         #expect(viewModel.canExport)
     }
 
@@ -326,7 +326,7 @@ struct ReviewViewModelTests {
     @Test("triggerExport with a patient posts .clinicalNotesExportRequested")
     func triggerExportWithPatientPosts() async {
         let store = makeSessionWith()
-        store.setSelectedPatient(id: "99")
+        store.setSelectedPatient(id: OpaqueClinikoID(99))
 
         let viewModel = ReviewViewModel(sessionStore: store, manipulations: stubManipulations())
 

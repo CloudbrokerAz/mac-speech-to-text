@@ -104,15 +104,22 @@ final class SessionStore {
         touch()
     }
 
-    /// Set the Cliniko patient selection.
-    func setSelectedPatient(id: String?) {
+    /// Set the Cliniko patient selection. The `OpaqueClinikoID` type
+    /// tag (#59) means callers can't accidentally pass in a free-form
+    /// string — they must construct from a numeric `Patient.id` (the
+    /// Cliniko-response shape) or from a `rawValue` string with a
+    /// documented provenance (Codable round-trip, test wiring).
+    func setSelectedPatient(id: OpaqueClinikoID?) {
         guard active != nil else { return }
         active?.selectedPatientID = id
         touch()
     }
 
-    /// Set the Cliniko appointment selection.
-    func setSelectedAppointment(id: String?) {
+    /// Set the Cliniko appointment selection. Same `OpaqueClinikoID`
+    /// type-tag invariant as `setSelectedPatient(id:)` — the picker
+    /// constructs from the numeric `Appointment.id`; tests use
+    /// `init(rawValue:)` for deterministic literals.
+    func setSelectedAppointment(id: OpaqueClinikoID?) {
         guard active != nil else { return }
         active?.selectedAppointmentID = id
         touch()

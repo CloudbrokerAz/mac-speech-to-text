@@ -167,13 +167,18 @@ actor TreatmentNoteExporter {
         // routes 2xx into the success path but discards the actual
         // status code. The audit row therefore records the documented
         // status. Threading the real HTTP status through `send<T>`
-        // is tracked as a follow-up — until then, this value is the
-        // contract.
+        // is tracked as a follow-up (issue #58) — until then, this
+        // value is the contract.
+        //
+        // Type-tag the Int IDs into `OpaqueClinikoID` at this audit
+        // boundary (#59). The wire-payload Ints flow into the
+        // numerical `TreatmentNotePayload`; the audit row carries the
+        // opaque-string form so the on-disk schema stays unchanged.
         let record = AuditRecord(
             timestamp: now(),
-            patientID: String(patientID),
-            appointmentID: appointmentID.map(String.init),
-            noteID: String(created.id),
+            patientID: OpaqueClinikoID(patientID),
+            appointmentID: appointmentID.map(OpaqueClinikoID.init),
+            noteID: OpaqueClinikoID(created.id),
             clinikoStatus: 201,
             appVersion: appVersion
         )
