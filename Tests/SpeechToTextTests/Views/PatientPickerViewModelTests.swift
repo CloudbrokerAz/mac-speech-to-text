@@ -44,11 +44,17 @@ struct PatientPickerViewModelTests {
         let patients = FakePatientSearcher(result: .success([]))
         let appointments = FakeAppointmentLoader(result: .success([]))
         let store = SessionStore()
+        // Tiny debounce so the test budget for the post-keystroke wait
+        // gives a wide margin without slowing the suite. The previous
+        // 30ms / 150ms shape flaked on a loaded GitHub-Actions macOS
+        // runner — Task.sleep schedule jitter on a busy host can spike
+        // past the debounce window even when the wait is technically
+        // longer in wall-clock terms. 5ms / 250ms gives ~50× headroom.
         let vm = PatientPickerViewModel(
             patientService: patients,
             appointmentService: appointments,
             sessionStore: store,
-            debounceMillis: 30
+            debounceMillis: 5
         )
 
         vm.updateQuery("S")
@@ -57,9 +63,7 @@ struct PatientPickerViewModelTests {
         vm.updateQuery("Samp")
         vm.updateQuery("Sample")
 
-        // Wait long enough for the debounce + a small buffer, then settle
-        // any continuations.
-        try await Task.sleep(nanoseconds: 150_000_000)
+        try await Task.sleep(nanoseconds: 250_000_000)
 
         let count = await patients.callCount
         let lastQuery = await patients.lastQuery
