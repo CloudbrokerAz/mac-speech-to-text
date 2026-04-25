@@ -311,11 +311,17 @@ final class ClinicalNotesSectionViewModel {
     private(set) var statusMessage: String?
     private(set) var isBusy: Bool = false
 
-    /// Convenience flag for #11 to gate the Clinical Notes Mode toggle on.
-    /// Returns `true` only when we have positively confirmed an API key
-    /// exists in the store; a Keychain read failure does NOT flip this to
-    /// `false` (we don't know).
-    var hasStoredCredentials: Bool { credentialState == .present }
+    /// Convenience flag for #11 to gate the Clinical Notes Mode toggle on,
+    /// and for the view to gate the Remove / Test buttons. Returns `true`
+    /// when we have either positively confirmed credentials OR a Keychain
+    /// read error has prevented us from telling — both of those mean
+    /// "credentials may exist on this device", so the user must be allowed
+    /// to click Remove (otherwise the banner's own "Try removing and
+    /// re-adding your API key" advice becomes a UX deadlock when the
+    /// Keychain is transiently locked).
+    var hasStoredCredentials: Bool {
+        credentialState == .present || credentialState == .readFailed
+    }
 
     @ObservationIgnored private let credentialStore: ClinikoCredentialStore
     @ObservationIgnored private let authProbe: ClinikoAuthProbe

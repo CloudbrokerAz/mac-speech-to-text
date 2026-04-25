@@ -118,10 +118,15 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
         await vm.refreshState()
 
         // Critical: a Keychain read error must NOT silently flip
-        // hasStoredCredentials to `false` — that would silently disable
-        // Clinical Notes Mode (#11) on a transiently locked Keychain.
+        // `hasStoredCredentials` to `false` — that would silently disable
+        // Clinical Notes Mode (#11) AND deadlock the UI (Remove button gates
+        // on `hasStoredCredentials`, but the banner tells the user to use
+        // Remove to recover). The credential state is exposed separately as
+        // `.readFailed` so consumers that need the positive-only signal can
+        // pattern-match on it directly.
         XCTAssertEqual(vm.credentialState, .readFailed)
-        XCTAssertFalse(vm.hasStoredCredentials, "hasStoredCredentials is computed; read-failure surface is .readFailed not .absent")
+        XCTAssertTrue(vm.hasStoredCredentials,
+                      "hasStoredCredentials must remain true during read failures so the user can click Remove to recover")
         XCTAssertEqual(vm.verificationStatus, .readError)
         XCTAssertEqual(vm.connectionStatus, .failure)
         XCTAssertNotNil(vm.statusMessage)
