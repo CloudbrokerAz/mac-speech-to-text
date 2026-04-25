@@ -1,0 +1,7 @@
+{
+  "patients": [],
+  "total_entries": 0,
+  "links": {
+    "self": "https://api.au1.cliniko.com/v1/patients?q=zzznomatchzzz"
+  }
+}
