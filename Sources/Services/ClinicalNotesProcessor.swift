@@ -227,12 +227,18 @@ actor ClinicalNotesProcessor {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         guard !key.isEmpty else { return nil }
-        for manipulation in manipulations.all where manipulation.id.lowercased() == key {
-            return manipulation.id
+
+        // Single pass; id match wins if it appears anywhere in the
+        // list. Remember the first displayName match as a fallback.
+        var nameMatch: String?
+        for manipulation in manipulations.all {
+            if manipulation.id.lowercased() == key {
+                return manipulation.id
+            }
+            if nameMatch == nil, manipulation.displayName.lowercased() == key {
+                nameMatch = manipulation.id
+            }
         }
-        for manipulation in manipulations.all where manipulation.displayName.lowercased() == key {
-            return manipulation.id
-        }
-        return nil
+        return nameMatch
     }
 }
