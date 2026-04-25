@@ -1,0 +1,23 @@
+{
+  "appointments": [
+    {
+      "id": 5001,
+      "starts_at": "2026-04-25T09:00:00Z",
+      "ends_at": "2026-04-25T09:30:00Z"
+    },
+    {
+      "id": 5002,
+      "starts_at": "2026-04-22T14:15:00Z",
+      "ends_at": "2026-04-22T14:45:00Z"
+    },
+    {
+      "id": 5003,
+      "starts_at": "2026-04-19T08:00:00Z",
+      "ends_at": "2026-04-19T08:30:00Z"
+    }
+  ],
+  "total_entries": 3,
+  "links": {
+    "self": "https://api.au1.cliniko.com/v1/patients/1001/appointments?from=2026-04-18T00:00:00Z&to=2026-04-26T00:00:00Z"
+  }
+}

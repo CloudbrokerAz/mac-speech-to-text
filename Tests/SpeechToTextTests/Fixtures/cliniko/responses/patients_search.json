@@ -1,0 +1,29 @@
+{
+  "patients": [
+    {
+      "id": 1001,
+      "first_name": "Sample",
+      "last_name": "Patient",
+      "date_of_birth": "1980-01-15",
+      "email": "sample.patient@example.test"
+    },
+    {
+      "id": 1002,
+      "first_name": "Test",
+      "last_name": "Person",
+      "date_of_birth": "1992-07-04",
+      "email": "test.person@example.test"
+    },
+    {
+      "id": 1003,
+      "first_name": "Fixture",
+      "last_name": "Subject",
+      "date_of_birth": null,
+      "email": null
+    }
+  ],
+  "total_entries": 3,
+  "links": {
+    "self": "https://api.au1.cliniko.com/v1/patients?q=sample"
+  }
+}
