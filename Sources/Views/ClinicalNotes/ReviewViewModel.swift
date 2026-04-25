@@ -180,11 +180,31 @@ final class ReviewViewModel {
     /// Excluded snippets that the practitioner has not yet re-added.
     /// Re-added entries hide from the drawer per the wireframe. Order
     /// preserved from the LLM output.
+    ///
+    /// Duplicate handling is count-based: if the LLM emits the same
+    /// snippet twice and the practitioner re-adds it once, one
+    /// remaining copy stays in the drawer. This relies on
+    /// `SessionStore.excludedReAdded` faithfully appending each re-add;
+    /// the dedup guard inside `markExcludedReAdded` collapses repeated
+    /// re-adds of the same string into a single audit entry, so the
+    /// "re-add one of two duplicates" scenario above effectively
+    /// re-adds the first match and leaves any remaining copies in the
+    /// drawer until the audit guard is relaxed in a follow-up.
     var excludedEntries: [String] {
         guard let active = sessionStore.active,
               let notes = active.draftNotes else { return [] }
-        let readded = Set(active.excludedReAdded)
-        return notes.excluded.filter { !readded.contains($0) }
+        var remainingReAdds = active.excludedReAdded.reduce(into: [String: Int]()) { acc, snippet in
+            acc[snippet, default: 0] += 1
+        }
+        var result: [String] = []
+        for entry in notes.excluded {
+            if let count = remainingReAdds[entry], count > 0 {
+                remainingReAdds[entry] = count - 1
+            } else {
+                result.append(entry)
+            }
+        }
+        return result
     }
 
     /// Number of excluded entries still available to re-add. Drives the
@@ -318,6 +338,11 @@ final class ReviewViewModel {
     /// already non-empty) and recorded in `SessionStore.excludedReAdded`
     /// so the drawer hides it on the next render.
     ///
+    /// Trailing whitespace on the existing field is normalised before
+    /// the separator is added so re-adding twice doesn't pile up
+    /// triple-newlines (matters for fields the practitioner has
+    /// already edited).
+    ///
     /// PHI: structural log only — count of entries before and after, no
     /// content.
     func reAddExcludedEntry(_ entry: String) {
@@ -329,12 +354,12 @@ final class ReviewViewModel {
             return
         }
         let target = reAddTargetField()
-        let existing = value(for: target)
+        let trimmedExisting = trimmedTrailingWhitespace(value(for: target))
         let combined: String
-        if existing.isEmpty {
+        if trimmedExisting.isEmpty {
             combined = entry
         } else {
-            combined = "\(existing)\n\n\(entry)"
+            combined = "\(trimmedExisting)\n\n\(entry)"
         }
         setValue(combined, for: target)
         sessionStore.markExcludedReAdded(entry)
@@ -342,6 +367,23 @@ final class ReviewViewModel {
             // PHI-safe: only the target field name + remaining-excluded count.
             "ReviewViewModel: re-added excluded entry target=\(target.accessibilityID, privacy: .public) remaining=\(self.excludedRemainingCount, privacy: .public)"
         )
+    }
+
+    /// Strip trailing whitespace and newlines without touching leading
+    /// or interior whitespace (which the practitioner may have edited
+    /// intentionally). Stays purely structural — no PHI escapes this
+    /// function.
+    private nonisolated func trimmedTrailingWhitespace(_ text: String) -> String {
+        var end = text.endIndex
+        while end > text.startIndex {
+            let prior = text.index(before: end)
+            if text[prior].isWhitespace || text[prior].isNewline {
+                end = prior
+            } else {
+                break
+            }
+        }
+        return String(text[text.startIndex..<end])
     }
 
     // MARK: - Drawer / sheet toggles

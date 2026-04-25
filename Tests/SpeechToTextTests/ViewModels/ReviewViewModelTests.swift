@@ -252,6 +252,40 @@ struct ReviewViewModelTests {
         #expect(viewModel.excludedEntries == ["A", "C"])
     }
 
+    @Test("excludedEntries handles duplicates by count, leaving extra copies in the drawer")
+    func excludedEntriesHandlesDuplicatesByCount() {
+        // SessionStore.markExcludedReAdded dedups same-string re-adds
+        // (audit-trail invariant), so even if the same snippet appears
+        // twice in `notes.excluded`, only one re-add is tracked. The
+        // count-based filter therefore hides one copy and keeps the
+        // other in the drawer — order preserved from the LLM output.
+        let store = makeSessionWith()
+        var notes = StructuredNotes()
+        notes.excluded = ["dup", "dup", "single"]
+        store.setDraftNotes(notes)
+        store.markExcludedReAdded("dup")
+
+        let viewModel = ReviewViewModel(sessionStore: store, manipulations: stubManipulations())
+        #expect(viewModel.excludedEntries == ["dup", "single"])
+    }
+
+    @Test("reAddExcludedEntry trims trailing whitespace before adding the separator")
+    func reAddTrimsTrailingWhitespace() {
+        let store = makeSessionWith()
+        var notes = StructuredNotes()
+        // Existing has trailing whitespace + newline (e.g. from a prior
+        // re-add that the practitioner partially deleted).
+        notes.subjective = "Pre-existing.   \n\n"
+        notes.excluded = ["New snippet."]
+        store.setDraftNotes(notes)
+
+        let viewModel = ReviewViewModel(sessionStore: store, manipulations: stubManipulations())
+
+        viewModel.reAddExcludedEntry("New snippet.")
+
+        #expect(store.active?.draftNotes?.subjective == "Pre-existing.\n\nNew snippet.")
+    }
+
     // MARK: - canExport / triggerExport
 
     @Test("canExport requires a selected patient")

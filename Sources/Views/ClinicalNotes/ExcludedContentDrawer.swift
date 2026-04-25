@@ -74,7 +74,10 @@ struct ExcludedContentDrawer: View {
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(entries.enumerated()), id: \.element) { _, entry in
+                    // Index-based ID so duplicate snippet strings don't
+                    // collide in `ForEach`'s identity tracking — content
+                    // alone is not unique.
+                    ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
                         excludedRow(entry)
                     }
                 }
