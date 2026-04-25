@@ -505,12 +505,16 @@ final class RecordingViewModel {
     @discardableResult
     func acknowledgeSafetyDisclaimer() -> Bool {
         AppLogger.info(AppLogger.viewModel, "[\(viewModelId)] Safety disclaimer acknowledged")
+        // Always dismiss the overlay, regardless of persistence outcome, so
+        // the doctor isn't trapped. On failure the banner surfaced via
+        // `errorMessage` becomes the user-visible signal.
+        defer { showSafetyDisclaimer = false }
+
         var settings = settingsService.load()
         settings.general.clinicalNotesDisclaimerAcknowledged = true
         do {
             try settingsService.save(settings)
             AppLogger.debug(AppLogger.viewModel, "[\(viewModelId)] Saved clinicalNotesDisclaimerAcknowledged=true")
-            showSafetyDisclaimer = false
             return true
         } catch {
             // `SettingsService.save` only throws on `JSONEncoder.encode`
@@ -524,7 +528,6 @@ final class RecordingViewModel {
                 "[\(viewModelId)] Failed to persist disclaimer ack kind=\(String(describing: type(of: error)))"
             )
             errorMessage = "Couldn't save your acknowledgement. Please try again."
-            showSafetyDisclaimer = false
             return false
         }
     }
