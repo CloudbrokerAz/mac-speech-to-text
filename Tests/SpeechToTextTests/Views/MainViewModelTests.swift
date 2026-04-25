@@ -89,7 +89,7 @@ final class MainViewModelTests: XCTestCase {
     // MARK: - SidebarSection Enum Tests
 
     func test_sidebarSection_allCasesCount() {
-        XCTAssertEqual(SidebarSection.allCases.count, 8)
+        XCTAssertEqual(SidebarSection.allCases.count, 9)
     }
 
     func test_sidebarSection_hasCorrectTitles() {
@@ -100,6 +100,7 @@ final class MainViewModelTests: XCTestCase {
         XCTAssertEqual(SidebarSection.language.title, "Language")
         XCTAssertEqual(SidebarSection.theme.title, "Theme")
         XCTAssertEqual(SidebarSection.privacy.title, "Privacy")
+        XCTAssertEqual(SidebarSection.clinicalNotes.title, "Clinical Notes")
         XCTAssertEqual(SidebarSection.about.title, "About")
     }
 
@@ -111,6 +112,7 @@ final class MainViewModelTests: XCTestCase {
         XCTAssertEqual(SidebarSection.language.icon, "globe")
         XCTAssertEqual(SidebarSection.theme.icon, "paintbrush")
         XCTAssertEqual(SidebarSection.privacy.icon, "lock.shield")
+        XCTAssertEqual(SidebarSection.clinicalNotes.icon, "stethoscope")
         XCTAssertEqual(SidebarSection.about.icon, "info.circle")
     }
 
@@ -122,6 +124,7 @@ final class MainViewModelTests: XCTestCase {
         XCTAssertEqual(SidebarSection.language.accessibilityLabel, "Language section")
         XCTAssertEqual(SidebarSection.theme.accessibilityLabel, "Theme section")
         XCTAssertEqual(SidebarSection.privacy.accessibilityLabel, "Privacy section")
+        XCTAssertEqual(SidebarSection.clinicalNotes.accessibilityLabel, "Clinical Notes section")
         XCTAssertEqual(SidebarSection.about.accessibilityLabel, "About section")
     }
 
@@ -133,6 +136,7 @@ final class MainViewModelTests: XCTestCase {
         XCTAssertEqual(SidebarSection.language.rawValue, "language")
         XCTAssertEqual(SidebarSection.theme.rawValue, "theme")
         XCTAssertEqual(SidebarSection.privacy.rawValue, "privacy")
+        XCTAssertEqual(SidebarSection.clinicalNotes.rawValue, "clinicalNotes")
         XCTAssertEqual(SidebarSection.about.rawValue, "about")
     }
 

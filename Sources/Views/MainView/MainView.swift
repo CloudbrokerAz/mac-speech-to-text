@@ -34,6 +34,7 @@ struct MainView: View {
 
     @State private var languageViewModel: LanguageSectionViewModel?
     @State private var privacyViewModel: PrivacySectionViewModel?
+    @State private var clinicalNotesViewModel: ClinicalNotesSectionViewModel?
     @State private var aboutViewModel: AboutSectionViewModel?
 
     // MARK: - Initialization
@@ -261,6 +262,9 @@ struct MainView: View {
         if privacyViewModel == nil {
             privacyViewModel = PrivacySectionViewModel()
         }
+        if clinicalNotesViewModel == nil {
+            clinicalNotesViewModel = ClinicalNotesSectionViewModel()
+        }
         if aboutViewModel == nil {
             aboutViewModel = AboutSectionViewModel()
         }
@@ -296,6 +300,12 @@ struct MainView: View {
             } else {
                 PrivacySectionPlaceholder()
             }
+        case .clinicalNotes:
+            if let clinicalNotesVM = clinicalNotesViewModel {
+                ClinicalNotesSection(viewModel: clinicalNotesVM)
+            } else {
+                ClinicalNotesSectionPlaceholder()
+            }
         case .about:
             if let aboutVM = aboutViewModel {
                 AboutSection(viewModel: aboutVM)
@@ -317,6 +327,12 @@ private struct LanguageSectionPlaceholder: View {
 private struct PrivacySectionPlaceholder: View {
     var body: some View {
         GlassPlaceholder(icon: "lock.shield", title: "Privacy Section")
+    }
+}
+
+private struct ClinicalNotesSectionPlaceholder: View {
+    var body: some View {
+        GlassPlaceholder(icon: "stethoscope", title: "Clinical Notes Section")
     }
 }
 

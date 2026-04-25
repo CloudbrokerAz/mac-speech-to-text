@@ -20,6 +20,7 @@ enum SidebarSection: String, CaseIterable, Identifiable, Codable {
     case language
     case theme
     case privacy
+    case clinicalNotes
     case about
 
     var id: String { rawValue }
@@ -34,6 +35,7 @@ enum SidebarSection: String, CaseIterable, Identifiable, Codable {
         case .language: return "Language"
         case .theme: return "Theme"
         case .privacy: return "Privacy"
+        case .clinicalNotes: return "Clinical Notes"
         case .about: return "About"
         }
     }
@@ -48,6 +50,7 @@ enum SidebarSection: String, CaseIterable, Identifiable, Codable {
         case .language: return "globe"
         case .theme: return "paintbrush"
         case .privacy: return "lock.shield"
+        case .clinicalNotes: return "stethoscope"
         case .about: return "info.circle"
         }
     }
