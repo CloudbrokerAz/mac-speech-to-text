@@ -144,6 +144,8 @@ final class PasteBehaviorTests: XCTestCase {
 
 @MainActor
 final class GeneralSectionPersistenceTests: XCTestCase {
+    // IUOs assigned in setUp / cleared in tearDown; reads are gated behind
+    // setUp success — XCTest skips tearDown if setUp throws.
     var userDefaults: UserDefaults!
     var settingsService: SettingsService!
     var suiteName: String!
@@ -152,14 +154,23 @@ final class GeneralSectionPersistenceTests: XCTestCase {
         try await super.setUp()
         // Per-test suite name keeps `swift test --parallel` runs from racing on
         // shared UserDefaults — see #32. Pattern mirrors SettingsServiceTests.
-        suiteName = "com.speechtotext.tests.\(UUID().uuidString)"
-        userDefaults = UserDefaults(suiteName: suiteName)!
-        userDefaults.removePersistentDomain(forName: suiteName)
-        settingsService = SettingsService(userDefaults: userDefaults)
+        let name = "com.speechtotext.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(
+            UserDefaults(suiteName: name),
+            "Failed to create UserDefaults suite \(name)"
+        )
+        defaults.removePersistentDomain(forName: name)
+        suiteName = name
+        userDefaults = defaults
+        settingsService = SettingsService(userDefaults: defaults)
     }
 
     override func tearDown() async throws {
-        userDefaults.removePersistentDomain(forName: suiteName)
+        // setUp may have failed before assigning these; guard so a setUp
+        // crash doesn't get masked by a tearDown crash on the IUO unwrap.
+        if let suiteName {
+            userDefaults?.removePersistentDomain(forName: suiteName)
+        }
         settingsService = nil
         userDefaults = nil
         suiteName = nil
