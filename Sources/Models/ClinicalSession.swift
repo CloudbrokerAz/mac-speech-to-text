@@ -35,6 +35,15 @@ struct ClinicalSession: Sendable, Identifiable {
     /// free-form string can land here.
     var selectedPatientID: OpaqueClinikoID?
 
+    /// Display name of the selected patient (e.g. "Sample Patient").
+    /// Captured by the picker at selection time so the export
+    /// confirmation surface (#14) can render the patient label
+    /// without re-fetching from Cliniko. This is the only slot on
+    /// `ClinicalSession` that holds a patient *name* — kept
+    /// session-scoped, never written to disk, never logged. Cleared
+    /// whenever `selectedPatientID` clears.
+    var selectedPatientDisplayName: String?
+
     /// Cliniko appointment ID selected for export.
     var selectedAppointmentID: OpaqueClinikoID?
 
@@ -44,6 +53,7 @@ struct ClinicalSession: Sendable, Identifiable {
         draftNotes: StructuredNotes? = nil,
         excludedReAdded: [String] = [],
         selectedPatientID: OpaqueClinikoID? = nil,
+        selectedPatientDisplayName: String? = nil,
         selectedAppointmentID: OpaqueClinikoID? = nil
     ) {
         self.id = id
@@ -51,6 +61,7 @@ struct ClinicalSession: Sendable, Identifiable {
         self.draftNotes = draftNotes
         self.excludedReAdded = excludedReAdded
         self.selectedPatientID = selectedPatientID
+        self.selectedPatientDisplayName = selectedPatientDisplayName
         self.selectedAppointmentID = selectedAppointmentID
     }
 }

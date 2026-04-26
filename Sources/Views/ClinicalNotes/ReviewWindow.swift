@@ -138,6 +138,16 @@ final class ReviewWindowController {
     private var window: ReviewWindow?
     private var sessionStore: SessionStore?
     private var manipulations: ManipulationsRepository?
+    /// Factory producing a fresh `ExportFlowViewModel` for each
+    /// Export tap (#14). Returning `nil` means the
+    /// `ExportFlowCoordinator` hasn't been configured (Cliniko not
+    /// set up). The host's UI surfaces a structural banner in
+    /// that case.
+    private var makeExportFlowViewModel: (() -> ExportFlowViewModel?)?
+    /// Factory for the header-hosted patient picker (#14).
+    /// Returning `nil` has the same Cliniko-not-configured
+    /// semantics as the export factory.
+    private var makePatientPickerViewModel: (() -> PatientPickerViewModel?)?
     private var dismissObserver: NSObjectProtocol?
 
     private let logger = Logger(
@@ -181,12 +191,24 @@ final class ReviewWindowController {
     /// Wire the controller with its dependencies. Called once by
     /// `AppState.init`; subsequent calls overwrite (so tests / reset
     /// flows can reconfigure cleanly).
+    ///
+    /// The factory closures default to `{ nil }` so test wiring that
+    /// only cares about the review surface (without exercising the
+    /// export sheet) doesn't have to pass them explicitly. In
+    /// production, AppState routes them to
+    /// `ExportFlowCoordinator.shared.makeViewModel()` and a
+    /// `PatientPickerViewModel` constructed against the configured
+    /// Cliniko services.
     func configure(
         sessionStore: SessionStore,
-        manipulations: ManipulationsRepository
+        manipulations: ManipulationsRepository,
+        makeExportFlowViewModel: @escaping () -> ExportFlowViewModel? = { nil },
+        makePatientPickerViewModel: @escaping () -> PatientPickerViewModel? = { nil }
     ) {
         self.sessionStore = sessionStore
         self.manipulations = manipulations
+        self.makeExportFlowViewModel = makeExportFlowViewModel
+        self.makePatientPickerViewModel = makePatientPickerViewModel
     }
 
     /// Whether `configure(...)` has been called. Tests use this to
@@ -218,7 +240,9 @@ final class ReviewWindowController {
 
         let viewModel = ReviewViewModel(
             sessionStore: sessionStore,
-            manipulations: manipulations
+            manipulations: manipulations,
+            makeExportFlowViewModel: makeExportFlowViewModel ?? { nil },
+            makePatientPickerViewModel: makePatientPickerViewModel ?? { nil }
         )
         let newWindow = ReviewWindow(viewModel: viewModel)
         newWindow.show()

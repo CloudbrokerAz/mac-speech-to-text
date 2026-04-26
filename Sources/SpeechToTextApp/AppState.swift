@@ -49,6 +49,28 @@ class AppState {
     /// never want to crash production over.
     @ObservationIgnored let manipulations: ManipulationsRepository
 
+    /// Cliniko credentials handle. Backed by the keychain via
+    /// `KeychainSecureStore`; created eagerly so the export-flow
+    /// setup task can read credentials without a second handle
+    /// allocation. `loadCredentials()` returns nil when the
+    /// practitioner hasn't yet entered an API key — the export-flow
+    /// factories surface "Cliniko not configured" in that case.
+    @ObservationIgnored let clinikoCredentialStore: ClinikoCredentialStore
+
+    /// Disk-backed audit ledger for treatment-note exports (#10).
+    /// Constructed once at launch; written by `TreatmentNoteExporter`
+    /// after every successful POST. Falls back to in-memory if
+    /// Application Support is unavailable (logged + flagged).
+    @ObservationIgnored let auditStore: any AuditStore
+
+    /// Cliniko patient-search service. Built from the configured
+    /// `ClinikoClient` once credentials load; nil until then.
+    @ObservationIgnored private var clinikoPatientService: (any ClinikoPatientSearching)?
+
+    /// Cliniko appointment-loading service. Mirrors
+    /// `clinikoPatientService`'s lifecycle.
+    @ObservationIgnored private var clinikoAppointmentService: (any ClinikoAppointmentLoading)?
+
     /// Task for loading statistics - tracked for proper lifecycle management
     @ObservationIgnored private var loadingTask: Task<Void, Never>?
     /// nonisolated copy for deinit access (deinit cannot access MainActor-isolated state)
@@ -73,21 +95,43 @@ class AppState {
         self.statisticsService = StatisticsService()
         self.sessionStore = SessionStore()
         self.manipulations = Self.loadManipulationsTaxonomy()
+        self.clinikoCredentialStore = ClinikoCredentialStore()
+        self.auditStore = Self.makeAuditStore()
+
+        // Load settings before any closure captures self — Swift's
+        // definite-init checker treats `[weak self]` captures as
+        // potential reads, and the closures below need every stored
+        // property already initialised.
+        self.settings = settingsService.load()
+        self.statistics = .empty
 
         // Configure ReviewWindowController once with the SessionStore +
         // taxonomy so `present()` is a no-arg call from the notification
         // observer below. Mirrors the MainWindowController.shared idiom.
+        // Factory closures route to `ExportFlowCoordinator.shared`
+        // (configured lazily on the Generate-Notes hand-off) and to
+        // a per-tap fresh `PatientPickerViewModel` constructed against
+        // the configured Cliniko services.
         ReviewWindowController.shared.configure(
             sessionStore: self.sessionStore,
-            manipulations: self.manipulations
+            manipulations: self.manipulations,
+            makeExportFlowViewModel: { [weak self] in
+                // Best-effort lazy configuration: if Cliniko credentials
+                // are present, ensure the coordinator is configured
+                // before handing back a VM. Returns nil otherwise so
+                // `triggerExport` surfaces "Cliniko isn't set up".
+                self?.ensureClinikoSetupSync()
+                return ExportFlowCoordinator.shared.makeViewModel()
+            },
+            makePatientPickerViewModel: { [weak self] in
+                self?.ensureClinikoSetupSync()
+                return self?.makePatientPickerViewModel()
+            }
         )
 
-        // Load settings
-        self.settings = settingsService.load()
-
         // Load statistics asynchronously (actor isolation)
-        // Track the task for proper lifecycle management
-        self.statistics = .empty
+        // Track the task for proper lifecycle management. `statistics`
+        // is initialised above (.empty) so the Task body can mutate it.
         let task = Task { [weak self] in
             guard let self else { return }
             // Check for cancellation before doing work (e.g., if AppState was deallocated quickly)
@@ -201,6 +245,112 @@ class AppState {
         sessionStore.setDraftNotes(StructuredNotes())
 
         ReviewWindowController.shared.present()
+    }
+
+    // MARK: - Cliniko export pipeline (#14)
+
+    /// Ensure the Cliniko export pipeline (`TreatmentNoteExporter`,
+    /// patient/appointment services, and the
+    /// `ExportFlowCoordinator`) are wired against the latest
+    /// keychain credentials. Idempotent — once configured, repeat
+    /// calls re-load credentials so a freshly-pasted API key is
+    /// picked up without restarting the app.
+    ///
+    /// "Sync" because the factory closures are sync. Internally
+    /// kicks off an async credential load and configures the
+    /// coordinator on completion; the same closure-call cycle that
+    /// returned `nil` once will succeed on the next tap once the
+    /// async load lands.
+    private func ensureClinikoSetupSync() {
+        Task { @MainActor [weak self] in
+            await self?.configureClinikoExportPipelineIfNeeded()
+        }
+    }
+
+    /// Async configuration of the Cliniko export pipeline. Safe to
+    /// call repeatedly — overwrites the existing coordinator config
+    /// with the latest credentials. Returns silently when no API
+    /// key is set (export factories return nil; UI surfaces
+    /// "Cliniko isn't set up").
+    private func configureClinikoExportPipelineIfNeeded() async {
+        let credentials: ClinikoCredentials?
+        do {
+            credentials = try await clinikoCredentialStore.loadCredentials()
+        } catch {
+            AppLogger.app.error(
+                "AppState: ClinikoCredentialStore.loadCredentials failed type=\(String(describing: type(of: error)), privacy: .public)"
+            )
+            return
+        }
+        guard let credentials else {
+            AppLogger.app.info("AppState: Cliniko credentials not configured — export pipeline idle")
+            return
+        }
+        let client = ClinikoClient(credentials: credentials)
+        self.clinikoPatientService = ClinikoPatientService(client: client)
+        self.clinikoAppointmentService = ClinikoAppointmentService(client: client)
+        let exporter = TreatmentNoteExporter(
+            client: client,
+            auditStore: self.auditStore,
+            manipulations: self.manipulations
+        )
+        ExportFlowCoordinator.shared.configure(
+            sessionStore: self.sessionStore,
+            exporter: exporter,
+            manipulations: self.manipulations,
+            openClinikoSettings: { [weak self] in
+                self?.openClinikoSettings()
+            },
+            closeReviewWindow: {
+                ReviewWindowController.shared.close()
+            }
+        )
+        AppLogger.app.info("AppState: Cliniko export pipeline configured")
+    }
+
+    /// Build a fresh `PatientPickerViewModel` for the header-hosted
+    /// picker sheet (#14). Returns nil when the Cliniko services
+    /// haven't been configured yet (either Cliniko isn't set up,
+    /// or `configureClinikoExportPipelineIfNeeded()` is still
+    /// loading) — the picker chip's tap shows "Cliniko isn't set
+    /// up" until the next tap finds a configured pipeline.
+    private func makePatientPickerViewModel() -> PatientPickerViewModel? {
+        guard let patientService = clinikoPatientService,
+              let appointmentService = clinikoAppointmentService else {
+            return nil
+        }
+        return PatientPickerViewModel(
+            patientService: patientService,
+            appointmentService: appointmentService,
+            sessionStore: self.sessionStore
+        )
+    }
+
+    /// Routes the practitioner to the Cliniko credentials surface.
+    /// Wired by `ExportFlowCoordinator.configure(...)` for the
+    /// 401 / 403 paths so the export sheet's "Open Cliniko
+    /// Settings" button lands somewhere meaningful.
+    func openClinikoSettings() {
+        AppLogger.app.info("AppState: opening Cliniko settings via Clinical Notes section")
+        MainWindowController.shared.showSection(.clinicalNotes)
+    }
+
+    /// Construct the disk-backed audit store at launch. Falls back
+    /// to in-memory if Application Support is unavailable — the
+    /// fallback path lets the export pipeline still write
+    /// `auditPersisted = true` so the post-success UI behaves
+    /// correctly, while the structural log signals that the on-disk
+    /// ledger is unavailable for this launch.
+    private static func makeAuditStore() -> any AuditStore {
+        do {
+            let url = try LocalAuditStore.defaultURL()
+            return LocalAuditStore(fileURL: url)
+        } catch {
+            AppLogger.app.error(
+                "AppState: LocalAuditStore unavailable kind=\(String(describing: type(of: error)), privacy: .public) — falling back to InMemoryAuditStore"
+            )
+            return InMemoryAuditStore()
+        }
     }
 
     // MARK: - Manipulations loader

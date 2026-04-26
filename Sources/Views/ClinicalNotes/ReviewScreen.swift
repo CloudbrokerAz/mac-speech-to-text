@@ -58,6 +58,18 @@ struct ReviewScreen: View {
                 onDismiss: { viewModel.dismissRawTranscript() }
             )
         }
+        .sheet(item: $viewModel.exportFlowSheet) { exportVM in
+            ExportFlowView(
+                viewModel: exportVM,
+                onDismiss: { viewModel.dismissExportFlow() }
+            )
+        }
+        .sheet(item: $viewModel.patientPickerSheet) { pickerVM in
+            PatientPickerSheetHost(
+                viewModel: pickerVM,
+                onDone: { viewModel.dismissPatientPicker() }
+            )
+        }
         .onAppear {
             // Ensure the practitioner can immediately start editing the
             // most-used field without an extra click.
@@ -93,6 +105,8 @@ struct ReviewScreen: View {
 
             Spacer()
 
+            patientChip
+
             draftBadge
         }
         .padding(.horizontal, 20)
@@ -104,6 +118,44 @@ struct ReviewScreen: View {
                 .frame(height: 1)
         }
         .accessibilityIdentifier("reviewScreen.header")
+    }
+
+    /// Header chip that surfaces the picker affordance from #14:
+    /// "Select patient" when none is chosen, "Patient: <name>" with
+    /// a chevron once selected. Tapping either form opens the
+    /// `PatientPickerView` sheet.
+    private var patientChip: some View {
+        Button {
+            viewModel.presentPatientPicker()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "person.crop.circle")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(patientChipLabel)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(
+                Capsule().fill(
+                    viewModel.canExport
+                        ? Color.amberLight.opacity(0.4)
+                        : Color.subtleBorderAdaptive.opacity(0.3)
+                )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("reviewScreen.patientChip")
+    }
+
+    private var patientChipLabel: String {
+        if let name = viewModel.sessionStore.active?.selectedPatientDisplayName, !name.isEmpty {
+            return name
+        }
+        return "Select patient"
     }
 
     private var headerSubtitle: String {
@@ -288,6 +340,64 @@ struct ReviewScreen: View {
         case .assessment: return "3"
         case .plan: return "4"
         }
+    }
+}
+
+// MARK: - PatientPickerSheetHost
+
+/// Sheet wrapper around `PatientPickerView` that adds Cancel /
+/// Done chrome and a fixed sheet size. The picker view itself
+/// has no built-in dismiss affordance — it writes selections
+/// straight through to `SessionStore`, so the host's job is just
+/// to surface "I'm done" so the parent can close the sheet.
+///
+/// Cancel rolls back the selection (`viewModel.clearSelection()`)
+/// so a closed-without-confirming picker doesn't leave a dangling
+/// patient/appointment write on the session.
+private struct PatientPickerSheetHost: View {
+    @Bindable var viewModel: PatientPickerViewModel
+    let onDone: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button("Cancel") {
+                    viewModel.clearSelection()
+                    onDone()
+                }
+                .keyboardShortcut(.cancelAction)
+                .accessibilityIdentifier("patientPickerSheet.cancel")
+
+                Spacer()
+
+                Text("Select patient")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+
+                Spacer()
+
+                Button("Done") {
+                    onDone()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color.amberPrimary)
+                .disabled(viewModel.selectedPatient == nil)
+                .keyboardShortcut(.return)
+                .accessibilityIdentifier("patientPickerSheet.done")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.ultraThinMaterial)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(Color.subtleBorderAdaptive)
+                    .frame(height: 1)
+            }
+
+            PatientPickerView(viewModel: viewModel)
+                .padding(20)
+        }
+        .frame(minWidth: 720, minHeight: 480)
+        .accessibilityIdentifier("patientPickerSheet")
     }
 }
 

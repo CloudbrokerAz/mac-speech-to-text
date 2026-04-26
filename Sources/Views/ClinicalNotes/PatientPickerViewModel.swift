@@ -14,7 +14,13 @@ import os.log
 /// avoided.
 @Observable
 @MainActor
-final class PatientPickerViewModel {
+final class PatientPickerViewModel: Identifiable {
+
+    /// Stable identity for SwiftUI `.sheet(item:)` hosting (#14).
+    /// One picker presentation gets one VM; closing the sheet
+    /// drops the reference and the next presentation builds a
+    /// fresh VM.
+    nonisolated let id = UUID()
 
     /// Phase machine for the patient-search panel.
     enum SearchPhase: Sendable, Equatable {
@@ -184,7 +190,16 @@ final class PatientPickerViewModel {
     /// selection without waiting on the appointment fetch.
     func selectPatient(_ patient: Patient) {
         selectedPatient = patient
-        sessionStore.setSelectedPatient(id: OpaqueClinikoID(patient.id))
+        // Pass the display name through with the ID so the export
+        // confirmation surface (#14) can render a patient label
+        // without re-fetching. The two never drift because
+        // `setSelectedPatient(id:displayName:)` clears the name
+        // whenever the id is cleared.
+        let displayName = "\(patient.firstName) \(patient.lastName)".trimmingCharacters(in: .whitespaces)
+        sessionStore.setSelectedPatient(
+            id: OpaqueClinikoID(patient.id),
+            displayName: displayName
+        )
         sessionStore.setSelectedAppointment(id: nil)
         selectedAppointmentID = nil
         appointmentPhase = .loading
