@@ -4,6 +4,21 @@ import Testing
 
 @Suite("ModelManifest", .tags(.fast))
 struct ModelManifestTests {
+    @Test("modelDirectoryName takes the segment after the final slash",
+          arguments: [
+              ("mlx-community/gemma-3-text-4b-it-4bit", "gemma-3-text-4b-it-4bit"),
+              ("ns/repo", "repo"),
+              ("a/b/c", "c")
+          ])
+    func modelDirectoryNameDerivation(modelId: String, expected: String) {
+        let manifest = ModelManifest(
+            modelId: modelId,
+            revision: "abc",
+            files: []
+        )
+        #expect(manifest.modelDirectoryName == expected)
+    }
+
     @Test("init computes total_bytes from files")
     func totalBytesFromFiles() {
         let manifest = ModelManifest(

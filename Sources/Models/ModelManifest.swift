@@ -32,6 +32,16 @@ public struct ModelManifest: Codable, Sendable, Equatable {
     /// pre-check (`URLResourceKey.volumeAvailableCapacityForImportantUsageKey`).
     public let totalBytes: Int64
 
+    /// Repo-name segment of `modelId` — i.e. everything after the final
+    /// `/` (e.g. `"mlx-community/gemma-3-text-4b-it-4bit"` →
+    /// `"gemma-3-text-4b-it-4bit"`). Used as the on-disk directory name
+    /// under `~/Library/Application Support/<bundle-id>/Models/`.
+    /// Falls back to `"model"` for the (impossible-by-decode-validation)
+    /// case where `modelId` has no `/` segment.
+    public var modelDirectoryName: String {
+        modelId.split(separator: "/").last.map(String.init) ?? "model"
+    }
+
     public init(modelId: String, revision: String, files: [ModelFile]) {
         self.modelId = modelId
         self.revision = revision

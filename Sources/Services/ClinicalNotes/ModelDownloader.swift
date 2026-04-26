@@ -80,7 +80,6 @@ public actor ModelDownloader {
     private let baseDirectory: URL
     private let session: URLSession
     private let logger: Logger
-    private var inFlightTask: URLSessionDataTask?
 
     /// - Parameters:
     ///   - manifest: pinned `ModelManifest` (typically loaded from
@@ -178,25 +177,28 @@ public actor ModelDownloader {
         return modelDir
     }
 
-    /// Cancels the current in-flight URLSession task. Subsequent calls to
-    /// `ensureModelDownloaded` resume from the next missing file (or
-    /// throw `CancellationError` if the parent Task is cancelled too).
-    public func cancel() {
-        inFlightTask?.cancel()
-        inFlightTask = nil
-    }
+    // MARK: - Cancellation
+    //
+    // There is no explicit `cancel()` on this actor: cancellation flows
+    // through Swift structured concurrency. Cancel the parent `Task` that
+    // called `ensureModelDownloaded(progress:)` and `URLSession.download(for:)`
+    // unwinds via `CancellationError`, which the per-file catch translates
+    // into a `.cancelled` progress event before re-throwing. A previous
+    // shape held a `URLSessionDataTask?` field for explicit cancel — that
+    // was dead code after the refactor to `download(for:)` and was removed
+    // (Gemini Code Assist on PR #70).
 
     // MARK: - Internals
 
     /// On-disk model directory (`<baseDirectory>/<modelDirName>/`). The
     /// directory name is derived from the manifest's `modelId` so two
-    /// different models can coexist on disk.
+    /// different models can coexist on disk. See
+    /// `ModelManifest.modelDirectoryName` for the derivation rule.
     private func makeModelDirectory() throws -> URL {
-        let dirName = manifest.modelId
-            .split(separator: "/")
-            .last
-            .map(String.init) ?? "model"
-        let dir = baseDirectory.appendingPathComponent(dirName, isDirectory: true)
+        let dir = baseDirectory.appendingPathComponent(
+            manifest.modelDirectoryName,
+            isDirectory: true
+        )
         try FileManager.default.createDirectory(
             at: dir,
             withIntermediateDirectories: true
@@ -248,6 +250,17 @@ public actor ModelDownloader {
     /// `DownloaderError.io` rather than the user-friendly `.cancelled`
     /// progress event. Hashing happens after the download via
     /// `Self.sha256Hex(of:)`, which streams in 4 MB chunks off disk.
+    ///
+    /// Limitation acknowledged (Gemini Code Assist, PR #70): the async
+    /// `download(for:)` returns the full body to a temp URL and surfaces
+    /// no intra-file progress, so the UI bar is static during a single
+    /// large file (the ~2.6 GB `model.safetensors` dominates wall-clock).
+    /// A `URLSessionDownloadDelegate`-based shape would surface
+    /// per-byte progress at the cost of a delegate seam + Sendable-shaped
+    /// progress closure marshalling. Deferred until the Settings UI for
+    /// download progress is actually wired (today's UI consumer is just
+    /// the `AppState.llmDownloadProgress` observable, which advances at
+    /// per-file boundaries). Tracked as a follow-up.
     private func downloadAndVerify(
         file: ModelFile,
         into modelDir: URL,

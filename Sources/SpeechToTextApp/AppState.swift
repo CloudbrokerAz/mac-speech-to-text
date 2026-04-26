@@ -317,6 +317,17 @@ class AppState {
         }
         do {
             llmDownloadState = .downloading
+            // Per-event Task hops to MainActor are not strictly ordered
+            // (Gemini Code Assist, PR #70). After the refactor to
+            // `URLSession.download(for:)` the events are far apart in
+            // time (one `.fileStarted` / `.bytesReceived` / `.fileVerified`
+            // per file in the manifest, not per byte) so practical
+            // reordering is highly unlikely. The aggregator
+            // (`applyDownloadProgress`) is also hardened to be order-
+            // insensitive: progress monotonically increases and latches
+            // at 1.0 on `.completed`, and `.cancelled` / `.failed` are
+            // terminal. Promote to an `AsyncStream`-piped source if a
+            // future progress event design becomes per-byte.
             let modelDir = try await downloader.ensureModelDownloaded { [weak self] event in
                 Task { @MainActor [weak self] in
                     self?.applyDownloadProgress(event)
@@ -455,7 +466,7 @@ class AppState {
         let downloader = ModelDownloader(manifest: manifest)
         let modelDir = ModelDownloader.defaultBaseDirectory()
             .appendingPathComponent(
-                manifest.modelId.split(separator: "/").last.map(String.init) ?? "model",
+                manifest.modelDirectoryName,
                 isDirectory: true
             )
         let provider = MLXGemmaProvider(modelDirectory: modelDir)
