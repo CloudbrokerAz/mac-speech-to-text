@@ -445,7 +445,11 @@ class AppState {
     /// guard, no `UserDefaults` flag needed. Errors are logged and
     /// swallowed: a stuck legacy directory is a disk-space loss, not
     /// a correctness failure.
-    private static func purgeLegacyGemma3ModelDirectory() {
+    ///
+    /// `nonisolated` so the synchronous `FileManager.removeItem(at:)`
+    /// can run from a background `Task.detached` instead of holding the
+    /// MainActor while a multi-GB directory tree unlinks.
+    nonisolated private static func purgeLegacyGemma3ModelDirectory() {
         let legacyPath = ModelDownloader.defaultBaseDirectory()
             .appendingPathComponent("gemma-3-text-4b-it-4bit", isDirectory: true)
         guard FileManager.default.fileExists(atPath: legacyPath.path) else {
@@ -453,8 +457,12 @@ class AppState {
         }
         do {
             try FileManager.default.removeItem(at: legacyPath)
+            // `.private` on the path: the resolved URL includes
+            // `/Users/<username>/...` which is local-PII per the
+            // `.gemini/styleguide.md` rule "paths are not structural
+            // values". Error `kind` stays `.public` — it's a class name.
             AppLogger.app.info(
-                "AppState: removed legacy Gemma 3 model directory at \(legacyPath.path, privacy: .public)"
+                "AppState: removed legacy Gemma 3 model directory at \(legacyPath.path, privacy: .private)"
             )
         } catch {
             AppLogger.app.error(
@@ -471,10 +479,16 @@ class AppState {
     private static func makeLLMPipeline(
         manipulations: ManipulationsRepository
     ) -> LLMPipeline {
-        // Reclaim disk used by the v1 Gemma 3 weights before we reach
-        // for the new manifest. Idempotent — the directory check IS
-        // the guard, so repeat launches after the cleanup are no-ops.
-        purgeLegacyGemma3ModelDirectory()
+        // Reclaim disk used by the v1 Gemma 3 weights — fire-and-forget
+        // on a utility-priority detached task so app init never waits
+        // on a multi-GB directory unlink. Idempotent — the directory
+        // check IS the guard, so repeat launches after the cleanup are
+        // no-ops. The cleanup operates on a different directory name
+        // (`gemma-3-…` vs the new `gemma-4-…`) so it can never race
+        // with the v2 download started downstream of this method.
+        Task.detached(priority: .utility) {
+            Self.purgeLegacyGemma3ModelDirectory()
+        }
 
         guard let manifestURL = Bundle.module.url(
             forResource: "manifest",
