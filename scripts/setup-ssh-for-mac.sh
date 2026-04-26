@@ -179,7 +179,7 @@ if ssh -o BatchMode=yes -o ConnectTimeout=5 "$MAC_ALIAS" "echo 'Connection succe
   echo "  - Run command remotely: ssh $MAC_ALIAS \"<command>\""
   echo "  - VS Code Remote: code --remote ssh-remote+$MAC_ALIAS ~/Developer/mac-speech-to-text"
   echo ""
-  echo "See REMOTE_DEVELOPMENT.md for full workflow guide"
+  echo "See AGENTS.md and scripts/{build-app.sh,remote-test.sh} for the remote workflow"
 
 else
   echo -e "${YELLOW}⚠${NC} SSH connection not working yet"

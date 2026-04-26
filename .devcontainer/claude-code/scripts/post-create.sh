@@ -14,22 +14,22 @@ if [ -d "$CLAUDE_DIR" ]; then
     echo "      Volume has files with incorrect ownership - fixing with sudo..."
     sudo chown -R node:node "$CLAUDE_DIR"
   fi
-  
+
   # Ensure required files exist with correct permissions
   chmod 700 "$CLAUDE_DIR"
-  
+
   # Create .claude.json if it doesn't exist
   if [ ! -f "$CLAUDE_DIR/.claude.json" ]; then
     echo '{}' > "$CLAUDE_DIR/.claude.json"
   fi
   chmod 600 "$CLAUDE_DIR/.claude.json"
-  
-  # Create settings.json if it doesn't exist  
+
+  # Create settings.json if it doesn't exist
   if [ ! -f "$CLAUDE_DIR/settings.json" ]; then
     echo '{"statusLine": "ccstatusline"}' > "$CLAUDE_DIR/settings.json"
   fi
   chmod 600 "$CLAUDE_DIR/settings.json"
-  
+
   echo "      .claude directory permissions fixed"
 else
   echo "      Creating .claude directory..."
@@ -118,5 +118,5 @@ echo ""
 echo "Next steps for remote development:"
 echo "  1. Generate SSH key: ssh-keygen -t ed25519 -C \"your@email.com\""
 echo "  2. Copy key to Mac: ssh-copy-id your-username@your-mac-ip"
-echo "  3. See REMOTE_DEVELOPMENT.md for full setup guide"
+echo "  3. See AGENTS.md (Common commands) and scripts/build-app.sh --sync / scripts/remote-test.sh"
 echo ""
