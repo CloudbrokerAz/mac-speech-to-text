@@ -1,0 +1,47 @@
+{
+  "model_id": "mlx-community/gemma-4-e4b-it-4bit",
+  "revision": "cc3b666c01c20395e0dcebd53854504c7d9821f9",
+  "files": [
+    {
+      "path": "config.json",
+      "size": 6229,
+      "sha256": null
+    },
+    {
+      "path": "generation_config.json",
+      "size": 208,
+      "sha256": null
+    },
+    {
+      "path": "processor_config.json",
+      "size": 902,
+      "sha256": null
+    },
+    {
+      "path": "chat_template.jinja",
+      "size": 16317,
+      "sha256": null
+    },
+    {
+      "path": "tokenizer_config.json",
+      "size": 2095,
+      "sha256": null
+    },
+    {
+      "path": "tokenizer.json",
+      "size": 32169626,
+      "sha256": "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f"
+    },
+    {
+      "path": "model.safetensors.index.json",
+      "size": 251749,
+      "sha256": null
+    },
+    {
+      "path": "model.safetensors",
+      "size": 5217361182,
+      "sha256": "339409bd18494955556e1fde6ccc15faaa9f707b911b74791fe290b9d722beed"
+    }
+  ],
+  "total_bytes": 5249808308
+}

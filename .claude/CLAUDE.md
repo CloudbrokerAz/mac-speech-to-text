@@ -20,7 +20,7 @@ If the user asks "did you read AGENTS.md?" at any point in a session, the correc
 
 ## Current initiative (last updated 2026-04-24)
 
-**Clinical Notes Mode** — extend this app into a local-first clinical documentation assistant for chiropractors. Record consultation → local LLM (MLX Swift + Gemma 3 4B-IT v1; Gemma 4 E4B migration gated on ml-explore/mlx-swift#389) → structured SOAP notes → doctor review → Cliniko API export. 100% on-device. Session-only PHI. No cloud.
+**Clinical Notes Mode** — extend this app into a local-first clinical documentation assistant for chiropractors. Record consultation → local LLM (MLX Swift + Gemma 4 E4B-IT v2; #18 cutover landed on mlx-swift-lm 3.31.3's native `gemma4` registry support — supersedes the v1 Gemma 3 4B-IT manifest) → structured SOAP notes → doctor review → Cliniko API export. 100% on-device. Session-only PHI. No cloud.
 
 **Work is tracked as GitHub issues** in `CloudbrokerAz/mac-speech-to-text`. Always start a session by reading the open EPICs + any assigned issues:
 
@@ -48,7 +48,7 @@ gh issue view <N> --comments   # for any specific issue you pick up
 | Area | Decision |
 |---|---|
 | LLM runtime | MLX Swift in-process (ml-explore/mlx-swift-lm 3.31.x — replaces deprecated mlx-swift-examples per upstream PR #441, 2025-11) |
-| LLM model v1 | Gemma 3 4B-IT (MLX 4-bit text-only — `mlx-community/gemma-3-text-4b-it-4bit`); swap to Gemma 4 E4B when mlx-swift#389 lands (#18) |
+| LLM model v2 | Gemma 4 E4B-IT (MLX 4-bit — `mlx-community/gemma-4-e4b-it-4bit`). #18 hard-cutover from v1 Gemma 3 4B-IT landed once mlx-swift-lm 3.31.3 shipped native `gemma4` registry entries (the previously-tracked blocker `mlx-swift#389` was the wrong package — model registry lives in `mlx-swift-lm`, not `mlx-swift`). Side-by-side opt-in was rejected to avoid double the download bandwidth + golden-fixture maintenance. v1 weights are evicted from Application Support on first launch via `AppState.purgeLegacyGemma3ModelDirectory()`. |
 | Model delivery | First-run download with sha256-manifest verification → `~/Library/Application Support/<bundle-id>/Models/`. Updated 2026-04-26 in #3; supersedes earlier "bundled in .app". DMG stays ~50 MB; weights fetched on opt-in. See `.claude/references/mlx-lifecycle.md` |
 | Persistence | Session-only, cleared on export/quit — no on-disk PHI |
 | Cliniko | API integration in v1, mirror patterns from [CloudbrokerAz/epc-letter-generation](https://github.com/CloudbrokerAz/epc-letter-generation/tree/main/Sources/Services) |
@@ -66,9 +66,13 @@ gh issue view <N> --comments   # for any specific issue you pick up
 
 ### Watch-list / blockers
 
-- **ml-explore/mlx-swift#389** — Gemma 4 E4B architecture support. Migration tracked in #18.
 - **Real Cliniko manipulations taxonomy** — user-supplied; placeholder in #6 for now.
 - **Disclaimer copy legal review** — draft in #12; must be reviewed before ship.
+
+(Resolved: `ml-explore/mlx-swift#389` was historically tracked here as a
+Gemma 4 blocker. It tracks the wrong package — the model registry lives
+in `mlx-swift-lm` 3.31.x, which already ships `gemma4` support. #18
+cutover removed it from the load-bearing path.)
 
 ### Reference projects
 

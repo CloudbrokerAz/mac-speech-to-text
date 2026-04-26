@@ -5,13 +5,14 @@ import OSLog
 /// Downloads + verifies the bundled `ModelManifest`'s files into a stable
 /// on-disk location for `MLXGemmaProvider` to mmap from.
 ///
-/// **Issue #3.** The clinical-notes LLM (~2.6 GB of MLX 4-bit Gemma 3 4B-IT
-/// weights) is **not** bundled in the .app — see the locked-decision update
-/// in `.claude/CLAUDE.md` and `.claude/references/mlx-lifecycle.md`. The
-/// downloader fetches the manifest's files from Hugging Face on first run
-/// (triggered by the user enabling Clinical Notes Mode in Settings, the
-/// same `warmup()` hook that pre-loads the model), verifies sha256 against
-/// the manifest, and atomically renames into
+/// **Issue #3 (v1) / #18 (v2).** The clinical-notes LLM (~5.2 GB of
+/// MLX 4-bit Gemma 4 E4B-IT weights — supersedes v1's 2.6 GB Gemma 3
+/// 4B-IT) is **not** bundled in the .app — see the locked-decision
+/// update in `.claude/CLAUDE.md` and `.claude/references/mlx-lifecycle.md`.
+/// The downloader fetches the manifest's files from Hugging Face on
+/// first run (triggered by the user enabling Clinical Notes Mode in
+/// Settings, the same `warmup()` hook that pre-loads the model),
+/// verifies sha256 against the manifest, and atomically renames into
 /// `~/Library/Application Support/<bundle-id>/Models/<model-dir>/`.
 ///
 /// ### Privacy
@@ -27,7 +28,7 @@ import OSLog
 /// executor; UI layers should hop to `@MainActor` themselves rather than
 /// relying on this actor's isolation. `Task.checkCancellation()` is honoured
 /// at every per-file boundary so a cancelled `Settings` toggle does not
-/// leak a 2.5 GB download.
+/// leak a 5 GB download.
 public actor ModelDownloader {
     /// PHI-free progress event surfaced via the optional callback to
     /// `ensureModelDownloaded(progress:)`. Every payload field is structural
@@ -254,7 +255,7 @@ public actor ModelDownloader {
     /// Limitation acknowledged (Gemini Code Assist, PR #70): the async
     /// `download(for:)` returns the full body to a temp URL and surfaces
     /// no intra-file progress, so the UI bar is static during a single
-    /// large file (the ~2.6 GB `model.safetensors` dominates wall-clock).
+    /// large file (the ~5.2 GB `model.safetensors` dominates wall-clock).
     /// A `URLSessionDownloadDelegate`-based shape would surface
     /// per-byte progress at the cost of a delegate seam + Sendable-shaped
     /// progress closure marshalling. Deferred until the Settings UI for
@@ -391,7 +392,7 @@ public actor ModelDownloader {
 
     /// Disk-space precondition: caller needs `needed` bytes plus a small
     /// headroom buffer. Throws `insufficientDiskSpace` on shortage so the
-    /// UI layer can tell the user *before* a 2.5 GB download starts and
+    /// UI layer can tell the user *before* a multi-GB download starts and
     /// inevitably fails halfway.
     private func preflightDiskSpace(needed: Int64) throws {
         let buffer: Int64 = 256 * 1024 * 1024 // 256 MB headroom
@@ -452,7 +453,7 @@ public actor ModelDownloader {
     }
 
     /// Streamed sha256 over a file on disk. Reads in 4 MB chunks so a
-    /// 2.5 GB safetensors file does not balloon resident memory during
+    /// multi-GB safetensors file does not balloon resident memory during
     /// the idempotency check.
     static func sha256Hex(of url: URL) async throws -> String {
         try await Task.detached(priority: .utility) {

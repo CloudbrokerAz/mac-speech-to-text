@@ -12,7 +12,7 @@ extended into a clinical documentation assistant for chiropractors.
 Swift 5.9 language mode / Swift 6.2 compiler. macOS 14+ baseline, macOS
 26 for development. Swift Package Manager. SwiftLint `--strict` + two
 custom concurrency rules. FluidAudio (Parakeet v3) for ASR; MLX Swift +
-Gemma 3 4B-IT (bundled) for the clinical-notes LLM; URLSession actor for
+Gemma 4 E4B-IT (first-run download) for the clinical-notes LLM; URLSession actor for
 Cliniko API. **No cloud services** — only egress is the doctor-initiated
 `POST /treatment_notes` to their own Cliniko tenant over TLS.
 
@@ -119,8 +119,8 @@ The following are intentional and live in the EPIC + `.claude/CLAUDE.md`:
 | Area | Decision |
 |---|---|
 | LLM runtime | MLX Swift in-process (no XPC / daemon) |
-| LLM model v1 | Gemma 3 4B-IT (MLX 4-bit); Gemma 4 E4B migration gated on `ml-explore/mlx-swift#389` |
-| Model delivery | Bundled in the `.app` (DMG distribution, not App Store) |
+| LLM model v2 | Gemma 4 E4B-IT (MLX 4-bit) via `mlx-swift-lm` 3.31.3's native `gemma4` registry; supersedes v1 Gemma 3 4B-IT (#18 cutover) |
+| Model delivery | First-run download with sha256-manifest verification into `~/Library/Application Support/<bundle>/Models/<model-dir>/` (DMG ~50 MB; weights opt-in). See `.claude/references/mlx-lifecycle.md`. |
 | Persistence | Session-only, cleared on export/quit — no on-disk PHI |
 | Cliniko | API integration in v1, direct from doctor's Mac to doctor's tenant |
 | UI entry | Settings toggle + "Generate Notes" action after recording |

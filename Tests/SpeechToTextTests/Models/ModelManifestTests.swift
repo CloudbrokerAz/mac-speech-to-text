@@ -6,7 +6,7 @@ import Testing
 struct ModelManifestTests {
     @Test("modelDirectoryName takes the segment after the final slash",
           arguments: [
-              ("mlx-community/gemma-3-text-4b-it-4bit", "gemma-3-text-4b-it-4bit"),
+              ("mlx-community/gemma-4-e4b-it-4bit", "gemma-4-e4b-it-4bit"),
               ("ns/repo", "repo"),
               ("a/b/c", "c")
           ])
@@ -117,11 +117,11 @@ struct ModelManifestTests {
     @Test("encode round-trips through Decoder")
     func encodeDecodeRoundTrip() throws {
         let original = ModelManifest(
-            modelId: "mlx-community/gemma-3-text-4b-it-4bit",
-            revision: "4f665a4c50ecfe4ecdc34056ab52fe3e3c4abf9e",
+            modelId: "mlx-community/gemma-4-e4b-it-4bit",
+            revision: "cc3b666c01c20395e0dcebd53854504c7d9821f9",
             files: [
-                ModelFile(path: "config.json", size: 928, sha256: nil),
-                ModelFile(path: "model.safetensors", size: 2_560_876_251, sha256: "ABC")
+                ModelFile(path: "config.json", size: 6229, sha256: nil),
+                ModelFile(path: "model.safetensors", size: 5_217_361_182, sha256: "ABC")
             ]
         )
         let encoder = JSONEncoder()
@@ -147,7 +147,7 @@ struct ModelManifestTests {
         #expect(manifest.files.isEmpty)
     }
 
-    @Test("bundled gemma-3-text-4b-it-4bit manifest is structurally sound (off-disk)")
+    @Test("bundled gemma-4-e4b-it-4bit manifest is structurally sound (off-disk)")
     func bundledManifestDecodes() throws {
         // The manifest resource lives in the main `SpeechToText` target's
         // Resources/, NOT in the test bundle's resources, so `Bundle.module`
@@ -155,7 +155,7 @@ struct ModelManifestTests {
         // path (test runs from the project root) so this test exercises
         // the actual checked-in manifest rather than a duplicate fixture.
         let manifestPath = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent("Resources/Models/gemma-3-text-4b-it-4bit/manifest.json")
+            .appendingPathComponent("Resources/Models/gemma-4-e4b-it-4bit/manifest.json")
         guard FileManager.default.fileExists(atPath: manifestPath.path) else {
             // CI / Xcode test schemes may run from a different cwd. Skip
             // cleanly — production wiring (`AppState.makeLLMPipeline`)
@@ -164,15 +164,18 @@ struct ModelManifestTests {
         }
         let data = try Data(contentsOf: manifestPath)
         let manifest = try JSONDecoder().decode(ModelManifest.self, from: data)
-        #expect(manifest.modelId == "mlx-community/gemma-3-text-4b-it-4bit")
+        #expect(manifest.modelId == "mlx-community/gemma-4-e4b-it-4bit")
         #expect(manifest.revision.count == 40) // git SHA
         #expect(manifest.files.count == 8)
         let computedTotal = manifest.files.reduce(into: Int64(0)) { $0 += $1.size }
         #expect(computedTotal == manifest.totalBytes)
         // The big binary file MUST have a sha256 — it's where tampering
         // would matter. Smaller config files may rely on revision pinning.
+        // Threshold raised vs the v1 Gemma 3 manifest: Gemma 4 E4B is
+        // ~5.2 GB on disk (vs 2.6 GB), so a regression that pointed at
+        // the wrong artifact would be caught earlier.
         let bigFile = manifest.files.first(where: { $0.path == "model.safetensors" })
         #expect(bigFile?.sha256?.isEmpty == false)
-        #expect(bigFile?.size ?? 0 > 2_500_000_000)
+        #expect(bigFile?.size ?? 0 > 5_000_000_000)
     }
 }

@@ -4,15 +4,18 @@ import MLXLMCommon
 import OSLog
 import Tokenizers
 
-/// Concrete `LLMProvider` running Gemma 3 4B-IT (MLX 4-bit) in-process via
-/// `ml-explore/mlx-swift-lm` on Apple Silicon.
+/// Concrete `LLMProvider` running Gemma 4 E4B-IT (MLX 4-bit) in-process via
+/// `ml-explore/mlx-swift-lm` on Apple Silicon. Class name retained for
+/// continuity across the v1→v2 cutover (#18); the actor body is
+/// model-agnostic — `mlx-swift-lm`'s `LLMTypeRegistry` resolves the
+/// architecture from the downloaded `config.json`.
 ///
-/// **Issue #3.** This is the production-side counterpart to `MockLLMProvider`
-/// shipped in #51. The protocol contract (deterministic defaults, PHI-safe
-/// logging, retry-once at the processor level) is unchanged — see
-/// `LLMProvider.swift` for the protocol docs and
-/// `.claude/references/mlx-lifecycle.md` for the load / warmup / fallback
-/// story.
+/// **Issue #3 (v1) / #18 (v2).** This is the production-side counterpart
+/// to `MockLLMProvider` shipped in #51. The protocol contract
+/// (deterministic defaults, PHI-safe logging, retry-once at the processor
+/// level) is unchanged — see `LLMProvider.swift` for the protocol docs
+/// and `.claude/references/mlx-lifecycle.md` for the load / warmup /
+/// fallback story.
 ///
 /// ### Lifecycle
 /// Two-phase init: construct cheaply with the model directory, then
@@ -20,7 +23,7 @@ import Tokenizers
 /// call. Subsequent `generate` / `generateStream` calls reuse the loaded
 /// container. The model is held for the app lifetime — eviction would
 /// just force a re-load on the next session, and the dominant cost is
-/// the cold mmap + dequantize of ~2.5 GB of weights.
+/// the cold mmap + dequantize of ~5 GB of Gemma 4 E4B-IT weights.
 ///
 /// ### Concurrency
 /// `actor` per the `LLMProvider: Actor` protocol constraint (mockability —

@@ -2,8 +2,9 @@ import Foundation
 
 /// Pinned record of a Hugging Face model snapshot consumed by `ModelDownloader`.
 ///
-/// **Issue #3.** The clinical-notes LLM (Gemma 3 4B-IT, MLX 4-bit) ships
-/// as a first-run download into `~/Library/Application Support/<bundle-id>/Models/`
+/// **Issue #3 (v1) / #18 (v2).** The clinical-notes LLM (currently
+/// Gemma 4 E4B-IT, MLX 4-bit — supersedes v1 Gemma 3 4B-IT) ships as a
+/// first-run download into `~/Library/Application Support/<bundle-id>/Models/`
 /// rather than bundled into the .app — the locked-decision change is recorded
 /// in `.claude/CLAUDE.md` and `.claude/references/mlx-lifecycle.md`. The
 /// manifest is the integrity record that the downloader walks: it pins a
@@ -13,7 +14,7 @@ import Foundation
 /// PHI: the manifest carries no PHI of any kind. It is safe to log every
 /// field with `privacy: .public`.
 public struct ModelManifest: Codable, Sendable, Equatable {
-    /// Hugging Face repo id (e.g. `"mlx-community/gemma-3-text-4b-it-4bit"`).
+    /// Hugging Face repo id (e.g. `"mlx-community/gemma-4-e4b-it-4bit"`).
     public let modelId: String
 
     /// Hugging Face git commit SHA that this manifest pins. The downloader
@@ -33,8 +34,8 @@ public struct ModelManifest: Codable, Sendable, Equatable {
     public let totalBytes: Int64
 
     /// Repo-name segment of `modelId` — i.e. everything after the final
-    /// `/` (e.g. `"mlx-community/gemma-3-text-4b-it-4bit"` →
-    /// `"gemma-3-text-4b-it-4bit"`). Used as the on-disk directory name
+    /// `/` (e.g. `"mlx-community/gemma-4-e4b-it-4bit"` →
+    /// `"gemma-4-e4b-it-4bit"`). Used as the on-disk directory name
     /// under `~/Library/Application Support/<bundle-id>/Models/`.
     /// Falls back to `"model"` for the (impossible-by-decode-validation)
     /// case where `modelId` has no `/` segment.
