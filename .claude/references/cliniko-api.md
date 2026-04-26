@@ -132,5 +132,5 @@ Every successful export writes a metadata-only line to
 - `Sources/Services/Cliniko/ClinikoClient.swift` — actor + URLSession.
 - `Sources/Services/Cliniko/ClinikoEndpoint.swift` — endpoint enum.
 - `Sources/Services/Cliniko/ClinikoError.swift` — typed errors.
-- `Sources/Services/AuditStore.swift` — metadata-only audit log.
+- `Sources/Services/Cliniko/AuditStore.swift` — metadata-only audit log.
 - `Tests/SpeechToTextTests/Fixtures/cliniko/` — request + response goldens.
