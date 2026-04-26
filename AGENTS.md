@@ -31,10 +31,24 @@ them at once** — the whole point of the router is context efficiency.
 | Working on the LLM provider, model loading / warmup / fallback | [`.claude/references/mlx-lifecycle.md`](.claude/references/mlx-lifecycle.md) |
 | Touching the menu-bar icon, hotkey, recording modal window, or Accessibility text insertion | [`.claude/references/menubar-integration.md`](.claude/references/menubar-integration.md) |
 
-Component-scoped `AGENTS.md` files will live alongside new
-subdirectories as they're created (`Sources/Services/ClinicalNotes/`,
-`Sources/Services/Cliniko/`, `Sources/Views/ClinicalNotes/` — tracked
-in #17).
+Component-scoped `AGENTS.md` files live alongside the
+clinical-notes-mode subdirectories. Load the one whose folder you're
+editing in:
+
+- [`Sources/Services/ClinicalNotes/AGENTS.md`](Sources/Services/ClinicalNotes/AGENTS.md)
+  — `SessionStore`, `ClinicalNotesProcessor`, `ClinicalNotesPromptBuilder`,
+  `LLMProvider`, `ManipulationsRepository`, `ExportFlowCoordinator`.
+- [`Sources/Services/Cliniko/AGENTS.md`](Sources/Services/Cliniko/AGENTS.md)
+  — `ClinikoClient`, `ClinikoEndpoint`, `ClinikoError`,
+  `ClinikoCredentialStore`, `ClinikoShard`, `ClinikoAuthProbe`,
+  `ClinikoPatientService`, `ClinikoAppointmentService`,
+  `TreatmentNoteExporter`, `AuditStore`.
+- [`Sources/Views/ClinicalNotes/AGENTS.md`](Sources/Views/ClinicalNotes/AGENTS.md)
+  — `SafetyDisclaimerView`, `ReviewScreen` / `ReviewWindow` /
+  `ReviewWindowController` / `ReviewViewModel`, `SOAPSectionEditor`,
+  `ManipulationsChecklist`, `ExcludedContentDrawer`, `RawTranscriptSheet`,
+  `PatientPickerView` / `PatientPickerViewModel`, `ExportFlowView` /
+  `ExportFlowViewModel`.
 
 ---
 
@@ -226,6 +240,45 @@ UITests/             # XCUITest (pre-push / remote Mac only)
 docs/                # Long-form docs (also linked from references/)
 scripts/             # build, test, deploy automation
 ```
+
+---
+
+## Clinical Notes Mode (flow overview)
+
+The post-recording extension. From a completed transcript, produce a
+draft SOAP note, let the doctor edit it, and POST to Cliniko — all
+on-device, session-only PHI, opt-in via Settings.
+
+1. **Settings toggle** flips Clinical Notes Mode on (`AppState`
+   wires the dependencies — see `Sources/SpeechToTextApp/AppState.swift`).
+2. **Recording** runs unchanged (FluidAudio → `RecordingSession`).
+3. **Generate Notes** action on the recording modal hands the transcript to
+   `SessionStore` → `ClinicalNotesProcessor` → `LLMProvider`
+   (`MLXGemmaProvider` / `MockLLMProvider`). Retry-once on schema-invalid
+   JSON, raw-transcript fallback on second failure.
+4. **Safety Disclaimer** modal shows on first entry (one-time
+   `UserDefaults` ack — issue [#12](https://github.com/CloudbrokerAz/mac-speech-to-text/issues/12)).
+5. **ReviewScreen** opens with two-column layout (SOAP editors +
+   manipulations checklist + excluded drawer — issue [#13](https://github.com/CloudbrokerAz/mac-speech-to-text/issues/13)).
+6. **PatientPicker** sheet selects a Cliniko patient + appointment via
+   `ClinikoPatientService` / `ClinikoAppointmentService`.
+7. **Export** runs `ExportFlowCoordinator` → `TreatmentNoteExporter` →
+   `POST /treatment_notes` → metadata-only `AuditStore` row → success
+   surface clears `SessionStore`.
+
+Component AGENTS.md (load the one whose folder you're editing):
+
+- [`Sources/Services/ClinicalNotes/AGENTS.md`](Sources/Services/ClinicalNotes/AGENTS.md)
+  — pipeline services + LLM seam.
+- [`Sources/Services/Cliniko/AGENTS.md`](Sources/Services/Cliniko/AGENTS.md)
+  — HTTP client + credentials + audit ledger.
+- [`Sources/Views/ClinicalNotes/AGENTS.md`](Sources/Views/ClinicalNotes/AGENTS.md)
+  — Review / Picker / Export UI.
+
+EPIC: [#1 — Clinical Notes Mode](https://github.com/CloudbrokerAz/mac-speech-to-text/issues/1).
+Locked technical decisions (LLM runtime, model v1, persistence, UI entry,
+Cliniko scope, testing stack) live in the EPIC body and
+`.claude/CLAUDE.md` — don't re-litigate without an explicit ask.
 
 ---
 

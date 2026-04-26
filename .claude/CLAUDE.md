@@ -109,17 +109,45 @@ For every non-trivial PR, exercise all three:
 ```
 Sources/
 ├── SpeechToTextApp/     # App entry point (@main, AppDelegate, AppState)
-├── Services/            # Business logic layer (7 services)
-├── Models/              # Data structures (5 models)
-├── Views/               # SwiftUI views + ViewModels (12 files)
-│   └── Components/      # Reusable UI components (4 files)
+├── Services/            # Business logic layer
+│   ├── ClinicalNotes/   # SOAP pipeline: SessionStore, ClinicalNotesProcessor,
+│   │                    # ClinicalNotesPromptBuilder, LLMProvider,
+│   │                    # ManipulationsRepository, ExportFlowCoordinator
+│   │                    # → load AGENTS.md when editing
+│   ├── Cliniko/         # HTTP + creds + audit: ClinikoClient, ClinikoEndpoint,
+│   │                    # ClinikoError, ClinikoCredentialStore, ClinikoShard,
+│   │                    # ClinikoAuthProbe, ClinikoPatientService,
+│   │                    # ClinikoAppointmentService, TreatmentNoteExporter,
+│   │                    # AuditStore  → load AGENTS.md when editing
+│   └── (top-level)      # General STT + system: AudioCaptureService,
+│                        # FluidAudioService, HotkeyManager, KeychainSecureStore,
+│                        # PermissionService, SecureStore, SettingsService,
+│                        # ShortcutNames, StatisticsService, TextInsertionService,
+│                        # VoiceTriggerMonitoringService, WakeWordService
+├── Models/              # Data structures (Patient, Appointment, ClinicalSession,
+│                        # OpaqueClinikoID, TreatmentNotePayload, etc.)
+├── Views/               # SwiftUI views + ViewModels
+│   ├── ClinicalNotes/   # Disclaimer + Review + Picker + Export flow
+│   │                    # → load AGENTS.md when editing
+│   ├── MainView/        # Main window + sections
+│   ├── GlassOverlay/    # Recording overlay window
+│   └── Components/      # Reusable UI components
 └── Utilities/           # Extensions, constants, and logging
     └── Extensions/      # Color+Theme, etc.
 
 Tests/
-└── SpeechToTextTests/   # XCTest suite (24 test files)
+└── SpeechToTextTests/   # Mixed XCTest + Swift Testing
+    ├── Utilities/       # URLProtocolStub, InMemorySecureStore, TestTags,
+    │                    # MockLLMProvider, exemplars
+    ├── Fixtures/        # cliniko/, soap/, llm/ — test bundle resources
+    ├── Services/        # service unit tests
+    └── Views/           # ViewInspector + crash-detection + scoped snapshots
 
-UITests/                 # XCUITest E2E tests
+UITests/                 # XCUITest E2E tests (pre-push / remote Mac only)
+
+.claude/references/      # Topic-router refs — load on demand
+                         # concurrency / testing-conventions / cliniko-api /
+                         # phi-handling / mlx-lifecycle / menubar-integration
 
 scripts/                 # Build and test automation
 ├── build-app.sh         # Build signed .app bundle (--sync for remote Mac)
@@ -130,6 +158,15 @@ scripts/                 # Build and test automation
 ├── export-dmg.sh        # Create distributable DMG
 └── setup-ssh-for-mac.sh # Configure SSH for remote testing
 ```
+
+**Component AGENTS.md** files exist for the three clinical-notes-mode
+subdirs above — load the matching one when editing files in that folder
+(don't load all three together; the Topic Router pattern keeps context
+lean):
+
+- [`Sources/Services/ClinicalNotes/AGENTS.md`](../Sources/Services/ClinicalNotes/AGENTS.md)
+- [`Sources/Services/Cliniko/AGENTS.md`](../Sources/Services/Cliniko/AGENTS.md)
+- [`Sources/Views/ClinicalNotes/AGENTS.md`](../Sources/Views/ClinicalNotes/AGENTS.md)
 
 ## Key Architectural Patterns
 
