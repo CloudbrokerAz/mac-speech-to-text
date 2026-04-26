@@ -11,13 +11,22 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Force every JavaScript action (including transitives we can't bump
+# directly — notably pre-commit/action@v3.0.1 which depends on
+# actions/cache@v4 internally and has no newer release) to run on
+# Node.js 24. Resolves #34's June 2026 deadline; keeps deprecation
+# warnings out of every run. Drop this opt-in once the runner default
+# becomes Node.js 24 in June 2026.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   lint:
     name: SwiftLint
     runs-on: macos-15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Install SwiftLint
         run: brew install swiftlint
@@ -30,7 +39,7 @@ jobs:
     runs-on: macos-15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           # Need history back to the PR base so pre-commit can diff against it
           # and only check files changed in this PR.
@@ -86,7 +95,7 @@ jobs:
     needs: [lint, pre-commit]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Select Xcode version
         # Xcode 16.4 ships Swift 6.1 (Xcode 16.2 ships 6.0.3, which fails to
@@ -267,7 +276,7 @@ jobs:
     needs: test
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Select Xcode version
         # Xcode 16.4 ships Swift 6.1 (Xcode 16.2 ships 6.0.3, which fails to
