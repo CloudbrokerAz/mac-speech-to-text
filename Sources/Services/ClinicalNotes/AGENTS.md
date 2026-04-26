@@ -97,9 +97,9 @@ The pipeline:
 
 ### Determinism / golden tests
 
-- `LLMOptions` defaults (`temperature: 0`, `topP: 1.0`, `seed: 42`)
-  + the deterministic prompt builder make `MLXGemmaProvider` output
-  reproducible for a given transcript. The nightly LLM goldens
+- `LLMOptions` defaults (`temperature: 0`, `topP: 1.0`, `seed: 42`),
+  paired with the deterministic prompt builder, make `MLXGemmaProvider`
+  output reproducible for a given transcript. The nightly LLM goldens
   (`RUN_MLX_GOLDEN=1`) depend on this. **Anything that breaks
   determinism breaks the goldens** — re-ordering the manipulations
   list, changing the prompt template's whitespace, varying option

@@ -14,8 +14,8 @@ flow is:
 
 1. **Disclaimer** (one-time ack, gated by `UserDefaults`) — see
    issue [#12](https://github.com/CloudbrokerAz/mac-speech-to-text/issues/12).
-2. **ReviewScreen** (two-column SOAP editor + manipulations checklist
-   + excluded drawer, hosted in a non-floating `NSWindow`) — see
+2. **ReviewScreen** (two-column SOAP editor with manipulations checklist
+   and excluded drawer, hosted in a non-floating `NSWindow`) — see
    issue [#13](https://github.com/CloudbrokerAz/mac-speech-to-text/issues/13).
 3. **PatientPicker** sheet (Cliniko search → appointment list).
 4. **ExportFlow** sheet (confirm → POST → success / failure) — see
