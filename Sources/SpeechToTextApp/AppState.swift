@@ -109,17 +109,17 @@ class AppState {
         // taxonomy so `present()` is a no-arg call from the notification
         // observer below. Mirrors the MainWindowController.shared idiom.
         // Factory closures route to `ExportFlowCoordinator.shared`
-        // (configured lazily on the Generate-Notes hand-off) and to
-        // a per-tap fresh `PatientPickerViewModel` constructed against
+        // (configured at launch + re-validated per tap) and to a
+        // per-tap fresh `PatientPickerViewModel` constructed against
         // the configured Cliniko services.
         ReviewWindowController.shared.configure(
             sessionStore: self.sessionStore,
             manipulations: self.manipulations,
             makeExportFlowViewModel: { [weak self] in
-                // Best-effort lazy configuration: if Cliniko credentials
-                // are present, ensure the coordinator is configured
-                // before handing back a VM. Returns nil otherwise so
-                // `triggerExport` surfaces "Cliniko isn't set up".
+                // Re-validate config on every tap so a freshly-pasted
+                // API key is picked up without restarting the app —
+                // the launch-time pre-configure (below) handles the
+                // common "key was already set" path.
                 self?.ensureClinikoSetupSync()
                 return ExportFlowCoordinator.shared.makeViewModel()
             },
@@ -128,6 +128,16 @@ class AppState {
                 return self?.makePatientPickerViewModel()
             }
         )
+
+        // Pre-configure the Cliniko export pipeline at launch so the
+        // first Generate-Notes interaction does NOT race the
+        // credential load. The recording flow takes at minimum a few
+        // seconds; this Task completes well before the user reaches
+        // the review window in the common path. The factory closures
+        // above also re-call `ensureClinikoSetupSync()` to handle
+        // "user just configured Cliniko in Settings and clicked
+        // Generate Notes" — a much narrower window than first-tap.
+        ensureClinikoSetupSync()
 
         // Load statistics asynchronously (actor isolation)
         // Track the task for proper lifecycle management. `statistics`

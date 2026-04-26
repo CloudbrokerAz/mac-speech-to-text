@@ -282,6 +282,15 @@ final class ExportFlowViewModel: Identifiable {
 
     @ObservationIgnored private var uploadTask: Task<Void, Never>?
     @ObservationIgnored private var countdownTask: Task<Void, Never>?
+    /// Nonisolated mirrors of the in-flight tasks so `deinit` (which
+    /// runs nonisolated) can cancel them without an actor hop. The
+    /// `nonisolated(unsafe)` annotation is justified because: (a)
+    /// every assignment happens on `@MainActor`, (b) `deinit` is the
+    /// only nonisolated reader, and (c) `deinit` runs after every
+    /// other reference has been dropped, so there is no concurrent
+    /// access. Same idiom as `AppState.deinitLoadingTask`.
+    @ObservationIgnored private nonisolated(unsafe) var deinitUploadTask: Task<Void, Never>?
+    @ObservationIgnored private nonisolated(unsafe) var deinitCountdownTask: Task<Void, Never>?
     @ObservationIgnored private let logger = Logger(
         subsystem: "com.speechtotext",
         category: "ExportFlowViewModel"
@@ -295,6 +304,18 @@ final class ExportFlowViewModel: Identifiable {
     ) {
         self.sessionStore = sessionStore
         self.dependencies = dependencies
+    }
+
+    deinit {
+        // Cancel any in-flight upload / countdown Tasks at sheet
+        // dismissal so they don't continue past the VM's lifetime.
+        // The Tasks already capture `[weak self]` so `await self?.…`
+        // would no-op once self is gone, but cancelling explicitly
+        // tears down the structured-concurrency tree faster (avoids
+        // a stuck `Task.sleep(for: .seconds(1))` lingering for a
+        // wall-clock second after the user dismisses).
+        deinitUploadTask?.cancel()
+        deinitCountdownTask?.cancel()
     }
 
     // MARK: - Lifecycle
@@ -365,7 +386,7 @@ final class ExportFlowViewModel: Identifiable {
         let exporter = dependencies.exporter
         logger.info("ExportFlowViewModel: state=uploading appointmentBound=\(appointmentInt != nil ? "true" : "false", privacy: .public)")
 
-        uploadTask = Task { [weak self] in
+        let task = Task { [weak self] in
             do {
                 let outcome = try await exporter.export(
                     notes: notes,
@@ -377,6 +398,8 @@ final class ExportFlowViewModel: Identifiable {
                 await self?.handleFailure(error)
             }
         }
+        uploadTask = task
+        deinitUploadTask = task
     }
 
     /// Cancel the export sheet. From `.confirming` this is a clean
@@ -391,8 +414,10 @@ final class ExportFlowViewModel: Identifiable {
         guard case .confirming = state else { return }
         uploadTask?.cancel()
         uploadTask = nil
+        deinitUploadTask = nil
         countdownTask?.cancel()
         countdownTask = nil
+        deinitCountdownTask = nil
         state = .idle
         logger.info("ExportFlowViewModel: state=idle (user cancel from confirming)")
     }
@@ -414,6 +439,7 @@ final class ExportFlowViewModel: Identifiable {
         rateLimitCountdownRemaining = nil
         countdownTask?.cancel()
         countdownTask = nil
+        deinitCountdownTask = nil
         enterConfirming()
         // If the recomputed summary is .confirming and the
         // appointment was previously resolved, auto-confirm so the
@@ -500,6 +526,7 @@ final class ExportFlowViewModel: Identifiable {
 
     private func handleSuccess(_ outcome: TreatmentNoteExporter.ExportOutcome) {
         uploadTask = nil
+        deinitUploadTask = nil
         let report = SuccessReport(
             createdNoteID: OpaqueClinikoID(outcome.created.id),
             auditPersisted: outcome.auditPersisted,
@@ -515,6 +542,7 @@ final class ExportFlowViewModel: Identifiable {
 
     private func handleFailure(_ error: Error) {
         uploadTask = nil
+        deinitUploadTask = nil
         let translated = Self.translate(error)
         state = .failed(translated)
         // Structural log: the case name only. Never the URL, never
@@ -529,15 +557,17 @@ final class ExportFlowViewModel: Identifiable {
         countdownTask?.cancel()
         let initial = max(0, seconds)
         rateLimitCountdownRemaining = initial
-        countdownTask = Task { [weak self] in
+        let task = Task { [weak self] in
             var remaining = initial
             while remaining > 0 {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                try? await Task.sleep(for: .seconds(1))
                 if Task.isCancelled { return }
                 remaining -= 1
                 await self?.updateCountdown(remaining)
             }
         }
+        countdownTask = task
+        deinitCountdownTask = task
     }
 
     private func updateCountdown(_ remaining: TimeInterval) {
