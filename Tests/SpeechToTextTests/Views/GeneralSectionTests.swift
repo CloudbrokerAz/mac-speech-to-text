@@ -144,15 +144,38 @@ final class PasteBehaviorTests: XCTestCase {
 
 @MainActor
 final class GeneralSectionPersistenceTests: XCTestCase {
+    // Justification: lifecycle-managed by setUp/tearDown — XCTest skips
+    // tearDown if setUp throws, so reads of this IUO are always gated
+    // behind successful assignment.
     var settingsService: SettingsService!
+    // Justification: lifecycle-managed by setUp/tearDown.
+    var suiteName: String!
 
     override func setUp() async throws {
         try await super.setUp()
-        settingsService = SettingsService()
+        // Per-test suite name keeps `swift test --parallel` runs from racing on
+        // shared UserDefaults — see #32. Pattern mirrors SettingsServiceTests.
+        let name = "com.speechtotext.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(
+            UserDefaults(suiteName: name),
+            "Failed to create UserDefaults suite \(name)"
+        )
+        defaults.removePersistentDomain(forName: name)
+        suiteName = name
+        settingsService = SettingsService(userDefaults: defaults)
     }
 
     override func tearDown() async throws {
+        // setUp may have failed before assigning suiteName; guard so a setUp
+        // crash doesn't get masked by a tearDown crash on the IUO unwrap.
+        // `removePersistentDomain(forName:)` operates on the named domain
+        // regardless of receiver, so `.standard` works without needing a
+        // separate handle to the per-test suite (per Apple docs).
+        if let suiteName {
+            UserDefaults.standard.removePersistentDomain(forName: suiteName)
+        }
         settingsService = nil
+        suiteName = nil
         try await super.tearDown()
     }
 
@@ -168,10 +191,6 @@ final class GeneralSectionPersistenceTests: XCTestCase {
         // Then
         let reloadedSettings = settingsService.load()
         XCTAssertEqual(reloadedSettings.general.autoInsertText, !originalValue)
-
-        // Cleanup - restore original value
-        settings.general.autoInsertText = originalValue
-        try? settingsService.save(settings)
     }
 
     func test_settingsSave_persistsRecordingMode() {
@@ -187,10 +206,6 @@ final class GeneralSectionPersistenceTests: XCTestCase {
         // Then
         let reloadedSettings = settingsService.load()
         XCTAssertEqual(reloadedSettings.ui.recordingMode, newMode)
-
-        // Cleanup - restore original value
-        settings.ui.recordingMode = originalMode
-        try? settingsService.save(settings)
     }
 
     func test_settingsSave_persistsCopyToClipboard() {
@@ -205,9 +220,5 @@ final class GeneralSectionPersistenceTests: XCTestCase {
         // Then
         let reloadedSettings = settingsService.load()
         XCTAssertEqual(reloadedSettings.general.copyToClipboard, !originalValue)
-
-        // Cleanup - restore original value
-        settings.general.copyToClipboard = originalValue
-        try? settingsService.save(settings)
     }
 }
