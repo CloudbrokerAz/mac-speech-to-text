@@ -163,8 +163,6 @@ jobs:
       #   TextInsertionServiceTests         CGEventPost + display server
       #   VoiceTriggerMonitoringServiceTests transitively needs real mic
       #   WakeWordServiceTests              reads real WAV fixtures from models
-      #   GeneralSectionPersistenceTests    shared UserDefaults race under --parallel;
-      #                                     tracked for fix, runs pre-push serially.
       #   KeychainSecureStoreTests          real macOS Keychain — Swift Testing suite
       #                                     tagged .requiresHardware; will migrate to
       #                                     --skip-tag requiresHardware once #31 lands.
@@ -179,7 +177,6 @@ jobs:
             --skip TextInsertionServiceTests \
             --skip VoiceTriggerMonitoringServiceTests \
             --skip WakeWordServiceTests \
-            --skip GeneralSectionPersistenceTests \
             --skip KeychainSecureStoreTests 2>&1 | tee test.log
 
       # Coverage export is a *required* part of this job — the whole point is

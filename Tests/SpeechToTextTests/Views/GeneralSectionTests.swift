@@ -144,15 +144,25 @@ final class PasteBehaviorTests: XCTestCase {
 
 @MainActor
 final class GeneralSectionPersistenceTests: XCTestCase {
+    var userDefaults: UserDefaults!
     var settingsService: SettingsService!
+    var suiteName: String!
 
     override func setUp() async throws {
         try await super.setUp()
-        settingsService = SettingsService()
+        // Per-test suite name keeps `swift test --parallel` runs from racing on
+        // shared UserDefaults — see #32. Pattern mirrors SettingsServiceTests.
+        suiteName = "com.speechtotext.tests.\(UUID().uuidString)"
+        userDefaults = UserDefaults(suiteName: suiteName)!
+        userDefaults.removePersistentDomain(forName: suiteName)
+        settingsService = SettingsService(userDefaults: userDefaults)
     }
 
     override func tearDown() async throws {
+        userDefaults.removePersistentDomain(forName: suiteName)
         settingsService = nil
+        userDefaults = nil
+        suiteName = nil
         try await super.tearDown()
     }
 
@@ -168,10 +178,6 @@ final class GeneralSectionPersistenceTests: XCTestCase {
         // Then
         let reloadedSettings = settingsService.load()
         XCTAssertEqual(reloadedSettings.general.autoInsertText, !originalValue)
-
-        // Cleanup - restore original value
-        settings.general.autoInsertText = originalValue
-        try? settingsService.save(settings)
     }
 
     func test_settingsSave_persistsRecordingMode() {
@@ -187,10 +193,6 @@ final class GeneralSectionPersistenceTests: XCTestCase {
         // Then
         let reloadedSettings = settingsService.load()
         XCTAssertEqual(reloadedSettings.ui.recordingMode, newMode)
-
-        // Cleanup - restore original value
-        settings.ui.recordingMode = originalMode
-        try? settingsService.save(settings)
     }
 
     func test_settingsSave_persistsCopyToClipboard() {
@@ -205,9 +207,5 @@ final class GeneralSectionPersistenceTests: XCTestCase {
         // Then
         let reloadedSettings = settingsService.load()
         XCTAssertEqual(reloadedSettings.general.copyToClipboard, !originalValue)
-
-        // Cleanup - restore original value
-        settings.general.copyToClipboard = originalValue
-        try? settingsService.save(settings)
     }
 }
