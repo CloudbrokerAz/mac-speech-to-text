@@ -89,7 +89,10 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Select Xcode version
-        run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+        # Xcode 16.4 ships Swift 6.1 (Xcode 16.2 ships 6.0.3, which fails to
+        # resolve mlx-swift-lm 3.31.x — that package's Package.swift declares
+        # `swift-tools-version: 6.1`). Bumped 2026-04-26 in #3.
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
 
       - name: Show Xcode and Swift versions
         run: |
@@ -267,7 +270,10 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Select Xcode version
-        run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+        # Xcode 16.4 ships Swift 6.1 (Xcode 16.2 ships 6.0.3, which fails to
+        # resolve mlx-swift-lm 3.31.x — that package's Package.swift declares
+        # `swift-tools-version: 6.1`). Bumped 2026-04-26 in #3.
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
 
       - name: Cache Swift Package Manager dependencies
         uses: actions/cache@v5

@@ -125,9 +125,31 @@ The pipeline:
 
 ### MLX provider
 
-- The concrete `MLXGemmaProvider` ships in a follow-up PR against
-  this same area. For its load / warmup / fallback story, see
-  [`../../../.claude/references/mlx-lifecycle.md`](../../../.claude/references/mlx-lifecycle.md).
+- `MLXGemmaProvider` (this directory) is the production `LLMProvider`,
+  running Gemma 3 4B-IT (MLX 4-bit, text-only) in-process via
+  `ml-explore/mlx-swift-lm` 3.31.x on Apple Silicon. `MockLLMProvider`
+  (in `Tests/`) is the test/preview shim.
+- **Two-phase init.** Construct cheaply with the model directory
+  (`init(modelDirectory:)`), then `await warmup()` to load weights
+  into the `ModelContainer` before the first `generate` call.
+  `warmup()` is idempotent — safe to call from multiple entry points
+  (Settings toggle, lazy first-tap fallback in `AppState`).
+- **Weights live off-bundle.** `ModelDownloader` (sibling file)
+  fetches them on first run from
+  `mlx-community/gemma-3-text-4b-it-4bit` into Application Support,
+  verifies sha256 against `Resources/Models/gemma-3-text-4b-it-4bit/manifest.json`,
+  then `MLXGemmaProvider` mmaps from the verified directory. See the
+  Deployment section of [`mlx-lifecycle.md`](../../../.claude/references/mlx-lifecycle.md)
+  for the full story.
+- **Stop sequences.** `LLMOptions.stop` is enforced post-stream (mlx
+  has no native `extraEOSTokens` on the AsyncStream API); the
+  `firstStopRange` / `safeFlushBoundary` helpers buffer just enough
+  to avoid emitting partial stop matches.
+- **TokenizerLoader.** A small `SwiftTransformersTokenizerLoader`
+  bridges `Tokenizers.AutoTokenizer.from(modelFolder:)` (swift-transformers)
+  into `MLXLMCommon.Tokenizer`. Written by hand instead of using the
+  `MLXHuggingFace` `#huggingFaceTokenizerLoader()` macro to avoid
+  pulling the macro plugin + extra SPM products for ~30 LOC of bridge.
 
 ---
 
