@@ -298,52 +298,115 @@ struct ReviewViewModelTests {
         #expect(viewModel.canExport)
     }
 
-    @Test("triggerExport without a patient sets a structural error message and does not post")
+    @Test("triggerExport without a patient sets a structural error message and does not present a sheet")
     func triggerExportWithoutPatientSetsErrorMessage() async {
         let store = makeSessionWith()
         let viewModel = ReviewViewModel(sessionStore: store, manipulations: stubManipulations())
 
-        var receivedExport = false
-        // Filter on the VM so a concurrent parallel test posting the same
-        // notification with a different VM does not spuriously trip this
-        // observer (Tests run with `--parallel` and share NotificationCenter.default).
-        let observer = NotificationCenter.default.addObserver(
-            forName: .clinicalNotesExportRequested,
-            object: viewModel,
-            queue: .main
-        ) { _ in receivedExport = true }
-        defer { NotificationCenter.default.removeObserver(observer) }
+        viewModel.triggerExport()
+
+        // No sheet — the canExport gate fires before the factory is
+        // ever consulted, so the export sheet does not present.
+        #expect(viewModel.errorMessage != nil)
+        #expect(viewModel.exportFlowSheet == nil)
+    }
+
+    @Test("triggerExport with a patient invokes the export factory and presents the sheet")
+    func triggerExportWithPatientPresentsSheet() async {
+        let store = makeSessionWith()
+        store.setSelectedPatient(id: OpaqueClinikoID(99))
+        store.setDraftNotes(StructuredNotes(subjective: "s"))
+
+        // Hand-rolled factory that returns a real ExportFlowViewModel
+        // built against in-memory fakes. The export VM doesn't need
+        // to do anything past `idle` for this test — we only assert
+        // the wiring.
+        let exporter = TreatmentNoteExporter(
+            client: ClinikoClient(
+                credentials: try! ClinikoCredentials(apiKey: "MS-test-au1", shard: .au1),
+                session: URLSession.shared
+            ),
+            auditStore: InMemoryAuditStore(),
+            manipulations: stubManipulations()
+        )
+        let factory: () -> ExportFlowViewModel? = {
+            ExportFlowViewModel(
+                sessionStore: store,
+                dependencies: ExportFlowDependencies(
+                    exporter: exporter,
+                    manipulations: stubManipulationsRepo(),
+                    onSuccess: {},
+                    openClinikoSettings: {},
+                    copyToClipboard: { _ in }
+                )
+            )
+        }
+        let viewModel = ReviewViewModel(
+            sessionStore: store,
+            manipulations: stubManipulations(),
+            makeExportFlowViewModel: factory
+        )
 
         viewModel.triggerExport()
 
-        // Drain main queue once so the .main-queue observer (if any) fires.
-        await Task.yield()
-
-        #expect(viewModel.errorMessage != nil)
-        #expect(receivedExport == false)
+        #expect(viewModel.exportFlowSheet != nil)
+        #expect(viewModel.errorMessage == nil)
     }
 
-    @Test("triggerExport with a patient posts .clinicalNotesExportRequested")
-    func triggerExportWithPatientPosts() async {
+    @Test("triggerExport with a patient but no factory surfaces a 'Cliniko not set up' banner")
+    func triggerExportWithoutFactorySurfacesBanner() async {
         let store = makeSessionWith()
         store.setSelectedPatient(id: OpaqueClinikoID(99))
 
+        // Default factory closure returns nil.
         let viewModel = ReviewViewModel(sessionStore: store, manipulations: stubManipulations())
-
-        var receivedExport = false
-        let observer = NotificationCenter.default.addObserver(
-            forName: .clinicalNotesExportRequested,
-            object: viewModel,
-            queue: .main
-        ) { _ in receivedExport = true }
-        defer { NotificationCenter.default.removeObserver(observer) }
 
         viewModel.triggerExport()
 
-        await Task.yield()
-        await Task.yield()
-        #expect(receivedExport)
+        #expect(viewModel.exportFlowSheet == nil)
+        #expect(viewModel.errorMessage != nil)
     }
+
+    @Test("dismissExportFlow clears the sheet")
+    func dismissExportFlowClearsSheet() async {
+        let store = makeSessionWith()
+        store.setSelectedPatient(id: OpaqueClinikoID(99))
+        store.setDraftNotes(StructuredNotes(subjective: "s"))
+
+        let exporter = TreatmentNoteExporter(
+            client: ClinikoClient(
+                credentials: try! ClinikoCredentials(apiKey: "MS-test-au1", shard: .au1),
+                session: URLSession.shared
+            ),
+            auditStore: InMemoryAuditStore(),
+            manipulations: stubManipulations()
+        )
+        let factory: () -> ExportFlowViewModel? = {
+            ExportFlowViewModel(
+                sessionStore: store,
+                dependencies: ExportFlowDependencies(
+                    exporter: exporter,
+                    manipulations: stubManipulationsRepo(),
+                    onSuccess: {},
+                    openClinikoSettings: {},
+                    copyToClipboard: { _ in }
+                )
+            )
+        }
+        let viewModel = ReviewViewModel(
+            sessionStore: store,
+            manipulations: stubManipulations(),
+            makeExportFlowViewModel: factory
+        )
+
+        viewModel.triggerExport()
+        #expect(viewModel.exportFlowSheet != nil)
+
+        viewModel.dismissExportFlow()
+        #expect(viewModel.exportFlowSheet == nil)
+    }
+
+    private func stubManipulationsRepo() -> ManipulationsRepository { stubManipulations() }
 
     // MARK: - cancelReview
 

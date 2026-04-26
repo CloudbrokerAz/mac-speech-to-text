@@ -108,6 +108,24 @@ final class ReviewViewModel {
     /// not mutate from non-view code.
     var isRawTranscriptSheetOpen: Bool = false
 
+    /// The export-flow VM presented by `triggerExport()` — driving
+    /// `.sheet(item:)` on `ReviewScreen`. `nil` while the sheet is
+    /// dismissed; populated by `triggerExport()` via the injected
+    /// factory; cleared by `dismissExportFlow()` (called from the
+    /// host's sheet `onDismiss`).
+    ///
+    /// Public-mutable so SwiftUI two-way bindings (`@Bindable`) work; do
+    /// not mutate from non-view code.
+    var exportFlowSheet: ExportFlowViewModel?
+
+    /// The patient-picker VM presented by `presentPatientPicker()`.
+    /// Hosted on the ReviewScreen header so the practitioner can
+    /// pick a Cliniko patient before tapping Export.
+    ///
+    /// Public-mutable so SwiftUI two-way bindings (`@Bindable`) work; do
+    /// not mutate from non-view code.
+    var patientPickerSheet: PatientPickerViewModel?
+
     /// Last surfaced error banner, if any. Cleared on retry / dismiss.
     /// Public-mutable so SwiftUI two-way bindings (`@Bindable`) work; do
     /// not mutate from non-view code.
@@ -117,6 +135,20 @@ final class ReviewViewModel {
 
     @ObservationIgnored let sessionStore: SessionStore
     @ObservationIgnored private let manipulationsRepo: ManipulationsRepository
+
+    /// Factory that produces a fresh `ExportFlowViewModel` every
+    /// time the practitioner taps Export. Returning `nil` means the
+    /// `ExportFlowCoordinator` was never configured — gated on
+    /// `coordinatorIsConfigured` so the visible UI never reaches
+    /// that branch. Tests pass a fake closure.
+    @ObservationIgnored private let makeExportFlowViewModel: () -> ExportFlowViewModel?
+
+    /// Factory that produces a fresh `PatientPickerViewModel` for
+    /// the header-hosted picker sheet. Returning `nil` means
+    /// `AppState` hasn't wired the Cliniko patient/appointment
+    /// services yet (no API key configured) — the UI surfaces a
+    /// "set up Cliniko in Settings" message in that case.
+    @ObservationIgnored private let makePatientPickerViewModel: () -> PatientPickerViewModel?
 
     @ObservationIgnored private let now: @Sendable () -> Date
     @ObservationIgnored private let reAddTargetWindow: TimeInterval
@@ -145,12 +177,16 @@ final class ReviewViewModel {
         sessionStore: SessionStore,
         manipulations: ManipulationsRepository,
         reAddTargetWindow: TimeInterval = 5.0,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        makeExportFlowViewModel: @escaping () -> ExportFlowViewModel? = { nil },
+        makePatientPickerViewModel: @escaping () -> PatientPickerViewModel? = { nil }
     ) {
         self.sessionStore = sessionStore
         self.manipulationsRepo = manipulations
         self.reAddTargetWindow = reAddTargetWindow
         self.now = now
+        self.makeExportFlowViewModel = makeExportFlowViewModel
+        self.makePatientPickerViewModel = makePatientPickerViewModel
     }
 
     // MARK: - Manipulations accessor
@@ -414,22 +450,63 @@ final class ReviewViewModel {
         NotificationCenter.default.post(name: .reviewScreenDidDismiss, object: self)
     }
 
-    /// Trigger the export flow (#14). Posts a notification with no PHI in
-    /// `userInfo` — the export-flow VM reads patient + appointment +
-    /// `draftNotes` directly from `SessionStore`, which is the single
-    /// source of truth. The notification carries `self` as the `object`
-    /// so observers can filter against concurrent fixtures.
+    /// Trigger the export flow (#14). Builds a fresh
+    /// `ExportFlowViewModel` via the injected factory and assigns
+    /// it to `exportFlowSheet`, which `ReviewScreen` binds to a
+    /// `.sheet(item:)` host. The export VM reads patient +
+    /// appointment + `draftNotes` from `SessionStore` directly — no
+    /// PHI rides the SwiftUI binding.
+    ///
+    /// Surfaces a structural error banner when the export flow
+    /// cannot be presented: no patient selected (gated by
+    /// `canExport`), or the coordinator hasn't been configured
+    /// (e.g. Cliniko credentials missing — the export factory
+    /// returns nil in that case).
     func triggerExport() {
         guard canExport else {
             logger.info("ReviewViewModel: triggerExport blocked — no patient selected")
             errorMessage = "Select a patient before exporting."
             return
         }
-        logger.info("ReviewViewModel: triggerExport")
-        NotificationCenter.default.post(
-            name: .clinicalNotesExportRequested,
-            object: self
-        )
+        guard let viewModel = makeExportFlowViewModel() else {
+            logger.error("ReviewViewModel: triggerExport blocked — coordinator not configured")
+            errorMessage = "Cliniko isn't set up — configure your API key in Settings."
+            return
+        }
+        logger.info("ReviewViewModel: triggerExport — sheet presented")
+        errorMessage = nil
+        exportFlowSheet = viewModel
+    }
+
+    /// Dismiss the export-flow sheet. Bound to the host
+    /// `.sheet(item:)`'s `onDismiss` so the sheet's close
+    /// affordances and the host close converge on a single nil.
+    func dismissExportFlow() {
+        guard exportFlowSheet != nil else { return }
+        logger.info("ReviewViewModel: export sheet dismissed")
+        exportFlowSheet = nil
+    }
+
+    /// Present the patient-picker sheet. Hosted on the
+    /// ReviewScreen header so the practitioner picks a patient
+    /// before tapping Export. Surfaces a structural banner when
+    /// Cliniko isn't configured.
+    func presentPatientPicker() {
+        guard let viewModel = makePatientPickerViewModel() else {
+            logger.error("ReviewViewModel: presentPatientPicker blocked — coordinator not configured")
+            errorMessage = "Cliniko isn't set up — configure your API key in Settings."
+            return
+        }
+        logger.info("ReviewViewModel: patient picker presented")
+        errorMessage = nil
+        patientPickerSheet = viewModel
+    }
+
+    /// Dismiss the patient-picker sheet.
+    func dismissPatientPicker() {
+        guard patientPickerSheet != nil else { return }
+        logger.info("ReviewViewModel: patient picker dismissed")
+        patientPickerSheet = nil
     }
 }
 
@@ -440,9 +517,4 @@ extension Notification.Name {
     /// `ReviewWindowController` can drop its strong reference. Mirrors
     /// the `mainWindowDidClose` pattern in `MainWindow.swift`.
     static let reviewScreenDidDismiss = Notification.Name("reviewScreenDidDismiss")
-
-    /// Posted by `ReviewViewModel.triggerExport()`. Picked up by the
-    /// export-flow presenter that lands in #14. Carries no PHI in
-    /// `userInfo` — `SessionStore` is the source of truth.
-    static let clinicalNotesExportRequested = Notification.Name("clinicalNotesExportRequested")
 }

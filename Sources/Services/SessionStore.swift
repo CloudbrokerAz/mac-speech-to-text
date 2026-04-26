@@ -109,9 +109,15 @@ final class SessionStore {
     /// string — they must construct from a numeric `Patient.id` (the
     /// Cliniko-response shape) or from a `rawValue` string with a
     /// documented provenance (Codable round-trip, test wiring).
-    func setSelectedPatient(id: OpaqueClinikoID?) {
+    ///
+    /// `displayName` is captured by the picker (#9) at selection
+    /// time so the export confirmation surface (#14) can render a
+    /// patient label without re-fetching. Setting `id: nil` also
+    /// clears the display name so the two never drift.
+    func setSelectedPatient(id: OpaqueClinikoID?, displayName: String? = nil) {
         guard active != nil else { return }
         active?.selectedPatientID = id
+        active?.selectedPatientDisplayName = id == nil ? nil : displayName
         touch()
     }
 
