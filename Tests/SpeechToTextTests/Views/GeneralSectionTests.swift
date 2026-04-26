@@ -145,10 +145,8 @@ final class PasteBehaviorTests: XCTestCase {
 @MainActor
 final class GeneralSectionPersistenceTests: XCTestCase {
     // Justification: lifecycle-managed by setUp/tearDown — XCTest skips
-    // tearDown if setUp throws, so reads of these IUOs are always gated
+    // tearDown if setUp throws, so reads of this IUO are always gated
     // behind successful assignment.
-    var userDefaults: UserDefaults!
-    // Justification: lifecycle-managed by setUp/tearDown.
     var settingsService: SettingsService!
     // Justification: lifecycle-managed by setUp/tearDown.
     var suiteName: String!
@@ -164,21 +162,19 @@ final class GeneralSectionPersistenceTests: XCTestCase {
         )
         defaults.removePersistentDomain(forName: name)
         suiteName = name
-        userDefaults = defaults
         settingsService = SettingsService(userDefaults: defaults)
     }
 
     override func tearDown() async throws {
-        // setUp may have failed before assigning these; guard so a setUp
+        // setUp may have failed before assigning suiteName; guard so a setUp
         // crash doesn't get masked by a tearDown crash on the IUO unwrap.
         // `removePersistentDomain(forName:)` operates on the named domain
-        // regardless of receiver, so `.standard` works even if `userDefaults`
-        // never got assigned (per Apple docs).
+        // regardless of receiver, so `.standard` works without needing a
+        // separate handle to the per-test suite (per Apple docs).
         if let suiteName {
             UserDefaults.standard.removePersistentDomain(forName: suiteName)
         }
         settingsService = nil
-        userDefaults = nil
         suiteName = nil
         try await super.tearDown()
     }
