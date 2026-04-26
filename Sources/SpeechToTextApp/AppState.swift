@@ -29,15 +29,40 @@ class AppState {
     /// `ClinicalSession` only ever exists between the end of a recording and
     /// either successful Cliniko export, idle timeout, or app quit. PHI lives
     /// here exclusively — see `.claude/references/phi-handling.md`.
-    ///
-    /// `clinicalNotesProcessor` (the `actor ClinicalNotesProcessor` from #5)
-    /// injection is deferred until the concrete `MLXGemmaProvider` lands —
-    /// only the `LLMProvider` protocol + `MockLLMProvider` shipped in #3, so
-    /// there is no production-shaped LLM to construct a default processor
-    /// against. Wiring is a one-line addition once that provider exists; the
-    /// store on its own is a no-op when the toggle is off and provides no
-    /// PHI surface area.
     @ObservationIgnored let sessionStore: SessionStore
+
+    /// Production-side `LLMProvider` (`MLXGemmaProvider`) + downloader +
+    /// processor wiring (#3). The pipeline is constructed eagerly at
+    /// launch but the model weights and the `ModelContainer` are *not*
+    /// touched until `prepareClinicalNotesPipeline()` is invoked
+    /// (today: lazily on the first `Generate Notes` tap; in a follow-up
+    /// PR: from the Settings toggle when Clinical Notes Mode is enabled).
+    /// `clinicalNotesProcessor` is `nil` only when the prompt template
+    /// fails to load from the bundle, which would also have failed
+    /// earlier asserts.
+    @ObservationIgnored let modelDownloader: ModelDownloader?
+    @ObservationIgnored let llmProvider: MLXGemmaProvider?
+    @ObservationIgnored let clinicalNotesProcessor: ClinicalNotesProcessor?
+    /// Cached pointer to the bundled manifest so per-file size lookups
+    /// in `applyDownloadProgress` don't have to enter the downloader
+    /// actor. Source-of-truth lives in `Resources/Models/<dir>/manifest.json`.
+    @ObservationIgnored let llmManifest: ModelManifest?
+
+    /// Observable hooks for the (future) Settings UI download surface.
+    /// Updated from the `ModelDownloader` progress callback via
+    /// `@MainActor` hops. UI consumers can bind directly; the values
+    /// stay in `0...1` for `progress` and at `.idle` when no download
+    /// is in flight. PHI-free by construction (model bytes only).
+    var llmDownloadProgress: Double = 0
+    var llmDownloadState: LLMDownloadState = .idle
+    /// Sum of bytes fully downloaded + verified so far this session.
+    /// Used by the `applyDownloadProgress` aggregator to advance the
+    /// progress bar smoothly across file boundaries — without it,
+    /// per-file `.bytesReceived` events would reset the bar each time
+    /// a new file started.
+    @ObservationIgnored private var llmDownloadCompletedBytes: Int64 = 0
+    /// Manifest's total bytes — captured once at `.starting`.
+    @ObservationIgnored private var llmDownloadTotalBytes: Int64 = 0
 
     /// Static manipulations taxonomy bundled with the app (#6). Loaded
     /// once at launch and handed to `ReviewWindowController` so the
@@ -97,6 +122,18 @@ class AppState {
         self.manipulations = Self.loadManipulationsTaxonomy()
         self.clinikoCredentialStore = ClinikoCredentialStore()
         self.auditStore = Self.makeAuditStore()
+
+        // Construct the clinical-notes LLM pipeline (#3). All four are
+        // optional: the manifest may be missing in pathological dev
+        // builds, and the prompt template may fail to load (asserts but
+        // doesn't crash). Each `nil` translates downstream into the
+        // existing raw-transcript fallback path — we never crash the
+        // app on a missing model.
+        let llmPipeline = Self.makeLLMPipeline(manipulations: self.manipulations)
+        self.modelDownloader = llmPipeline.downloader
+        self.llmProvider = llmPipeline.provider
+        self.clinicalNotesProcessor = llmPipeline.processor
+        self.llmManifest = llmPipeline.manifest
 
         // Load settings before any closure captures self — Swift's
         // definite-init checker treats `[weak self]` captures as
@@ -226,13 +263,15 @@ class AppState {
     /// Handle the Generate-Notes hand-off. Builds a minimal
     /// `RecordingSession` carrying the transcript, hops PHI into
     /// `SessionStore`, seeds an empty `StructuredNotes` so the editor is
-    /// immediately interactive in the no-LLM path (production wiring of
-    /// `ClinicalNotesProcessor` lands in the same PR series as
-    /// `MLXGemmaProvider` per the comment on `sessionStore` above and
-    /// the `#18` blocker), then presents the review window.
+    /// immediately interactive while the LLM runs, presents the review
+    /// window, then kicks off the LLM pipeline (#3) in a background
+    /// Task. When the processor returns, the draft is replaced with the
+    /// generated SOAP payload (or stays as the empty seed on
+    /// `.rawTranscriptFallback`, mirroring the existing UX contract).
     ///
     /// PHI: only the transcript length and "session started" structural
-    /// markers cross the log boundary. See
+    /// markers cross the log boundary. The transcript itself flows into
+    /// `SessionStore` and `ClinicalNotesProcessor` in-memory only — see
     /// `.claude/references/phi-handling.md`.
     private func handleClinicalNotesGenerateRequested(transcript: String) {
         AppLogger.app.info(
@@ -246,15 +285,202 @@ class AppState {
         recording.transcribedText = transcript
 
         sessionStore.start(from: recording)
-        // Seed an empty draft so the SOAP editor is interactive without
-        // waiting on the LLM (the practitioner can compose from the raw
-        // transcript via the "View raw transcript" sheet). Once the LLM
-        // wiring lands, this seed will be replaced with the
-        // `ClinicalNotesProcessor.Outcome` payload before the window
-        // presents.
         sessionStore.setDraftNotes(StructuredNotes())
 
         ReviewWindowController.shared.present()
+
+        // Kick off LLM processing without blocking the UI present.
+        // `runClinicalNotesPipeline` ensures-download + warms-up + runs
+        // the processor; any failure resolves to the existing empty-draft
+        // fallback so the practitioner can edit manually.
+        Task { @MainActor [weak self] in
+            await self?.runClinicalNotesPipeline(transcript: transcript)
+        }
+    }
+
+    /// Drive the LLM pipeline end-to-end for a single transcript. Idempotent
+    /// across model state — re-entry while a download is in flight returns
+    /// fast (the downloader is itself idempotent + actor-serialised).
+    /// Failures are absorbed into structural log entries and leave the
+    /// existing empty `StructuredNotes` draft in place so the practitioner
+    /// keeps a working surface.
+    private func runClinicalNotesPipeline(transcript: String) async {
+        guard
+            let downloader = modelDownloader,
+            let provider = llmProvider,
+            let processor = clinicalNotesProcessor
+        else {
+            AppLogger.app.warning(
+                "AppState: clinical-notes pipeline unavailable (missing manifest or template)"
+            )
+            return
+        }
+        do {
+            llmDownloadState = .downloading
+            let modelDir = try await downloader.ensureModelDownloaded { [weak self] event in
+                Task { @MainActor [weak self] in
+                    self?.applyDownloadProgress(event)
+                }
+            }
+            llmDownloadState = .verified(directory: modelDir)
+            try await provider.warmup()
+            llmDownloadState = .ready
+        } catch is CancellationError {
+            // User-initiated cancel is a clean state transition, not a
+            // failure. Don't overwrite to `.failed` — `applyDownloadProgress`
+            // may have already set `.cancelled`, and either order yields the
+            // correct final state.
+            AppLogger.app.info("AppState: clinical-notes pipeline cancelled")
+            if llmDownloadState != .cancelled {
+                llmDownloadState = .cancelled
+            }
+            return
+        } catch {
+            AppLogger.app.error(
+                "AppState: clinical-notes warmup failed kind=\(String(describing: type(of: error)), privacy: .public)"
+            )
+            llmDownloadState = .failed
+            return
+        }
+
+        let outcome = await processor.process(transcript: transcript)
+        switch outcome {
+        case .success(let notes):
+            sessionStore.setDraftNotes(notes)
+            AppLogger.app.info("AppState: clinical-notes draft populated")
+        case .rawTranscriptFallback(let reason):
+            AppLogger.app.info(
+                "AppState: clinical-notes fell back reason=\(reason, privacy: .public)"
+            )
+        }
+    }
+
+    /// Translate a `ModelDownloader.DownloadProgress` event into the
+    /// `@Observable` properties the (future) Settings UI surface binds
+    /// against. Aggregates per-file progress into a single overall
+    /// `llmDownloadProgress` in `[0, 1]` so the bar advances smoothly
+    /// across the multi-file manifest (file boundaries no longer leave
+    /// the UI looking frozen).
+    private func applyDownloadProgress(_ event: ModelDownloader.DownloadProgress) {
+        switch event {
+        case .starting(let totalBytes):
+            llmDownloadProgress = 0
+            llmDownloadCompletedBytes = 0
+            llmDownloadTotalBytes = totalBytes
+            llmDownloadState = .downloading
+        case .fileStarted(let path, let expected):
+            AppLogger.app.info(
+                "AppState: clinical-notes download begin file=\(path, privacy: .public) bytes=\(expected, privacy: .public)"
+            )
+        case .bytesReceived(_, let received, let total):
+            // Aggregate progress across the whole manifest, not just the
+            // active file: previously-completed bytes plus the active
+            // file's running tally. Latches at 1.0 so a stale event after
+            // `.completed` cannot regress the bar.
+            let denom = max(llmDownloadTotalBytes, 1)
+            let raw = Double(llmDownloadCompletedBytes + received) / Double(denom)
+            llmDownloadProgress = min(max(raw, llmDownloadProgress), 1.0)
+            _ = total // expected denominator at the per-file level — we use the manifest-wide denom instead
+        case .fileVerified(let path):
+            // A verified file's bytes graduate from "in flight" to
+            // "completed" so the next file's `bytesReceived` rolls up
+            // from the right baseline. The manifest is the authority for
+            // the file's size.
+            if let file = downloadedFileSize(path: path) {
+                llmDownloadCompletedBytes += file
+            }
+            AppLogger.app.info(
+                "AppState: clinical-notes download verified file=\(path, privacy: .public)"
+            )
+        case .completed(let dir):
+            llmDownloadProgress = 1
+            llmDownloadState = .verified(directory: dir)
+        case .cancelled:
+            llmDownloadState = .cancelled
+        }
+    }
+
+    /// Lookup the manifest-declared size of a file by its repo-relative
+    /// path. Returns `nil` for an unknown path so the aggregator can
+    /// no-op rather than miscount.
+    private func downloadedFileSize(path: String) -> Int64? {
+        guard let downloader = modelDownloader else { return nil }
+        // The downloader's manifest is the source of truth. We only need
+        // the size lookup, which is cheap and does not require entering
+        // the actor — but we don't have direct access to the manifest
+        // through the downloader's public API. Cache via the bundled
+        // manifest read once at init time. (The manifest is already
+        // in-memory inside `makeLLMPipeline`; we save a copy here.)
+        _ = downloader
+        return llmManifest?.files.first(where: { $0.path == path })?.size
+    }
+
+    // MARK: - LLM pipeline construction
+
+    private struct LLMPipeline {
+        let downloader: ModelDownloader?
+        let provider: MLXGemmaProvider?
+        let processor: ClinicalNotesProcessor?
+        let manifest: ModelManifest?
+    }
+
+    /// Build the `ModelDownloader` + `MLXGemmaProvider` + `ClinicalNotesProcessor`
+    /// trio from bundled resources. Any missing piece (manifest absent,
+    /// prompt template missing) returns `nil` for the corresponding
+    /// member so callers fall back to the empty-draft path; we never
+    /// crash on a misconfigured bundle.
+    private static func makeLLMPipeline(
+        manipulations: ManipulationsRepository
+    ) -> LLMPipeline {
+        guard let manifestURL = Bundle.module.url(
+            forResource: "manifest",
+            withExtension: "json",
+            subdirectory: "Models/gemma-3-text-4b-it-4bit"
+        ) else {
+            AppLogger.app.warning(
+                "AppState: LLM manifest not bundled — clinical-notes LLM disabled"
+            )
+            return LLMPipeline(downloader: nil, provider: nil, processor: nil, manifest: nil)
+        }
+        let manifest: ModelManifest
+        do {
+            let data = try Data(contentsOf: manifestURL)
+            manifest = try JSONDecoder().decode(ModelManifest.self, from: data)
+        } catch {
+            AppLogger.app.error(
+                "AppState: LLM manifest decode failed kind=\(String(describing: type(of: error)), privacy: .public)"
+            )
+            return LLMPipeline(downloader: nil, provider: nil, processor: nil, manifest: nil)
+        }
+        let downloader = ModelDownloader(manifest: manifest)
+        let modelDir = ModelDownloader.defaultBaseDirectory()
+            .appendingPathComponent(
+                manifest.modelId.split(separator: "/").last.map(String.init) ?? "model",
+                isDirectory: true
+            )
+        let provider = MLXGemmaProvider(modelDirectory: modelDir)
+        let processor: ClinicalNotesProcessor?
+        do {
+            let promptBuilder = try ClinicalNotesPromptBuilder.loadFromBundle(
+                manipulations: manipulations
+            )
+            processor = ClinicalNotesProcessor(
+                provider: provider,
+                promptBuilder: promptBuilder,
+                manipulations: manipulations
+            )
+        } catch {
+            AppLogger.app.error(
+                "AppState: prompt builder load failed kind=\(String(describing: type(of: error)), privacy: .public) — clinical-notes processor disabled"
+            )
+            processor = nil
+        }
+        return LLMPipeline(
+            downloader: downloader,
+            provider: provider,
+            processor: processor,
+            manifest: manifest
+        )
     }
 
     // MARK: - Cliniko export pipeline (#14)

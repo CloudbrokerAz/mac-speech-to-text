@@ -74,8 +74,14 @@ xcode-project/DerivedData/
 .signing-fingerprint
 xcode-project/Config/Signing.xcconfig
 
-# ML Models (large files, download separately)
-Resources/Models/
+# ML Models — large weight files (~2.6 GB) downloaded separately at first run.
+# Per-model manifest.json (sha256-pinned download recipe for ModelDownloader)
+# is the EXCEPTION: small (~1 KB), source of truth for which weights to fetch.
+# Two-step negation pattern is required because git cannot re-include files
+# from a wholly-excluded directory — we exclude contents (`Models/*`) instead.
+Resources/Models/*
+!Resources/Models/*/
+!Resources/Models/*/manifest.json
 *.onnx
 *.bpe.model
 

@@ -1,4 +1,11 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.1
+//
+// Bumped from 5.9 → 6.1 (2026-04-26, #3) to allow ml-explore/mlx-swift-lm 3.31.3
+// — that package requires tools-version 6.1 to vend MLXLLM/MLXLMCommon.
+// Swift language mode is pinned to .v5 per-target so existing strict-concurrency
+// warnings remain warnings (not errors), matching prior behaviour. Swift compiler
+// is 6.2.x; the SwiftLint custom rules `observable_actor_existential_warning`
+// and `nonisolated_unsafe_warning` continue to enforce concurrency discipline.
 import PackageDescription
 
 let package = Package(
@@ -22,6 +29,22 @@ let package = Package(
         .package(
             url: "https://github.com/sindresorhus/KeyboardShortcuts",
             from: "2.0.0"
+        ),
+        // Local-LLM stack for clinical-notes generation (#3).
+        // mlx-swift-lm replaces the deprecated mlx-swift-examples (PR #441,
+        // 2025-11-11). Pin to .upToNextMinor so a 3.31.x patch release is
+        // pulled automatically but a 3.32 minor is opt-in.
+        .package(
+            url: "https://github.com/ml-explore/mlx-swift-lm",
+            .upToNextMinor(from: "3.31.3")
+        ),
+        // Tokenizers + Hub helpers for loading the bundled-once-downloaded
+        // Gemma weights from disk. We do NOT use HubApi for the actual
+        // weight download — that is hand-rolled in `ModelDownloader` so
+        // the sha256-manifest verification flow is under our control.
+        .package(
+            url: "https://github.com/huggingface/swift-transformers",
+            from: "1.3.0"
         )
     ],
     targets: [
@@ -30,6 +53,9 @@ let package = Package(
             dependencies: [
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "Tokenizers", package: "swift-transformers"),
                 "SherpaOnnxSwift"
             ],
             path: "Sources",
@@ -42,7 +68,12 @@ let package = Package(
             ],
             swiftSettings: [
                 .enableUpcomingFeature("BareSlashRegexLiterals"),
-                // Disable strict concurrency checking for Swift 6 compatibility
+                // Pin language mode to 5 to preserve prior strict-concurrency
+                // warning (not error) behaviour now that tools-version is 6.1.
+                .swiftLanguageMode(.v5),
+                // Frontend flags carried over from the 5.9 manifest. The
+                // unsafe-flags wrapper survives the language-mode pin
+                // because it operates at the frontend layer.
                 .unsafeFlags(["-Xfrontend", "-disable-availability-checking",
                               "-Xfrontend", "-warn-concurrency",
                               "-Xfrontend", "-enable-actor-data-race-checks"])
@@ -98,6 +129,13 @@ let package = Package(
             path: "Tests/SpeechToTextTests",
             resources: [
                 .copy("Fixtures")
+            ],
+            swiftSettings: [
+                // Mirror the main target's language-mode pin so existing
+                // pre-Swift-6-mode tests (e.g. AudioCaptureServiceTests'
+                // non-Sendable level callback) keep compiling now that
+                // tools-version is 6.1.
+                .swiftLanguageMode(.v5)
             ]
         )
     ]

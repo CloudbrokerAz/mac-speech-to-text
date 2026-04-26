@@ -47,9 +47,9 @@ gh issue view <N> --comments   # for any specific issue you pick up
 
 | Area | Decision |
 |---|---|
-| LLM runtime | MLX Swift in-process (ml-explore/mlx-swift-examples) |
-| LLM model v1 | Gemma 3 4B-IT (MLX 4-bit); swap to Gemma 4 E4B when mlx-swift#389 lands (#18) |
-| Model delivery | Bundled in the .app (DMG distribution, not App Store) |
+| LLM runtime | MLX Swift in-process (ml-explore/mlx-swift-lm 3.31.x — replaces deprecated mlx-swift-examples per upstream PR #441, 2025-11) |
+| LLM model v1 | Gemma 3 4B-IT (MLX 4-bit text-only — `mlx-community/gemma-3-text-4b-it-4bit`); swap to Gemma 4 E4B when mlx-swift#389 lands (#18) |
+| Model delivery | First-run download with sha256-manifest verification → `~/Library/Application Support/<bundle-id>/Models/`. Updated 2026-04-26 in #3; supersedes earlier "bundled in .app". DMG stays ~50 MB; weights fetched on opt-in. See `.claude/references/mlx-lifecycle.md` |
 | Persistence | Session-only, cleared on export/quit — no on-disk PHI |
 | Cliniko | API integration in v1, mirror patterns from [CloudbrokerAz/epc-letter-generation](https://github.com/CloudbrokerAz/epc-letter-generation/tree/main/Sources/Services) |
 | Manipulations | Placeholder JSON v1 (#6); user supplies real Cliniko taxonomy later |

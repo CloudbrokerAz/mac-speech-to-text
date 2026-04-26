@@ -26,13 +26,34 @@ on Apple Silicon.
 
 ## Deployment
 
-- **Bundled in the `.app`**: the 4-bit Gemma 3 4B-IT weights ship in
-  `Resources/Models/gemma-3-4b-it-4bit/` (~2.5 GB). DMG distribution,
-  not App Store.
-- **Git LFS vs build-time download**: decide in #3's PR. LFS keeps the
-  repo self-contained but bloats clone size. Build-time download from
-  the `mlx-community` Hugging Face org is smaller at `git clone` time
-  but adds a network hop to the first build.
+**First-run download with sha256-manifest verification.** *(Updated
+2026-04-26 in #3 — supersedes the earlier "bundled in .app" decision.)*
+
+- The bundled `.app` ships only a small JSON manifest at
+  `Resources/Models/gemma-3-text-4b-it-4bit/manifest.json` (HF revision
+  pin + per-file size + sha256 for the LFS-tracked binaries). DMG is
+  ~50 MB — model weights stay out.
+- `ModelDownloader` (in `Sources/Services/ClinicalNotes/`) fetches
+  files from `https://huggingface.co/mlx-community/gemma-3-text-4b-it-4bit/resolve/<revision>/`
+  on first run, streams sha256 verification, atomically renames into
+  `~/Library/Application Support/<bundle-id>/Models/gemma-3-text-4b-it-4bit/`.
+  Idempotent — re-launches with files present + verified are no-ops.
+- `MLXGemmaProvider.warmup()` mmaps the verified directory via
+  `MLXLLM.LLMModelFactory.shared.loadContainer(from:using:)`.
+- **Why not bundled**: 2.6 GB inside the `.app` would (a) burn GitHub
+  LFS bandwidth (10 GiB / month free quota → ~1 week of CI), (b) slow
+  every notarisation, (c) force a full new DMG for every model swap
+  (the Gemma 4 E4B migration in #18 becomes a manifest-revision bump
+  instead of a re-DMG). Mirrors the existing `FluidAudioService`
+  pattern (`AsrModels.downloadAndLoad(version: .v3)`).
+- **Trigger UX**: today the download fires lazily on the first
+  Generate-Notes tap (with the existing empty-draft fallback if it
+  fails). A follow-up PR will move the trigger to the Settings
+  Clinical-Notes-Mode toggle so the user opts in *before* the first
+  recording, and surfaces progress via `AppState.llmDownloadProgress`
+  / `llmDownloadState`.
+- **No HF auth needed** for `mlx-community` public weights, so the
+  downloader uses `URLSession` with no token plumbing.
 
 ---
 
