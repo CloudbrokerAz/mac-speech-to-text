@@ -126,8 +126,11 @@ The pipeline:
 ### MLX provider
 
 - `MLXGemmaProvider` (this directory) is the production `LLMProvider`,
-  running Gemma 3 4B-IT (MLX 4-bit, text-only) in-process via
-  `ml-explore/mlx-swift-lm` 3.31.x on Apple Silicon. `MockLLMProvider`
+  running Gemma 4 E4B-IT (MLX 4-bit) in-process via
+  `ml-explore/mlx-swift-lm` 3.31.x on Apple Silicon (#18 hard-cutover
+  from v1 Gemma 3 4B-IT). The actor body is model-agnostic — the model
+  directory is passed in and `LLMTypeRegistry` in mlx-swift-lm resolves
+  the architecture from the downloaded `config.json`. `MockLLMProvider`
   (in `Tests/`) is the test/preview shim.
 - **Two-phase init.** Construct cheaply with the model directory
   (`init(modelDirectory:)`), then `await warmup()` to load weights
@@ -136,10 +139,13 @@ The pipeline:
   (Settings toggle, lazy first-tap fallback in `AppState`).
 - **Weights live off-bundle.** `ModelDownloader` (sibling file)
   fetches them on first run from
-  `mlx-community/gemma-3-text-4b-it-4bit` into Application Support,
-  verifies sha256 against `Resources/Models/gemma-3-text-4b-it-4bit/manifest.json`,
-  then `MLXGemmaProvider` mmaps from the verified directory. See the
-  Deployment section of [`mlx-lifecycle.md`](../../../.claude/references/mlx-lifecycle.md)
+  `mlx-community/gemma-4-e4b-it-4bit` into Application Support,
+  verifies sha256 against `Resources/Models/gemma-4-e4b-it-4bit/manifest.json`,
+  then `MLXGemmaProvider` mmaps from the verified directory. The v1
+  `gemma-3-text-4b-it-4bit/` directory in Application Support is
+  reclaimed on first launch by `AppState.purgeLegacyGemma3ModelDirectory()`.
+  See the Deployment section of
+  [`mlx-lifecycle.md`](../../../.claude/references/mlx-lifecycle.md)
   for the full story.
 - **Stop sequences.** `LLMOptions.stop` is enforced post-stream (mlx
   has no native `extraEOSTokens` on the AsyncStream API); the

@@ -101,7 +101,7 @@ struct MLXGemmaProviderUnitTests {
 ///
 /// Each test relies on a model directory either at the path provided in
 /// `MLX_GEMMA_DIR` env var, or — if absent — the default
-/// `~/Library/Application Support/<bundle-id>/Models/gemma-3-text-4b-it-4bit/`
+/// `~/Library/Application Support/<bundle-id>/Models/gemma-4-e4b-it-4bit/`
 /// produced by `ModelDownloader.ensureModelDownloaded()`.
 @Suite("MLXGemmaProvider — real inference", .tags(.slow, .requiresHardware))
 struct MLXGemmaProviderGoldenTests {
@@ -114,7 +114,7 @@ struct MLXGemmaProviderGoldenTests {
             return URL(fileURLWithPath: override, isDirectory: true)
         }
         let base = ModelDownloader.defaultBaseDirectory()
-            .appendingPathComponent("gemma-3-text-4b-it-4bit", isDirectory: true)
+            .appendingPathComponent("gemma-4-e4b-it-4bit", isDirectory: true)
         if FileManager.default.fileExists(atPath: base.path) {
             return base
         }

@@ -316,12 +316,12 @@ struct ModelDownloaderTests {
     @Test("HF URL composes from <model-id>/resolve/<revision>/<path>")
     func huggingFaceURLShape() throws {
         let url = try ModelDownloader.huggingFaceURL(
-            modelId: "mlx-community/gemma-3-text-4b-it-4bit",
-            revision: "4f665a4c50ecfe4ecdc34056ab52fe3e3c4abf9e",
+            modelId: "mlx-community/gemma-4-e4b-it-4bit",
+            revision: "cc3b666c01c20395e0dcebd53854504c7d9821f9",
             path: "model.safetensors"
         )
         #expect(url.absoluteString
-                == "https://huggingface.co/mlx-community/gemma-3-text-4b-it-4bit/resolve/4f665a4c50ecfe4ecdc34056ab52fe3e3c4abf9e/model.safetensors")
+                == "https://huggingface.co/mlx-community/gemma-4-e4b-it-4bit/resolve/cc3b666c01c20395e0dcebd53854504c7d9821f9/model.safetensors")
     }
 
     @Test("HF URL rejects malformed inputs")

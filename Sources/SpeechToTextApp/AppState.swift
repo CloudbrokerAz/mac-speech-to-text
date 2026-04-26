@@ -435,6 +435,34 @@ class AppState {
         let manifest: ModelManifest?
     }
 
+    /// One-shot disk reclaim: delete the v1 `gemma-3-text-4b-it-4bit/`
+    /// directory left in Application Support after the v2 cutover to
+    /// Gemma 4 E4B (#18). The new model lives in
+    /// `gemma-4-e4b-it-4bit/` so the legacy directory would otherwise
+    /// orphan ~2.6 GB on every existing user's disk.
+    ///
+    /// Idempotent — the existence check on the legacy path is the
+    /// guard, no `UserDefaults` flag needed. Errors are logged and
+    /// swallowed: a stuck legacy directory is a disk-space loss, not
+    /// a correctness failure.
+    private static func purgeLegacyGemma3ModelDirectory() {
+        let legacyPath = ModelDownloader.defaultBaseDirectory()
+            .appendingPathComponent("gemma-3-text-4b-it-4bit", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: legacyPath.path) else {
+            return
+        }
+        do {
+            try FileManager.default.removeItem(at: legacyPath)
+            AppLogger.app.info(
+                "AppState: removed legacy Gemma 3 model directory at \(legacyPath.path, privacy: .public)"
+            )
+        } catch {
+            AppLogger.app.error(
+                "AppState: failed to remove legacy Gemma 3 directory kind=\(String(describing: type(of: error)), privacy: .public)"
+            )
+        }
+    }
+
     /// Build the `ModelDownloader` + `MLXGemmaProvider` + `ClinicalNotesProcessor`
     /// trio from bundled resources. Any missing piece (manifest absent,
     /// prompt template missing) returns `nil` for the corresponding
@@ -443,10 +471,15 @@ class AppState {
     private static func makeLLMPipeline(
         manipulations: ManipulationsRepository
     ) -> LLMPipeline {
+        // Reclaim disk used by the v1 Gemma 3 weights before we reach
+        // for the new manifest. Idempotent — the directory check IS
+        // the guard, so repeat launches after the cleanup are no-ops.
+        purgeLegacyGemma3ModelDirectory()
+
         guard let manifestURL = Bundle.module.url(
             forResource: "manifest",
             withExtension: "json",
-            subdirectory: "Models/gemma-3-text-4b-it-4bit"
+            subdirectory: "Models/gemma-4-e4b-it-4bit"
         ) else {
             AppLogger.app.warning(
                 "AppState: LLM manifest not bundled — clinical-notes LLM disabled"

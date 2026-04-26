@@ -2,10 +2,11 @@ import Foundation
 
 /// Local LLM abstraction.
 ///
-/// **Issue #3.** Defines the contract `ClinicalNotesProcessor` (#5) binds
-/// to. The first concrete implementation — `MLXGemmaProvider` loading
-/// Gemma 3 4B-IT in-process via `mlx-swift-examples` — ships in a
-/// separate PR against this same ticket. Tests use `MockLLMProvider`
+/// **Issue #3 (v1) / #18 (v2).** Defines the contract
+/// `ClinicalNotesProcessor` (#5) binds to. The production implementation —
+/// `MLXGemmaProvider` loading Gemma 4 E4B-IT in-process via
+/// `ml-explore/mlx-swift-lm` 3.31.x (supersedes v1's Gemma 3 4B-IT) —
+/// ships in `MLXGemmaProvider.swift`. Tests use `MockLLMProvider`
 /// (`Tests/SpeechToTextTests/Utilities/MockLLMProvider.swift`).
 ///
 /// The protocol is `Actor`-constrained — both `MLXGemmaProvider` and

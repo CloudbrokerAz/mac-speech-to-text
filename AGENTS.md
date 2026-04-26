@@ -4,7 +4,7 @@ A privacy-focused local-first menu-bar speech-to-text app for macOS, in
 the middle of being extended into a clinical documentation assistant
 for chiropractors. Swift 5.9 language mode, Swift 6.2 compiler, macOS
 14+ baseline (development on macOS 26). FluidAudio SDK wrapping
-Parakeet v3 for transcription; MLX Swift + Gemma 3 4B-IT (in-process,
+Parakeet v3 for transcription; MLX Swift + Gemma 4 E4B-IT (in-process,
 bundled) for the clinical-notes LLM layer. No cloud services at any
 point — all processing is on-device, and the only egress is the
 doctor-initiated Cliniko API POST from their Mac to their Cliniko
@@ -174,7 +174,7 @@ belong in PR review, not in the hard-rules file.
 | System | AppKit (menu bar, hotkey, Accessibility) |
 | Audio | AVFoundation, 16 kHz mono |
 | ASR | FluidAudio → Parakeet v3 |
-| LLM (clinical notes) | MLX Swift + Gemma 3 4B-IT (4-bit, bundled) |
+| LLM (clinical notes) | MLX Swift + Gemma 4 E4B-IT (4-bit, first-run download) |
 | HTTP | URLSession in an actor (Cliniko) |
 | Credentials | Keychain via `SecureStore` protocol |
 | Testing | XCTest + ViewInspector + Swift Testing + `pointfreeco/swift-snapshot-testing` (scoped) |
