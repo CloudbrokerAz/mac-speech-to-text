@@ -285,6 +285,74 @@ struct ClinicalNotesProcessorTests {
         #expect(notes.excluded == ["weekend small talk", "coffee banter"])
     }
 
+    // MARK: - Sendable / concurrency contract (#15 polish)
+
+    /// Documents the public-surface contract that `ClinicalNotesProcessor`
+    /// (an `actor`) and its `Outcome` payload satisfy `Sendable`. The
+    /// processor is shipped across actor boundaries by the recording
+    /// modal — its `Task` hops the outcome back to the `@MainActor`
+    /// review view model — so both types must round-trip across
+    /// isolation cleanly.
+    ///
+    /// Caveat: this project is on Swift 5.9 language mode (per
+    /// `Package.swift`), so a hypothetical future demotion to `class`
+    /// without an explicit `Sendable` conformance would emit a
+    /// *warning* at the call site rather than a hard compile error.
+    /// SwiftLint's strict mode escalates the warning to an error in CI.
+    /// Consider this test executable documentation rather than a
+    /// load-bearing barrier.
+    @Test("ClinicalNotesProcessor and Outcome conform to Sendable")
+    func sendableConformancePin() {
+        func requireSendable<T: Sendable>(_: T.Type) {}
+        requireSendable(ClinicalNotesProcessor.self)
+        requireSendable(ClinicalNotesProcessor.Outcome.self)
+    }
+
+    /// Smoke test that N concurrent `process(transcript:)` calls all
+    /// reach `.success` and the provider observed every call. Pins
+    /// the high-level "actor handles concurrent traffic without
+    /// dropping or duplicating work" invariant; the actor's
+    /// per-call serialization is enforced by the type system, not
+    /// by this test.
+    ///
+    /// Failure surface is per-task: the `failures` array reports
+    /// each non-`.success` outcome with its index and the structural
+    /// fallback reason, so a regression that fails 1 of N tasks
+    /// doesn't read as a generic "expected true, got false".
+    @Test("Concurrent process(transcript:) calls each reach .success and are accounted for")
+    func concurrentProcessCalls_eachReachSuccess() async {
+        let provider = MockLLMProvider(response: Self.validJSON)
+        let proc = Self.processor(provider: provider)
+        let parallelism = 16
+
+        let outcomes: [ClinicalNotesProcessor.Outcome] = await withTaskGroup(
+            of: ClinicalNotesProcessor.Outcome.self,
+            returning: [ClinicalNotesProcessor.Outcome].self
+        ) { group in
+            for _ in 0..<parallelism {
+                group.addTask { await proc.process(transcript: "t") }
+            }
+            var collected: [ClinicalNotesProcessor.Outcome] = []
+            for await outcome in group {
+                collected.append(outcome)
+            }
+            return collected
+        }
+
+        #expect(outcomes.count == parallelism)
+
+        let failures = outcomes.enumerated().compactMap { index, outcome -> String? in
+            if case .success = outcome { return nil }
+            return "task[\(index)] = \(outcome)"
+        }
+        #expect(
+            failures.isEmpty,
+            "Concurrent process calls produced non-success outcomes: \(failures)"
+        )
+
+        #expect(await provider.callCount() == parallelism)
+    }
+
     // MARK: - Helpers
 
     /// Render a minimal SOAP JSON response with the given manipulations

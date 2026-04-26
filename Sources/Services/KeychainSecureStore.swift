@@ -154,10 +154,33 @@ public actor KeychainSecureStore: SecureStore {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service
         ]
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            logger.error("deleteAll failed service=\(self.service, privacy: .public) status=\(status)")
-            throw Failure.osStatus(status, .deleteAll)
+        // `SecItemDelete` on macOS removes only one matching item per call
+        // even though the documentation says it "deletes all matching items"
+        // — a long-standing legacy-keychain quirk. Loop until the keychain
+        // reports `errSecItemNotFound` so a service namespace holding multiple
+        // credentials is fully wiped on `deleteAll`. Caught by
+        // `KeychainSecureStoreTests.deleteAll_removesAllItems` (the prior
+        // single-call implementation left every item except the first).
+        //
+        // The loop is bounded as a defensive guard: an ACL bug, a daemon
+        // edge case, or a concurrent process re-inserting items under the
+        // same `service` could otherwise wedge the actor's executor and
+        // silently fail every queued call behind it. 10_000 is far above
+        // any plausible item count for one Cliniko-credential namespace.
+        let maxIterations = 10_000
+        for _ in 0..<maxIterations {
+            let status = SecItemDelete(query as CFDictionary)
+            switch status {
+            case errSecSuccess:
+                continue
+            case errSecItemNotFound:
+                return
+            default:
+                logger.error("deleteAll failed service=\(self.service, privacy: .public) status=\(status)")
+                throw Failure.osStatus(status, .deleteAll)
+            }
         }
+        logger.error("deleteAll exceeded \(maxIterations) iterations service=\(self.service, privacy: .public)")
+        throw Failure.osStatus(errSecInternalError, .deleteAll)
     }
 }

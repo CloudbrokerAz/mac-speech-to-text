@@ -153,6 +153,9 @@ jobs:
       #   WakeWordServiceTests              reads real WAV fixtures from models
       #   GeneralSectionPersistenceTests    shared UserDefaults race under --parallel;
       #                                     tracked for fix, runs pre-push serially.
+      #   KeychainSecureStoreTests          real macOS Keychain — Swift Testing suite
+      #                                     tagged .requiresHardware; will migrate to
+      #                                     --skip-tag requiresHardware once #31 lands.
       - name: Run unit tests (with coverage)
         shell: bash
         run: |
@@ -164,7 +167,8 @@ jobs:
             --skip TextInsertionServiceTests \
             --skip VoiceTriggerMonitoringServiceTests \
             --skip WakeWordServiceTests \
-            --skip GeneralSectionPersistenceTests 2>&1 | tee test.log
+            --skip GeneralSectionPersistenceTests \
+            --skip KeychainSecureStoreTests 2>&1 | tee test.log
 
       # Coverage export is a *required* part of this job — the whole point is
       # PR-visible coverage. A missing profdata / xctest bundle / binary

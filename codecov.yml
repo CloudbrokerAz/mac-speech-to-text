@@ -49,6 +49,11 @@ ignore:
   - "Sources/Services/TextInsertionService.swift"
   - "Sources/Services/VoiceTriggerMonitoringService.swift"
   - "Sources/Services/WakeWordService.swift"
+  # Real-Keychain wrapper — `KeychainSecureStoreTests` is Swift Testing
+  # `.requiresHardware`-tagged and skipped in CI. The SecureStore
+  # contract callers consume is fully covered through
+  # `ClinikoCredentialStore` against `InMemorySecureStore`.
+  - "Sources/Services/KeychainSecureStore.swift"
   # App-lifecycle code: NSApplicationDelegate callbacks, NSApp wiring,
   # menu-bar / notification observer setup. Exercising these in a unit
   # test would require mocking NSApplication, NSStatusBar, etc — not
