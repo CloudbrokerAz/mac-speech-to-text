@@ -18,8 +18,9 @@ public actor KeychainSecureStore: SecureStore {
     ///
     /// `Equatable` is intentionally asymmetric: two `.unexpected` values
     /// compare unequal when their `OSStatus` differs, but two
-    /// `.authDenied` (or `.notAvailable`, `.corrupted`, `.loopCapExceeded`)
-    /// values compare equal *regardless* of the originating `OSStatus`.
+    /// `.authDenied` (or `.notAvailable`, `.unexpectedItemType`,
+    /// `.corrupted`, `.loopCapExceeded`) values compare equal
+    /// *regardless* of the originating `OSStatus`.
     /// The whole point of the semantic cases is information loss —
     /// collapsing `errSecAuthFailed` and `errSecUserCanceled` into one
     /// bucket the UI layer can act on. Do not write tests that try to
