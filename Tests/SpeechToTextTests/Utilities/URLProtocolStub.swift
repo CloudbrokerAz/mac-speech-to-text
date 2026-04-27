@@ -141,16 +141,22 @@ extension URLProtocolStub {
         }
 
         /// Convenience for the common HTTP method + URL path case (most
-        /// Cliniko service tests). Defaults to `GET`.
+        /// Cliniko service tests). Defaults to `GET`. The method and path
+        /// are normalized once at Route construction (uppercased / leading
+        /// slash enforced) so the per-request match is a pair of plain
+        /// string equality checks — also makes a missing leading slash in
+        /// the call site (`"v1/users"` vs `"/v1/users"`) a non-issue.
         static func path(
             _ path: String,
             method: String = "GET",
             respond: @escaping @Sendable (URLRequest) throws -> (HTTPURLResponse, Data)
         ) -> Route {
-            Route(
+            let normalizedMethod = method.uppercased()
+            let normalizedPath = path.hasPrefix("/") ? path : "/" + path
+            return Route(
                 matches: { request in
-                    (request.httpMethod ?? "GET").uppercased() == method.uppercased()
-                        && request.url?.path == path
+                    (request.httpMethod ?? "GET").uppercased() == normalizedMethod
+                        && request.url?.path == normalizedPath
                 },
                 respond: respond
             )
