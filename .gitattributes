@@ -1,0 +1,6 @@
+# PNG snapshot goldens for ReviewScreen + SafetyDisclaimer (#24 / F5).
+# Marked binary so git diff doesn't try to render them as text and so
+# pre-commit hooks (trailing-whitespace, end-of-file-fixer) skip them.
+# Deliberately NOT routed through Git LFS — each PNG is well under
+# 200 KB and small binary blobs travel fine through plain Git.
+Tests/SpeechToTextTests/Snapshots/__Snapshots__/**/*.png binary

@@ -166,6 +166,14 @@ jobs:
       #   KeychainSecureStoreTests          real macOS Keychain — Swift Testing suite
       #                                     tagged .requiresHardware; will migrate to
       #                                     --skip-tag requiresHardware once #31 lands.
+      #   SafetyDisclaimerSnapshotTests     PNG goldens recorded on macOS-26 dev /
+      #   ReviewScreenSnapshotTests         remote-Mac pre-push host; CI runner is
+      #                                     macos-15 so font hinting + Core Animation
+      #                                     diffs would always fail. Crash detection
+      #                                     for these views runs in CI via
+      #                                     ReviewScreenRenderTests +
+      #                                     SafetyDisclaimerViewRenderTests. See
+      #                                     Tests/SpeechToTextTests/Snapshots/README.md.
       - name: Run unit tests (with coverage)
         shell: bash
         run: |
@@ -177,7 +185,9 @@ jobs:
             --skip TextInsertionServiceTests \
             --skip VoiceTriggerMonitoringServiceTests \
             --skip WakeWordServiceTests \
-            --skip KeychainSecureStoreTests 2>&1 | tee test.log
+            --skip KeychainSecureStoreTests \
+            --skip SafetyDisclaimerSnapshotTests \
+            --skip ReviewScreenSnapshotTests 2>&1 | tee test.log
 
       # Coverage export is a *required* part of this job — the whole point is
       # PR-visible coverage. A missing profdata / xctest bundle / binary

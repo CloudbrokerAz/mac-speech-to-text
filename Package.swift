@@ -45,6 +45,17 @@ let package = Package(
         .package(
             url: "https://github.com/huggingface/swift-transformers",
             from: "1.3.0"
+        ),
+        // Scoped to ReviewScreen + SafetyDisclaimerView snapshot tests
+        // (issue #24 / F5). Test-only — does not flow into the app
+        // executable target. The snapshot test classes are in CI's
+        // by-name skip list because PNG goldens are sensitive to the
+        // host macOS version's Core Animation / font-hinting layer
+        // (CI is macOS-15, dev + pre-push remote Mac is macOS 26).
+        // They run locally and on the remote Mac via pre-push.
+        .package(
+            url: "https://github.com/pointfreeco/swift-snapshot-testing",
+            .upToNextMajor(from: "1.17.0")
         )
     ],
     targets: [
@@ -124,9 +135,20 @@ let package = Package(
             dependencies: [
                 "SpeechToText",
                 "SherpaOnnxSwift",
-                .product(name: "ViewInspector", package: "ViewInspector")
+                .product(name: "ViewInspector", package: "ViewInspector"),
+                .product(name: "SnapshotTesting", package: "swift-snapshot-testing")
             ],
             path: "Tests/SpeechToTextTests",
+            // Snapshot golden PNGs and the Snapshots README are read off
+            // disk by `pointfreeco/swift-snapshot-testing` using
+            // `#filePath`-relative paths — they must not be bundled as
+            // SPM resources (which would copy them into `.bundle` and
+            // hide them from the test). Excluding the entire
+            // `__Snapshots__` tree also keeps the test bundle slim.
+            exclude: [
+                "Snapshots/__Snapshots__",
+                "Snapshots/README.md"
+            ],
             resources: [
                 .copy("Fixtures")
             ],

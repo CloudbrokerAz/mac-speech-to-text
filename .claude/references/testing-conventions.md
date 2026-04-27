@@ -92,19 +92,39 @@ must never contain PHI.
 
 ## Snapshot tests (narrow)
 
-`pointfreeco/swift-snapshot-testing` v1.17+ is the chosen library once
-#24 / F5 lands, and it's scoped deliberately to:
+`pointfreeco/swift-snapshot-testing` v1.17+ landed in #24 / F5 and is
+scoped deliberately to:
 
 - `ReviewScreen` (SOAP editor + manipulations + excluded drawer — #13)
-- `SafetyDisclaimerView` (#12)
+  — three states: empty, typical, overflow-y-long.
+- `SafetyDisclaimerView` (#12) — light + dark mode.
 
 Everything else gets ViewInspector crash tests, not image snapshots.
 Rationale: macOS font rendering and Retina scaling make blanket snapshot
 suites noisy; visual regression only matters on the doctor-facing
 review surface.
 
-Record mode (`isRecording = true`) changes require a human reviewer
-because they rewrite goldens unconditionally.
+Tests live under `Tests/SpeechToTextTests/Snapshots/` and use
+`SnapshotHost.hosting(_:size:appearance:)` to mount the SwiftUI view in a
+borderless offscreen `NSWindow` so SwiftUI's `.onAppear` lifecycle fires
+deterministically (without a window mount, animations and onAppear-driven
+state transitions are silently skipped). Goldens live in
+`__Snapshots__/<TestClass>/`. See `Tests/SpeechToTextTests/Snapshots/README.md`
+for the recording workflow + reviewer policy.
+
+**Render-host policy.** PNG goldens are sensitive to host macOS
+version (font hinting + Core Animation diffs). The CI runner is
+`macos-15`; the dev / pre-push remote-Mac host is `macos-26`. Snapshot
+test classes are therefore in CI's by-name skip list, alongside the
+other hardware-dependent classes. CI keeps signal via the existing
+ViewInspector crash tests for the same views; snapshot regressions
+are caught at pre-push and locally.
+
+**Record mode** (`SNAPSHOT_TESTING_RECORD=all`) requires a human
+reviewer on the resulting PR. Any PR that touches `__Snapshots__/*.png`
+must include a written rationale + before/after screenshots — a
+goldens-only PR with no narrative is a regression-detection failure,
+not a feature.
 
 ---
 
@@ -120,6 +140,8 @@ an XCTest class migrates to Swift Testing and picks up
 - `VoiceTriggerMonitoringServiceTests` — transitively needs real mic
 - `WakeWordServiceTests` — reads real WAV fixtures
 - `GeneralSectionPersistenceTests` — shared-UserDefaults race under `--parallel` (fix tracked in #32)
+- `SafetyDisclaimerSnapshotTests` — PNG goldens recorded on macOS-26; CI is macOS-15
+- `ReviewScreenSnapshotTests` — same as above
 
 The long-term target is to migrate these to Swift Testing + `.requiresHardware`
 so the CI filter becomes `--skip-tag requiresHardware` (closes #31).
