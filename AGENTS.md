@@ -180,7 +180,7 @@ belong in PR review, not in the hard-rules file.
 | Testing | XCTest + ViewInspector + Swift Testing + `pointfreeco/swift-snapshot-testing` (scoped) |
 | Lint | SwiftLint strict + 2 custom concurrency rules |
 | Build | Swift Package Manager |
-| CI | GitHub Actions (macOS-14 runner) |
+| CI | GitHub Actions (macOS-15 runner) |
 
 ---
 
