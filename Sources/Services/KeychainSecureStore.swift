@@ -14,24 +14,64 @@ import Security
 /// Item values are never logged. Error-path logs include the service and key
 /// name but never the value.
 public actor KeychainSecureStore: SecureStore {
+    /// Errors thrown by `KeychainSecureStore`.
+    ///
+    /// `Equatable` is intentionally asymmetric: two `.unexpected` values
+    /// compare unequal when their `OSStatus` differs, but two
+    /// `.authDenied` (or `.notAvailable`) values compare equal *regardless*
+    /// of the originating `OSStatus`. The whole point of the semantic
+    /// cases is information loss — collapsing `errSecAuthFailed` and
+    /// `errSecUserCanceled` into one bucket the UI layer can act on. Do
+    /// not write tests that try to "pin" a specific `OSStatus` via
+    /// equality on a semantic case; assert on the case itself.
     public enum Failure: Swift.Error, CustomStringConvertible, Equatable, Sendable {
-        /// The keychain returned an unexpected OSStatus for an operation.
-        case osStatus(OSStatus, Operation)
+        /// User denied / cancelled the keychain prompt, or auth failed.
+        /// Maps `errSecInteractionNotAllowed`, `errSecAuthFailed`,
+        /// `errSecUserCanceled`. Callers can surface a "we need keychain
+        /// access" affordance without re-deriving this from a raw OSStatus.
+        case authDenied(Operation)
+        /// The keychain itself isn't available to us. Maps
+        /// `errSecNotAvailable`, `errSecMissingEntitlement`. Distinguishes
+        /// "we can't reach the keychain at all" from a transient auth deny.
+        case notAvailable(Operation)
         /// `SecItemCopyMatching` succeeded but returned a value that was not
         /// `Data`. Indicates keychain corruption or a cross-class match and
         /// MUST NOT be silently mapped to "missing".
         case unexpectedItemType(Operation)
+        /// Any other `OSStatus` we don't have a semantic mapping for. Carries
+        /// the raw status purely for diagnostics — callers should not switch
+        /// on the integer value.
+        case unexpected(OSStatus, Operation)
 
         public enum Operation: String, Sendable {
             case set, get, delete, deleteAll
         }
 
+        /// Map a raw `OSStatus` from `SecItem*` to its semantic case.
+        /// Done at throw-time so callers never need to interpret raw status
+        /// codes — they switch on the case directly. Default access (internal)
+        /// so the mapping-table tests can reach it via `@testable import`.
+        static func from(status: OSStatus, op: Operation) -> Failure {
+            switch status {
+            case errSecInteractionNotAllowed, errSecAuthFailed, errSecUserCanceled:
+                return .authDenied(op)
+            case errSecNotAvailable, errSecMissingEntitlement:
+                return .notAvailable(op)
+            default:
+                return .unexpected(status, op)
+            }
+        }
+
         public var description: String {
             switch self {
-            case let .osStatus(status, op):
-                return "KeychainSecureStore: \(op.rawValue) failed (OSStatus \(status))"
+            case let .authDenied(op):
+                return "KeychainSecureStore: \(op.rawValue) failed (auth denied / cancelled)"
+            case let .notAvailable(op):
+                return "KeychainSecureStore: \(op.rawValue) failed (keychain not available)"
             case let .unexpectedItemType(op):
                 return "KeychainSecureStore: \(op.rawValue) returned a non-Data item"
+            case let .unexpected(status, op):
+                return "KeychainSecureStore: \(op.rawValue) failed (OSStatus \(status))"
             }
         }
     }
@@ -67,7 +107,7 @@ public actor KeychainSecureStore: SecureStore {
             try addItem(key: key, data: data, query: query, retryOnDuplicate: true)
         default:
             logger.error("set failed (update) service=\(self.service, privacy: .public) key=\(key, privacy: .public) status=\(updateStatus)")
-            throw Failure.osStatus(updateStatus, .set)
+            throw Failure.from(status: updateStatus, op: .set)
         }
     }
 
@@ -99,11 +139,11 @@ public actor KeychainSecureStore: SecureStore {
             )
             if updateStatus != errSecSuccess {
                 logger.error("set failed (retry-update) service=\(self.service, privacy: .public) key=\(key, privacy: .public) status=\(updateStatus)")
-                throw Failure.osStatus(updateStatus, .set)
+                throw Failure.from(status: updateStatus, op: .set)
             }
         default:
             logger.error("set failed (add) service=\(self.service, privacy: .public) key=\(key, privacy: .public) status=\(addStatus)")
-            throw Failure.osStatus(addStatus, .set)
+            throw Failure.from(status: addStatus, op: .set)
         }
     }
 
@@ -132,7 +172,7 @@ public actor KeychainSecureStore: SecureStore {
             return nil
         default:
             logger.error("get failed service=\(self.service, privacy: .public) key=\(key, privacy: .public) status=\(status)")
-            throw Failure.osStatus(status, .get)
+            throw Failure.from(status: status, op: .get)
         }
     }
 
@@ -145,7 +185,7 @@ public actor KeychainSecureStore: SecureStore {
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             logger.error("delete failed service=\(self.service, privacy: .public) key=\(key, privacy: .public) status=\(status)")
-            throw Failure.osStatus(status, .delete)
+            throw Failure.from(status: status, op: .delete)
         }
     }
 
@@ -177,10 +217,17 @@ public actor KeychainSecureStore: SecureStore {
                 return
             default:
                 logger.error("deleteAll failed service=\(self.service, privacy: .public) status=\(status)")
-                throw Failure.osStatus(status, .deleteAll)
+                throw Failure.from(status: status, op: .deleteAll)
             }
         }
         logger.error("deleteAll exceeded \(maxIterations) iterations service=\(self.service, privacy: .public)")
-        throw Failure.osStatus(errSecInternalError, .deleteAll)
+        // Synthetic sentinel: no real `OSStatus` came back from Keychain
+        // here — the loop hit its defensive iteration cap. We construct
+        // `.unexpected` directly (bypassing `Failure.from(...)`) because
+        // the integer is a fiction labelling "we exhausted retries", not
+        // a Keychain return code. Indistinguishable at the type level
+        // from a genuine `errSecInternalError`; if a future caller needs
+        // to differentiate, promote this to its own case.
+        throw Failure.unexpected(errSecInternalError, .deleteAll)
     }
 }
