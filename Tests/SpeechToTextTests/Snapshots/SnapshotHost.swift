@@ -120,9 +120,21 @@ enum SnapshotHost {
         // spring settles gives a different bitmap per run, so we pump
         // long enough for the animation to settle even on the first
         // (cold) test.
+        //
+        // `RunLoop.run(mode:before:)` returns `false` immediately if the
+        // loop has no input sources to monitor — under that fall-through
+        // the bare `while Date() < deadline { ... }` would busy-wait.
+        // For the SwiftUI-driven case there are always sources (display
+        // link, timer for the animation) so we don't actually hit the
+        // hot path, but we sleep briefly on a `false` return for
+        // belt-and-braces against any future change that drops the
+        // animation source set.
         let deadline = Date(timeIntervalSinceNow: settleTime)
         while Date() < deadline {
-            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            let chunkLimit = Date(timeIntervalSinceNow: 0.05)
+            if RunLoop.current.run(mode: .default, before: chunkLimit) == false {
+                Thread.sleep(forTimeInterval: 0.01)
+            }
         }
 
         // Force a layout pass so the hosting view's intrinsic size and
@@ -136,6 +148,14 @@ enum SnapshotHost {
     }
 
     /// Storage key for the `objc_setAssociatedObject` window-lifetime
-    /// pin. The address of this static is the runtime-unique key.
+    /// pin. Only the address of this static is read — the value is
+    /// never mutated and never read for content. The
+    /// `nonisolated(unsafe)` annotation is justified per
+    /// `.claude/references/concurrency.md` §3 (the project's mutable-
+    /// global escape hatch): the byte is exclusively used as a stable
+    /// runtime address by `objc_setAssociatedObject`, no concurrent
+    /// reader inspects its value, and the Objective-C runtime
+    /// internally synchronises the association table — so no Swift-
+    /// level data race is possible.
     private nonisolated(unsafe) static var windowAssociationKey: UInt8 = 0
 }
