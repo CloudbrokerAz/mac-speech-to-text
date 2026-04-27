@@ -47,9 +47,70 @@ enum FluidAudioError: Error, LocalizedError, Sendable, Equatable {
     }
 }
 
-/// Swift actor wrapping FluidAudio SDK for thread-safe ASR
+/// Swift actor wrapping FluidAudio SDK for thread-safe ASR.
+///
+/// ## Reentrancy contract for `asrManager`
+///
+/// `AsrManager` (FluidAudio SDK) is a non-`Sendable`, non-actor `final
+/// class` that mutates internal decoder state (`microphoneDecoderState`
+/// / `systemDecoderState`) via `inout` during its own `transcribe(_:)`
+/// awaits. FluidAudio's docs are explicit that "stateless decoding"
+/// only holds *across serialised calls* — concurrent calls would race
+/// the decoder.
+///
+/// Swift actors are reentrant: while `transcribe()` is suspended at
+/// `await asrManager.transcribe(...)`, another actor-isolated method
+/// (`shutdown()`, a second `transcribe()`) can run on the same actor
+/// instance. Without an explicit guard, two concurrent transcribes
+/// inside one `FluidAudioService` would race the same `AsrManager`.
+///
+/// We address this with two pieces:
+///
+/// 1. `asrManager` is `nonisolated(unsafe)`. Reads and writes of the
+///    property happen only inside actor-isolated methods (`initialize`,
+///    `runTranscribe`, `shutdown`), so the actor's own execution-turn
+///    serialisation makes the access race-free; the attribute only
+///    suppresses the cross-isolation `[#SendingRisksDataRace]` check
+///    at the inner await site. The warning was the compiler's hint at
+///    the reentrancy hazard, not the hazard itself. See
+///    `.claude/references/concurrency.md` §2.
+/// 2. `transcribeInFlight` + `transcribeWaiters` form a single-flight
+///    queue. A second `transcribe()` while one is already running
+///    suspends on a continuation until the active call's `defer` hands
+///    the slot off — no parallel access to `AsrManager` is possible.
+///
+/// ## Maintenance contract
+///
+/// **Any new `await asrManager.<method>(...)` call site outside
+/// `runTranscribe` must either be synchronous (no await) or take the
+/// same single-flight slot.** The `nonisolated(unsafe)` attribute
+/// means the compiler will not warn about new violations; new call
+/// sites must hold the slot via `transcribe(samples:sampleRate:)`'s
+/// wrapper or factor a comparable guard for their own surface.
 actor FluidAudioService: FluidAudioServiceProtocol {
-    private var asrManager: AsrManager?
+    /// `nonisolated(unsafe)` because `AsrManager` is a non-`Sendable`,
+    /// non-actor third-party `final class` that we hold exclusively
+    /// inside this actor. The cross-isolation `sending` check at
+    /// `await asrManager.transcribe(...)` would otherwise fire because
+    /// the compiler can't see that the single-flight guard below
+    /// (`transcribeInFlight` + `transcribeWaiters`) prevents concurrent
+    /// access. Reads and writes of the property are nonisolated, but
+    /// every caller (`initialize`, `runTranscribe`, `shutdown`) is
+    /// itself actor-isolated, so accesses are serialised by the actor's
+    /// own execution turns. See the type-level "Maintenance contract".
+    private nonisolated(unsafe) var asrManager: AsrManager?
+
+    /// Single-flight serialisation for `transcribe()`. The flag is set
+    /// while a `runTranscribe` body is executing; reentrant callers
+    /// suspend on a continuation in `transcribeWaiters` until the active
+    /// call's `defer` hands the slot off. We use this explicit queue
+    /// (rather than a `Task` handle) so each waiter receives the slot
+    /// from its predecessor in well-defined FIFO order — no risk of a
+    /// completed-Task `await` returning before the holder's defer has
+    /// cleared the flag, no busy-loop on contention.
+    private var transcribeInFlight: Bool = false
+    private var transcribeWaiters: [CheckedContinuation<Void, Never>] = []
+
     private var currentLanguage: String = "en"
     private var models: AsrModels?
     private var isInitialized = false
@@ -59,11 +120,28 @@ actor FluidAudioService: FluidAudioServiceProtocol {
     /// Simulated error for testing (from launch arguments)
     private let simulatedError: SimulatedErrorType?
 
+    /// Test-only delay injected at the top of `runTranscribe` (after slot
+    /// acquisition). When non-zero, the active transcribe holds the
+    /// single-flight slot for at least this long — long enough for the
+    /// reentrancy-guard tests to force the queue's wait path. Always
+    /// `.zero` in production via the public `init()`.
+    private let transcribeSimulatedDelay: Duration
+
     init() {
+        self.init(simulatedError: LaunchArguments.simulatedError)
+    }
+
+    /// Internal designated init. Tests use this to inject a
+    /// `transcribeSimulatedDelay` so the wait path of the single-flight
+    /// guard is genuinely exercised (rather than every caller racing
+    /// past the slot synchronously).
+    internal init(
+        simulatedError: SimulatedErrorType?,
+        transcribeSimulatedDelay: Duration = .zero
+    ) {
         serviceId = UUID().uuidString.prefix(8).description
-        // Check for simulated error from launch arguments
-        // Note: ProcessInfo is accessed during init, which is fine for actors
-        simulatedError = LaunchArguments.simulatedError
+        self.simulatedError = simulatedError
+        self.transcribeSimulatedDelay = transcribeSimulatedDelay
         AppLogger.service.debug("FluidAudioService[\(self.serviceId, privacy: .public)] created")
         if let error = simulatedError {
             AppLogger.service.debug("FluidAudioService[\(self.serviceId, privacy: .public)] will simulate error: \(error.rawValue, privacy: .public)")
@@ -115,11 +193,84 @@ actor FluidAudioService: FluidAudioServiceProtocol {
         }
     }
 
-    /// Transcribe audio samples at the given sample rate
+    /// Transcribe audio samples at the given sample rate.
+    ///
+    /// Reentrant calls are serialised via `transcribeInFlight` +
+    /// `transcribeWaiters` — see the type-level note on `asrManager`.
+    /// In practice every production consumer (`RecordingViewModel`,
+    /// `VoiceTriggerMonitoringService`) owns its own `FluidAudioService`,
+    /// so reentrancy is unreachable; the guard exists for runtime
+    /// safety against future refactors and to satisfy strict-concurrency
+    /// checking.
+    ///
     /// - Parameters:
     ///   - samples: Int16 audio samples at the native sample rate
     ///   - sampleRate: The sample rate of the input audio (e.g., 48000.0)
     func transcribe(samples: [Int16], sampleRate: Double) async throws -> TranscriptionResult {
+        // Defer-first ownership pattern: register the release before any
+        // throwing/awaiting code. `holdsSlot` tracks whether *this* call
+        // owns the slot, so a fast-fail path that throws before
+        // acquisition (e.g. a cancellation or future precondition check
+        // here) doesn't strand the slot.
+        var holdsSlot = false
+        defer {
+            if holdsSlot {
+                if !transcribeWaiters.isEmpty {
+                    // Hand the slot to the next waiter (keeping the flag
+                    // true so a third caller racing in here observes "in
+                    // flight" and queues up). The `removeFirst()` +
+                    // `resume()` pair is non-suspending; actor isolation
+                    // guarantees no reentry between them. The woken
+                    // waiter's Task is *scheduled* by `resume()`, not run
+                    // synchronously.
+                    let next = transcribeWaiters.removeFirst()
+                    next.resume()
+                } else {
+                    transcribeInFlight = false
+                }
+            }
+        }
+
+        // Acquire the slot. Cancellation here is propagated immediately —
+        // a cancelled caller never queues, never blocks the next legitimate
+        // caller. (Once queued, cancellation is cooperative; see
+        // `runTranscribe`'s `Task.checkCancellation()` for the wake path.)
+        try Task.checkCancellation()
+
+        if transcribeInFlight {
+            AppLogger.warning(
+                AppLogger.service,
+                "[\(self.serviceId)] reentrant transcribe(); awaiting prior call (queue depth: \(transcribeWaiters.count + 1))"
+            )
+            await withCheckedContinuation { cont in
+                transcribeWaiters.append(cont)
+            }
+            // Slot was handed off to us by the prior caller's defer above;
+            // `transcribeInFlight` is already true on our behalf.
+        } else {
+            transcribeInFlight = true
+        }
+        holdsSlot = true
+
+        return try await runTranscribe(samples: samples, sampleRate: sampleRate)
+    }
+
+    /// Body of `transcribe(samples:sampleRate:)`. Always invoked with the
+    /// in-flight slot held by the public entry point — never call this
+    /// directly.
+    private func runTranscribe(samples: [Int16], sampleRate: Double) async throws -> TranscriptionResult {
+        // Cancellation check on the *wake* path: if the caller's Task was
+        // cancelled while queued in `transcribeWaiters`, bail before
+        // doing the resample/ASR work. `withCheckedContinuation` itself
+        // is non-cancelling, so this is the gate that limits the cost of
+        // a cancelled caller waking from the queue.
+        try Task.checkCancellation()
+
+        // Test-only: hold the slot long enough for the reentrancy-guard
+        // tests to force concurrent callers to queue. Production paths
+        // see `.zero` and the helper returns immediately.
+        try await applyTranscribeSimulatedDelay()
+
         transcriptionCount += 1
         let transcriptionId = transcriptionCount
 
@@ -221,6 +372,14 @@ actor FluidAudioService: FluidAudioServiceProtocol {
         }
     }
 
+    /// Test-only seam used by `runTranscribe` to hold the single-flight
+    /// slot for `transcribeSimulatedDelay` before doing any work.
+    /// Production paths configure `.zero`, making this a no-op.
+    private func applyTranscribeSimulatedDelay() async throws {
+        guard transcribeSimulatedDelay != .zero else { return }
+        try await Task.sleep(for: transcribeSimulatedDelay)
+    }
+
     /// Switch to a different language
     /// Note: Parakeet TDT v3 is multilingual, so no model reload is needed
     func switchLanguage(to language: String) async throws {
@@ -251,6 +410,18 @@ actor FluidAudioService: FluidAudioServiceProtocol {
     /// Shutdown and clean up resources
     func shutdown() {
         AppLogger.info(AppLogger.service, "[\(serviceId)] shutdown() called, \(transcriptionCount) transcriptions performed")
+
+        // Drain any queued waiters so their `CheckedContinuation`s don't
+        // leak (the runtime would surface a "leaked checked continuation"
+        // warning on actor teardown) and their callers don't hang forever.
+        // Drained waiters wake, hit the `notInitialized` guard inside
+        // `runTranscribe` (since `asrManager` is being cleared below),
+        // and surface a clean error to their callers.
+        let stranded = transcribeWaiters
+        transcribeWaiters.removeAll()
+        transcribeInFlight = false
+        for cont in stranded { cont.resume() }
+
         asrManager = nil
         models = nil
         isInitialized = false

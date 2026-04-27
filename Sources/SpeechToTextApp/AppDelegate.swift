@@ -325,11 +325,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] notification in
+            // `Notification` is non-Sendable; extract the Bool here before
+            // the `Task { @MainActor in }` hop so the Notification value
+            // doesn't cross an isolation boundary. This closure already
+            // runs on `.main` (`queue: .main` above), so reading `userInfo`
+            // synchronously is safe. Mirrors the MainActor extract-before-Task
+            // pattern from the rest of the AppDelegate.
+            //
+            // We `guard let` rather than fall back to `?? false` so a
+            // future poster that omits the `enabled` key surfaces in logs
+            // instead of silently disabling voice triggers.
+            guard let enabled = notification.userInfo?["enabled"] as? Bool else {
+                AppLogger.app.warning(
+                    "voiceTriggerEnabledDidChange received without 'enabled' Bool in userInfo; ignoring"
+                )
+                return
+            }
+
             print("[DEBUG] voiceTriggerEnabledDidChange notification received")
             fflush(stdout)
             Task { @MainActor in
                 guard let self else { return }
-                let enabled = notification.userInfo?["enabled"] as? Bool ?? false
                 print("[DEBUG] Voice trigger enabled = \(enabled)")
                 fflush(stdout)
 
