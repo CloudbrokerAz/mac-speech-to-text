@@ -18,12 +18,13 @@ public actor KeychainSecureStore: SecureStore {
     ///
     /// `Equatable` is intentionally asymmetric: two `.unexpected` values
     /// compare unequal when their `OSStatus` differs, but two
-    /// `.authDenied` (or `.notAvailable`) values compare equal *regardless*
-    /// of the originating `OSStatus`. The whole point of the semantic
-    /// cases is information loss — collapsing `errSecAuthFailed` and
-    /// `errSecUserCanceled` into one bucket the UI layer can act on. Do
-    /// not write tests that try to "pin" a specific `OSStatus` via
-    /// equality on a semantic case; assert on the case itself.
+    /// `.authDenied` (or `.notAvailable`, `.corrupted`, `.loopCapExceeded`)
+    /// values compare equal *regardless* of the originating `OSStatus`.
+    /// The whole point of the semantic cases is information loss —
+    /// collapsing `errSecAuthFailed` and `errSecUserCanceled` into one
+    /// bucket the UI layer can act on. Do not write tests that try to
+    /// "pin" a specific `OSStatus` via equality on a semantic case;
+    /// assert on the case itself.
     public enum Failure: Swift.Error, CustomStringConvertible, Equatable, Sendable {
         /// User denied / cancelled the keychain prompt, or auth failed.
         /// Maps `errSecInteractionNotAllowed`, `errSecAuthFailed`,
@@ -38,6 +39,21 @@ public actor KeychainSecureStore: SecureStore {
         /// `Data`. Indicates keychain corruption or a cross-class match and
         /// MUST NOT be silently mapped to "missing".
         case unexpectedItemType(Operation)
+        /// Keychain reported the stored item exists but cannot be decoded
+        /// — `errSecDecode`. For a HIPAA-adjacent credential store this is
+        /// probable corruption of the secret payload itself, distinct from
+        /// `unexpectedItemType` (which is a class-mismatch / cross-class
+        /// retrieval). Callers can surface "your stored credentials look
+        /// corrupt; please re-enter the API key" rather than the generic
+        /// `OSStatus -26275` description.
+        case corrupted(Operation)
+        /// `deleteAll` exceeded its defensive `10_000`-iteration cap.
+        /// Distinct from `.unexpected(errSecInternalError, .deleteAll)`
+        /// — no real `OSStatus` came back from Keychain here; the loop
+        /// just wedged. The `Operation` payload is `.deleteAll` today
+        /// (the only loop-capped path) but the case keeps the door open
+        /// for future bounded-retry sites.
+        case loopCapExceeded(Operation)
         /// Any other `OSStatus` we don't have a semantic mapping for. Carries
         /// the raw status purely for diagnostics — callers should not switch
         /// on the integer value.
@@ -57,6 +73,8 @@ public actor KeychainSecureStore: SecureStore {
                 return .authDenied(op)
             case errSecNotAvailable, errSecMissingEntitlement:
                 return .notAvailable(op)
+            case errSecDecode:
+                return .corrupted(op)
             default:
                 return .unexpected(status, op)
             }
@@ -70,6 +88,13 @@ public actor KeychainSecureStore: SecureStore {
                 return "KeychainSecureStore: \(op.rawValue) failed (keychain not available)"
             case let .unexpectedItemType(op):
                 return "KeychainSecureStore: \(op.rawValue) returned a non-Data item"
+            case let .corrupted(op):
+                return "KeychainSecureStore: \(op.rawValue) failed (stored item is corrupt — re-enter credentials)"
+            case let .loopCapExceeded(op):
+                // User-facing copy via `LocalizedError`: a doctor seeing
+                // this should know what to try next. Restart-and-retry is
+                // the only sane recovery for the deleteAll-wedge state.
+                return "KeychainSecureStore: \(op.rawValue) couldn't finish — please restart the app and try again"
             case let .unexpected(status, op):
                 return "KeychainSecureStore: \(op.rawValue) failed (OSStatus \(status))"
             }
@@ -221,13 +246,31 @@ public actor KeychainSecureStore: SecureStore {
             }
         }
         logger.error("deleteAll exceeded \(maxIterations) iterations service=\(self.service, privacy: .public)")
-        // Synthetic sentinel: no real `OSStatus` came back from Keychain
-        // here — the loop hit its defensive iteration cap. We construct
-        // `.unexpected` directly (bypassing `Failure.from(...)`) because
-        // the integer is a fiction labelling "we exhausted retries", not
-        // a Keychain return code. Indistinguishable at the type level
-        // from a genuine `errSecInternalError`; if a future caller needs
-        // to differentiate, promote this to its own case.
-        throw Failure.unexpected(errSecInternalError, .deleteAll)
+        // No real `OSStatus` came back from Keychain here — the loop hit
+        // its defensive iteration cap. `Failure.loopCapExceeded` is the
+        // type-distinct sentinel for "we exhausted retries" so a caller
+        // can branch on it directly without inspecting an integer that
+        // would otherwise be indistinguishable from a genuine
+        // `errSecInternalError`. Constructed directly (not via
+        // `Failure.from`) because no `OSStatus` is in flight.
+        throw Failure.loopCapExceeded(.deleteAll)
     }
+}
+
+// MARK: - LocalizedError
+
+/// Surface the typed `description` through `Error.localizedDescription`.
+///
+/// Without this, casting a `Failure` back through the existential
+/// `any Error` (which the call site does whenever it bubbles up via
+/// `throws`) gives Apple's generic
+/// `"The operation couldn't be completed. (... error 1.)"` — losing the
+/// specific copy that told the doctor *why* their Cliniko credential
+/// store rejected the operation.
+///
+/// `errorDescription` is preferred over `failureReason` here because UI
+/// surfaces (`Alert`, `NSAlert`) read `localizedDescription`, which is
+/// itself fed by `errorDescription` for `LocalizedError` conformers.
+extension KeychainSecureStore.Failure: LocalizedError {
+    public var errorDescription: String? { description }
 }
