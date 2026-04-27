@@ -176,4 +176,188 @@ final class URLProtocolStubTests: XCTestCase {
         XCTAssertEqual(a, b)
         XCTAssertNotEqual(a, c)
     }
+
+    // MARK: - Routed install (multi-endpoint)
+
+    /// Exemplar for `URLProtocolStub.install(routes:)`. Two endpoints stubbed
+    /// in one install call; each request is routed to the first matching
+    /// `Route`. New tests that exercise more than one Cliniko endpoint at
+    /// once should follow this shape rather than building a `switch
+    /// request.url?.path { … }` inside a single closure. Uses the
+    /// `Route.path(_:method:respond:)` convenience builder.
+    func test_routes_dispatchToFirstMatchingEndpoint() async throws {
+        let usersMeURL = URL(string: "https://api.au1.cliniko.com/v1/users/me")!
+        let patientsURL = URL(string: "https://api.au1.cliniko.com/v1/patients?q=sample")!
+
+        let config = URLProtocolStub.install(routes: [
+            .path("/v1/users/me", respond: { request in
+                let response = HTTPURLResponse(
+                    url: request.url ?? usersMeURL,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+                let body = try HTTPStubFixture.load("cliniko/responses/users_me.json")
+                return (response, body)
+            }),
+            .path("/v1/patients", respond: { request in
+                let response = HTTPURLResponse(
+                    url: request.url ?? patientsURL,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+                let body = try HTTPStubFixture.load("cliniko/responses/patients_search.json")
+                return (response, body)
+            })
+        ])
+        let session = URLSession(configuration: config)
+
+        let (usersData, _) = try await session.data(from: usersMeURL)
+        struct UserMe: Decodable { let id: Int }
+        let user = try JSONDecoder().decode(UserMe.self, from: usersData)
+        XCTAssertEqual(user.id, 12345)
+
+        let (patientsData, _) = try await session.data(from: patientsURL)
+        // Just verify the body matches the patients fixture; full decoding
+        // belongs in the patient-service tests, not the stub exemplar.
+        let expected = try HTTPStubFixture.load("cliniko/responses/patients_search.json")
+        XCTAssertEqual(patientsData, expected)
+    }
+
+    func test_routes_methodMismatch_doesNotMatch() async {
+        // `Route.path` defaults to GET — a POST to the same path must miss.
+        let config = URLProtocolStub.install(routes: [
+            .path("/v1/users/me", respond: { request in
+                (HTTPURLResponse(url: request.url!, statusCode: 200,
+                                 httpVersion: nil, headerFields: nil)!,
+                 Data())
+            })
+        ])
+        let session = URLSession(configuration: config)
+
+        var post = URLRequest(url: URL(string: "https://example.test/v1/users/me")!)
+        post.httpMethod = "POST"
+
+        do {
+            _ = try await session.data(for: post)
+            XCTFail("POST should not match a GET-only route")
+        } catch {
+            let nsError = error as NSError
+            XCTAssertTrue(
+                nsError.localizedDescription.contains("no Route matched"),
+                "expected 'no Route matched' for method mismatch; got \(nsError.localizedDescription)"
+            )
+        }
+    }
+
+    func test_routes_unmatchedRequest_throwsDescriptiveURLError() async {
+        let config = URLProtocolStub.install(routes: [
+            .path("/v1/users/me", respond: { request in
+                (HTTPURLResponse(url: request.url!, statusCode: 200,
+                                 httpVersion: nil, headerFields: nil)!,
+                 Data())
+            })
+        ])
+        let session = URLSession(configuration: config)
+
+        do {
+            _ = try await session.data(
+                from: URL(string: "https://api.au1.cliniko.com/v1/patients")!
+            )
+            XCTFail("expected unmatched route to throw")
+        } catch {
+            // The thrown URLError is bridged to NSError before reaching the
+            // session boundary; the descriptive message lives on
+            // localizedDescription. Asserting both substrings (structural
+            // marker AND the requested URL) so a regression that drops
+            // either piece is caught.
+            let nsError = error as NSError
+            let message = nsError.localizedDescription
+            XCTAssertTrue(
+                message.contains("no Route matched") && message.contains("/v1/patients"),
+                "expected descriptive message containing 'no Route matched' and '/v1/patients'; got \(message)"
+            )
+        }
+    }
+
+    // MARK: - RAII (`installScoped`)
+
+    /// Exemplar for `URLProtocolStub.installScoped(_:)`. The returned handle's
+    /// `deinit` calls `reset()` (token-gated) when the handle goes out of
+    /// scope. We delegate to a separate async helper so the handle's lifetime
+    /// ends deterministically at the helper's return — `do { let x = … }`
+    /// blocks do NOT guarantee ARC release at the closing brace, so the
+    /// helper-function form is the reliable shape.
+    func test_installScoped_resetsOnHandleDeinit() async throws {
+        let request = URLRequest(url: URL(string: "https://example.test/")!)
+
+        try await runWithScopedInstallation(probeRequest: request)
+
+        // The helper has returned, its `installation` local has been released,
+        // deinit ran, the token-gated reset cleared the responder.
+        XCTAssertFalse(
+            URLProtocolStub.canInit(with: request),
+            "Installation deinit must call URLProtocolStub.reset()"
+        )
+    }
+
+    private func runWithScopedInstallation(probeRequest: URLRequest) async throws {
+        let installation = URLProtocolStub.installScoped { request in
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "https://example.test")!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (response, Data())
+        }
+
+        // Stub is live while the handle is in scope.
+        XCTAssertTrue(URLProtocolStub.canInit(with: probeRequest))
+
+        let session = URLSession(configuration: installation.configuration)
+        let (_, response) = try await session.data(
+            from: URL(string: "https://example.test/")!
+        )
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+    }
+
+    /// Stale `Installation` deinit must NOT clobber a newer installation that
+    /// has already taken over the responder. The token-gating in
+    /// `Installation.deinit` is what makes `installScoped` safe even if a
+    /// caller accidentally keeps an old handle alive past the install of the
+    /// next one (e.g. captured in a Task).
+    func test_installScoped_staleHandleDeinit_doesNotClobberNewerInstall() async {
+        let probe = URLRequest(url: URL(string: "https://example.test/")!)
+
+        var firstHandle: URLProtocolStub.Installation? = URLProtocolStub.installScoped { _ in
+            (HTTPURLResponse(url: URL(string: "https://example.test")!,
+                             statusCode: 200,
+                             httpVersion: nil,
+                             headerFields: nil)!, Data())
+        }
+        XCTAssertNotNil(firstHandle)
+
+        // A second `installScoped` takes over (different token).
+        let secondHandle = URLProtocolStub.installScoped { _ in
+            (HTTPURLResponse(url: URL(string: "https://example.test")!,
+                             statusCode: 201,
+                             httpVersion: nil,
+                             headerFields: nil)!, Data())
+        }
+
+        // Drop the first handle — its deinit's reset is token-gated, so it
+        // should observe a token mismatch and no-op rather than clearing
+        // the second handle's responder.
+        firstHandle = nil
+
+        XCTAssertTrue(
+            URLProtocolStub.canInit(with: probe),
+            "Stale Installation.deinit must not reset a newer installation's responder"
+        )
+
+        // Touch the second handle so the optimizer cannot pre-deinit it.
+        _ = secondHandle.configuration
+    }
 }
