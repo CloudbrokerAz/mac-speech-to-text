@@ -180,22 +180,32 @@ extension URLProtocolStub {
         }
     }
 
+    /// Builds the multiplexed responder used by both `install(routes:)` and
+    /// `installScoped(routes:)`. Only the URL *path* is interpolated into the
+    /// no-match error message — query parameters and full host can carry PHI
+    /// (e.g. patient_id in a Cliniko URL), and `URLError.localizedDescription`
+    /// surfaces in test failure logs which CI runners may persist. The path
+    /// alone is enough to diagnose a stub typo.
+    private static func makeRoutedResponder(_ routes: [Route]) -> Responder {
+        { request in
+            for route in routes where route.matches(request) {
+                return try route.respond(request)
+            }
+            let path = request.url?.path ?? "<no path>"
+            throw URLError(
+                .unsupportedURL,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "URLProtocolStub: no Route matched \(path)"
+                ]
+            )
+        }
+    }
+
     /// Routed install: dispatches each request to the first matching `Route`.
     /// The single-closure `install(_:)` form remains available unchanged for
     /// tests that only stub one endpoint.
     static func install(routes: [Route]) -> URLSessionConfiguration {
-        install { request in
-            for route in routes where route.matches(request) {
-                return try route.respond(request)
-            }
-            let url = request.url?.absoluteString ?? "<no url>"
-            throw URLError(
-                .unsupportedURL,
-                userInfo: [
-                    NSLocalizedDescriptionKey: "URLProtocolStub: no Route matched \(url)"
-                ]
-            )
-        }
+        install(makeRoutedResponder(routes))
     }
 
     /// RAII variant of `install(_:)`. Returns an `Installation` whose `deinit`
@@ -212,19 +222,7 @@ extension URLProtocolStub {
     /// tied to the returned handle. Always assign to a `let`.
     static func installScoped(routes: [Route]) -> Installation {
         let token = UUID()
-        let routedResponder: Responder = { request in
-            for route in routes where route.matches(request) {
-                return try route.respond(request)
-            }
-            let url = request.url?.absoluteString ?? "<no url>"
-            throw URLError(
-                .unsupportedURL,
-                userInfo: [
-                    NSLocalizedDescriptionKey: "URLProtocolStub: no Route matched \(url)"
-                ]
-            )
-        }
-        let configuration = installWithToken(routedResponder, token: token)
+        let configuration = installWithToken(makeRoutedResponder(routes), token: token)
         return Installation(configuration: configuration, token: token)
     }
 }

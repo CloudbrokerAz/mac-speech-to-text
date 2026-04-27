@@ -179,6 +179,28 @@ final class URLProtocolStubTests: XCTestCase {
 
     // MARK: - Routed install (multi-endpoint)
 
+    /// `HTTPURLResponse(url:statusCode:httpVersion:headerFields:)` returns nil
+    /// only for malformed URLs; the URLs in this file are all hardcoded
+    /// `https://...`. `try XCTUnwrap` keeps the styleguide's no-force-unwrap
+    /// rule honoured and produces a descriptive failure if a future test
+    /// passes a degenerate URL.
+    private func makeHTTPResponse(
+        url: URL,
+        statusCode: Int = 200,
+        httpVersion: String? = "HTTP/1.1",
+        headerFields: [String: String]? = nil
+    ) throws -> HTTPURLResponse {
+        try XCTUnwrap(
+            HTTPURLResponse(
+                url: url,
+                statusCode: statusCode,
+                httpVersion: httpVersion,
+                headerFields: headerFields
+            ),
+            "HTTPURLResponse init returned nil for url=\(url)"
+        )
+    }
+
     /// Exemplar for `URLProtocolStub.install(routes:)`. Two endpoints stubbed
     /// in one install call; each request is routed to the first matching
     /// `Route`. New tests that exercise more than one Cliniko endpoint at
@@ -186,27 +208,27 @@ final class URLProtocolStubTests: XCTestCase {
     /// request.url?.path { … }` inside a single closure. Uses the
     /// `Route.path(_:method:respond:)` convenience builder.
     func test_routes_dispatchToFirstMatchingEndpoint() async throws {
-        let usersMeURL = URL(string: "https://api.au1.cliniko.com/v1/users/me")!
-        let patientsURL = URL(string: "https://api.au1.cliniko.com/v1/patients?q=sample")!
+        let usersMeURL = try XCTUnwrap(URL(string: "https://api.au1.cliniko.com/v1/users/me"))
+        let patientsURL = try XCTUnwrap(URL(string: "https://api.au1.cliniko.com/v1/patients?q=sample"))
 
         let config = URLProtocolStub.install(routes: [
             .path("/v1/users/me", respond: { request in
-                let response = HTTPURLResponse(
+                let response = try XCTUnwrap(HTTPURLResponse(
                     url: request.url ?? usersMeURL,
                     statusCode: 200,
                     httpVersion: "HTTP/1.1",
                     headerFields: ["Content-Type": "application/json"]
-                )!
+                ))
                 let body = try HTTPStubFixture.load("cliniko/responses/users_me.json")
                 return (response, body)
             }),
             .path("/v1/patients", respond: { request in
-                let response = HTTPURLResponse(
+                let response = try XCTUnwrap(HTTPURLResponse(
                     url: request.url ?? patientsURL,
                     statusCode: 200,
                     httpVersion: "HTTP/1.1",
                     headerFields: ["Content-Type": "application/json"]
-                )!
+                ))
                 let body = try HTTPStubFixture.load("cliniko/responses/patients_search.json")
                 return (response, body)
             })
@@ -225,18 +247,24 @@ final class URLProtocolStubTests: XCTestCase {
         XCTAssertEqual(patientsData, expected)
     }
 
-    func test_routes_methodMismatch_doesNotMatch() async {
+    func test_routes_methodMismatch_doesNotMatch() async throws {
         // `Route.path` defaults to GET — a POST to the same path must miss.
+        let fallback = try XCTUnwrap(URL(string: "https://example.test"))
         let config = URLProtocolStub.install(routes: [
             .path("/v1/users/me", respond: { request in
-                (HTTPURLResponse(url: request.url!, statusCode: 200,
-                                 httpVersion: nil, headerFields: nil)!,
-                 Data())
+                let response = try XCTUnwrap(HTTPURLResponse(
+                    url: request.url ?? fallback,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                ))
+                return (response, Data())
             })
         ])
         let session = URLSession(configuration: config)
 
-        var post = URLRequest(url: URL(string: "https://example.test/v1/users/me")!)
+        let postURL = try XCTUnwrap(URL(string: "https://example.test/v1/users/me"))
+        var post = URLRequest(url: postURL)
         post.httpMethod = "POST"
 
         do {
@@ -251,27 +279,34 @@ final class URLProtocolStubTests: XCTestCase {
         }
     }
 
-    func test_routes_unmatchedRequest_throwsDescriptiveURLError() async {
+    func test_routes_unmatchedRequest_throwsDescriptiveURLError() async throws {
+        let fallback = try XCTUnwrap(URL(string: "https://example.test"))
         let config = URLProtocolStub.install(routes: [
             .path("/v1/users/me", respond: { request in
-                (HTTPURLResponse(url: request.url!, statusCode: 200,
-                                 httpVersion: nil, headerFields: nil)!,
-                 Data())
+                let response = try XCTUnwrap(HTTPURLResponse(
+                    url: request.url ?? fallback,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                ))
+                return (response, Data())
             })
         ])
         let session = URLSession(configuration: config)
 
+        let unmatched = try XCTUnwrap(URL(string: "https://api.au1.cliniko.com/v1/patients"))
+
         do {
-            _ = try await session.data(
-                from: URL(string: "https://api.au1.cliniko.com/v1/patients")!
-            )
+            _ = try await session.data(from: unmatched)
             XCTFail("expected unmatched route to throw")
         } catch {
             // The thrown URLError is bridged to NSError before reaching the
             // session boundary; the descriptive message lives on
             // localizedDescription. Asserting both substrings (structural
-            // marker AND the requested URL) so a regression that drops
-            // either piece is caught.
+            // marker AND the URL path) so a regression that drops either
+            // piece is caught. Note: only the path is interpolated into the
+            // error — full URLs can carry PHI in real Cliniko traffic, so
+            // the no-match message is path-only by design (#30 review).
             let nsError = error as NSError
             let message = nsError.localizedDescription
             XCTAssertTrue(
@@ -290,7 +325,8 @@ final class URLProtocolStubTests: XCTestCase {
     /// blocks do NOT guarantee ARC release at the closing brace, so the
     /// helper-function form is the reliable shape.
     func test_installScoped_resetsOnHandleDeinit() async throws {
-        let request = URLRequest(url: URL(string: "https://example.test/")!)
+        let probeURL = try XCTUnwrap(URL(string: "https://example.test/"))
+        let request = URLRequest(url: probeURL)
 
         try await runWithScopedInstallation(probeRequest: request)
 
@@ -303,23 +339,23 @@ final class URLProtocolStubTests: XCTestCase {
     }
 
     private func runWithScopedInstallation(probeRequest: URLRequest) async throws {
+        let fallback = try XCTUnwrap(URL(string: "https://example.test"))
         let installation = URLProtocolStub.installScoped { request in
-            let response = HTTPURLResponse(
-                url: request.url ?? URL(string: "https://example.test")!,
+            let response = try XCTUnwrap(HTTPURLResponse(
+                url: request.url ?? fallback,
                 statusCode: 200,
                 httpVersion: nil,
                 headerFields: nil
-            )!
+            ))
             return (response, Data())
         }
 
         // Stub is live while the handle is in scope.
         XCTAssertTrue(URLProtocolStub.canInit(with: probeRequest))
 
+        let dataURL = try XCTUnwrap(URL(string: "https://example.test/"))
         let session = URLSession(configuration: installation.configuration)
-        let (_, response) = try await session.data(
-            from: URL(string: "https://example.test/")!
-        )
+        let (_, response) = try await session.data(from: dataURL)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
     }
 
@@ -328,23 +364,22 @@ final class URLProtocolStubTests: XCTestCase {
     /// `Installation.deinit` is what makes `installScoped` safe even if a
     /// caller accidentally keeps an old handle alive past the install of the
     /// next one (e.g. captured in a Task).
-    func test_installScoped_staleHandleDeinit_doesNotClobberNewerInstall() async {
-        let probe = URLRequest(url: URL(string: "https://example.test/")!)
+    func test_installScoped_staleHandleDeinit_doesNotClobberNewerInstall() throws {
+        let probeURL = try XCTUnwrap(URL(string: "https://example.test/"))
+        let probe = URLRequest(url: probeURL)
+        let responseURL = try XCTUnwrap(URL(string: "https://example.test"))
+
+        let firstResponse = try makeHTTPResponse(url: responseURL, statusCode: 200, httpVersion: nil)
+        let secondResponse = try makeHTTPResponse(url: responseURL, statusCode: 201, httpVersion: nil)
 
         var firstHandle: URLProtocolStub.Installation? = URLProtocolStub.installScoped { _ in
-            (HTTPURLResponse(url: URL(string: "https://example.test")!,
-                             statusCode: 200,
-                             httpVersion: nil,
-                             headerFields: nil)!, Data())
+            (firstResponse, Data())
         }
         XCTAssertNotNil(firstHandle)
 
         // A second `installScoped` takes over (different token).
         let secondHandle = URLProtocolStub.installScoped { _ in
-            (HTTPURLResponse(url: URL(string: "https://example.test")!,
-                             statusCode: 201,
-                             httpVersion: nil,
-                             headerFields: nil)!, Data())
+            (secondResponse, Data())
         }
 
         // Drop the first handle — its deinit's reset is token-gated, so it
