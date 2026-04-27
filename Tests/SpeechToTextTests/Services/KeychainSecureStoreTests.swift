@@ -29,10 +29,11 @@ import Testing
 // justified for a single error branch — the mapping is reviewed by
 // inspection at `Sources/Services/KeychainSecureStore.swift:122-129`.
 //
-// `Failure.osStatus` mapping is similarly only reachable via
-// fault-injection at the `SecItem*` layer; SecureStore-level error
-// surfacing is already covered through the `ThrowingSecureStore` stub
-// in `ClinikoCredentialStoreTests`.
+// The `OSStatus` → semantic-case mapping (`Failure.from(status:op:)`)
+// is covered as a pure-logic table in
+// `KeychainSecureStoreFailureMappingTests` (`.fast`, runs in CI).
+// SecureStore-level error surfacing is already covered through the
+// `ThrowingSecureStore` stub in `ClinikoCredentialStoreTests`.
 
 @Suite("KeychainSecureStore (real Keychain)", .tags(.requiresHardware))
 struct KeychainSecureStoreTests {
@@ -78,7 +79,8 @@ struct KeychainSecureStoreTests {
 
     /// The SecureStore contract is "missing returns `nil`, anything
     /// else throws". Pin that an unset key returns `nil` and does not
-    /// surface as a thrown `Failure.osStatus(errSecItemNotFound, .get)`.
+    /// surface as a thrown `Failure` (i.e. neither `unexpected(errSecItemNotFound, .get)`
+    /// nor any of the semantic cases).
     @Test("get returns nil for a key that has never been set")
     func get_missingKey_returnsNil() async throws {
         let store = KeychainSecureStore(service: Self.uniqueService())
