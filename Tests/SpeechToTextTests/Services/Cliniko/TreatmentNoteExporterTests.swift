@@ -123,6 +123,40 @@ final class TreatmentNoteExporterTests: XCTestCase {
         XCTAssertEqual(actual, expected)
     }
 
+    /// Issue #58 — the audit ledger must reflect the actual HTTP status the
+    /// server returned, not a documented constant. Today Cliniko documents
+    /// 201 for `POST /treatment_notes`; if a future endpoint variant returns
+    /// a different 2xx (e.g. 200 for the same logical create, or a 202 for a
+    /// queued processing model), the audit row would lie under the old
+    /// hardcoded literal. This test would have failed against the previous
+    /// `clinikoStatus: 201` hardcoding.
+    ///
+    /// Lives alongside its XCTest siblings (rather than as a Swift Testing
+    /// `@Suite`) because `URLProtocolStub` is a process-wide singleton and
+    /// Swift Testing's `.serialized` trait is suite-local — adding a new
+    /// Swift Testing suite that stubs HTTP races against `ModelDownloaderTests`.
+    /// See the parallel comment in `ClinikoClientTests` for the full rationale.
+    func test_export_audit_clinikoStatus_reflectsActualHTTPStatus_not201Literal() async throws {
+        let session = makeSession { request in
+            let body = Data("{\"id\":42}".utf8)
+            // Stub 200 (not 201) to prove the exporter threads the
+            // observed status — would mis-record as 201 under the old
+            // hardcoded path.
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, body)
+        }
+        let auditStore = InMemoryAuditStore()
+        let exporter = makeExporter(session: session, auditStore: auditStore)
+
+        let outcome = try await exporter.export(notes: makeNotes(), patientID: 1001, appointmentID: nil)
+
+        XCTAssertEqual(outcome.created.id, 42)
+        XCTAssertTrue(outcome.auditPersisted)
+        let audit = try await auditStore.loadAll()
+        XCTAssertEqual(audit.count, 1)
+        XCTAssertEqual(try XCTUnwrap(audit.first).clinikoStatus, 200)
+    }
+
     func test_export_201_withoutAppointmentID_recordsNilAppointment() async throws {
         let session = makeSession { request in
             let body = Data("{\"id\":42}".utf8)
