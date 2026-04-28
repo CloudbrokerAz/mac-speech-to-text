@@ -85,6 +85,29 @@ final class RecordingViewModel {
         settingsService.load().general.clinicalNotesDisclaimerAcknowledged
     }
 
+    /// Whether this view model is driving a *clinical* recording session (#98).
+    ///
+    /// Set true at construction time when the modal was triggered by the
+    /// dedicated clinical chord (`KeyboardShortcuts.Name.clinicalNotesRecord`,
+    /// #91) or the "Start Clinical Note" menu-bar item (#92). False for every
+    /// other path — general dictation (hold-to-record / toggle), and the
+    /// `--trigger-recording` UI-test launch arg.
+    ///
+    /// When true, the in-process transcript is treated as PHI:
+    ///   - Both `insertText` and `insertTextWithFallback` short-circuit and
+    ///     never hand the transcript to `TextInsertionService`. That means
+    ///     no Cmd+V into the focused app and **no `NSPasteboard.general`
+    ///     write** — the only legitimate destinations are the modal's
+    ///     `transcribedText` (in-memory) and the doctor-initiated Cliniko
+    ///     POST that comes later via `.clinicalNotesGenerateRequested`.
+    ///   - The modal also gates its auto-dismiss / cancel behaviours on this
+    ///     flag so a clinical transcript can't be silently lost on the
+    ///     post-Done race that motivated #98.
+    ///
+    /// Immutable after init by design — flipping mode mid-session would be a
+    /// PHI escape vector. A new clinical session must construct a new VM.
+    @ObservationIgnored let clinicalMode: Bool
+
     // MARK: - Dependencies
     // All services are @ObservationIgnored to prevent @Observable from tracking them
     // This is critical for fluidAudioService which is an actor existential type -
@@ -136,7 +159,8 @@ final class RecordingViewModel {
         textInsertionService: TextInsertionService = TextInsertionService(),
         settingsService: SettingsService = SettingsService(),
         statisticsService: StatisticsService = StatisticsService(),
-        permissionService: PermissionService = PermissionService()
+        permissionService: PermissionService = PermissionService(),
+        clinicalMode: Bool = false
     ) {
         self.viewModelId = UUID().uuidString.prefix(8).description
         // CRIT-1 Fix: Pass settingsService to AudioCaptureService so it can use the selected device
@@ -146,10 +170,11 @@ final class RecordingViewModel {
         self.settingsService = settingsService
         self.statisticsService = statisticsService
         self.permissionService = permissionService
+        self.clinicalMode = clinicalMode
         // Get current language from settings (T068)
         self.currentLanguage = settingsService.load().language.defaultLanguage
         AppLogger.lifecycle(AppLogger.viewModel, self, event: "init[\(viewModelId)]")
-        AppLogger.debug(AppLogger.viewModel, "[\(viewModelId)] Initialized with language=\(currentLanguage)")
+        AppLogger.debug(AppLogger.viewModel, "[\(viewModelId)] Initialized with language=\(currentLanguage) clinicalMode=\(clinicalMode)")
         setupLanguageSwitchObserver()
     }
 
@@ -696,18 +721,42 @@ final class RecordingViewModel {
             try await insertText(result.text)
 
         } catch {
-            AppLogger.error(AppLogger.viewModel, "[\(viewModelId)] Transcription failed: \(error.localizedDescription)")
-            isTranscribing = false
-            isInserting = false  // Reset insertion flag in case error occurred during insertion phase
-            errorMessage = "Transcription failed: \(error.localizedDescription)"
-            // Re-fetch session to avoid overwriting concurrent changes (bug fix)
-            if var updatedSession = currentSession, currentSessionId == startSessionId {
-                updatedSession.errorMessage = error.localizedDescription
-                updatedSession.state = .cancelled
-                self.currentSession = updatedSession
-            }
-            throw RecordingError.transcriptionFailed(error.localizedDescription)
+            throw handleTranscriptionError(error, startSessionId: startSessionId)
         }
+    }
+
+    /// Shared catch handler for `transcribe(samples:sampleRate:)` and
+    /// `transcribeWithFallback(samples:sampleRate:)`. Both pipelines need
+    /// the same state reset + #98 PHI sanitisation; extracted per Gemini
+    /// review on PR #99 to keep the invariant in one place.
+    ///
+    /// In clinical mode, suppresses `error.localizedDescription` from the
+    /// user-visible / persisted error message *and* from the re-thrown
+    /// error's payload — FluidAudio errors may pack decode-derived strings
+    /// into their description. `errorMessage` renders on screen *and* —
+    /// once the outer `stopRecording` / `onHotkeyReleased` catch reads
+    /// `error.localizedDescription` from the rethrow — gets overwritten
+    /// with that propagated string, so sanitising both sides keeps the
+    /// inert text. The session's `errorMessage` also feeds
+    /// `StatisticsService.extractErrorType`, which we sanitise for the
+    /// same reason. Structural error class is already logged at `.error`
+    /// level by the caller before invoking this helper.
+    private func handleTranscriptionError(_ error: Error, startSessionId: UUID?) -> Error {
+        AppLogger.error(AppLogger.viewModel, "[\(viewModelId)] Transcription failed: \(error.localizedDescription)")
+        isTranscribing = false
+        isInserting = false  // Reset insertion flag in case error occurred during insertion phase
+
+        let inertClinicalMessage = "Please try recording again."
+        let surfacedMessage = clinicalMode ? inertClinicalMessage : error.localizedDescription
+        errorMessage = "Transcription failed: \(surfacedMessage)"
+
+        // Re-fetch session to avoid overwriting concurrent changes (bug fix)
+        if var updatedSession = currentSession, currentSessionId == startSessionId {
+            updatedSession.errorMessage = surfacedMessage
+            updatedSession.state = .cancelled
+            self.currentSession = updatedSession
+        }
+        return RecordingError.transcriptionFailed(surfacedMessage)
     }
 
     /// Insert transcribed text into active application
@@ -717,6 +766,23 @@ final class RecordingViewModel {
         guard var session = currentSession else {
             AppLogger.error(AppLogger.viewModel, "[\(viewModelId)] insertText: no active session")
             throw RecordingError.noActiveSession
+        }
+
+        // PHI gate (#98): in clinical-recording sessions the transcript is PHI.
+        // Hand-off to the focused app via Accessibility (or its `NSPasteboard.general`
+        // fallback inside `TextInsertionService.simulatePaste` / `copyToClipboard`)
+        // would leak it to whatever browser/Slack/IDE had focus when the chord
+        // fired. The transcript stays on `transcribedText` for the modal's
+        // Generate Notes button (#11), which posts it via
+        // `.clinicalNotesGenerateRequested` to the in-memory SessionStore.
+        if clinicalMode {
+            AppLogger.info(AppLogger.viewModel, "[\(viewModelId)] insertText: clinicalMode active — skipping text insertion (PHI gate, #98)")
+            session.insertionSuccess = true
+            session.state = .completed
+            currentSession = session
+            lastTranscriptionCopiedToClipboard = false
+            await saveStatistics(session: session)
+            return
         }
 
         // Capture session ID at start to detect staleness after await
@@ -841,17 +907,7 @@ final class RecordingViewModel {
             try await insertTextWithFallback(result.text)
 
         } catch {
-            AppLogger.error(AppLogger.viewModel, "[\(viewModelId)] Transcription failed: \(error.localizedDescription)")
-            isTranscribing = false
-            isInserting = false  // Reset insertion flag in case error occurred during insertion phase
-            errorMessage = "Transcription failed: \(error.localizedDescription)"
-            // Re-fetch session to avoid overwriting concurrent changes (bug fix)
-            if var updatedSession = currentSession, currentSessionId == startSessionId {
-                updatedSession.errorMessage = error.localizedDescription
-                updatedSession.state = .cancelled
-                self.currentSession = updatedSession
-            }
-            throw RecordingError.transcriptionFailed(error.localizedDescription)
+            throw handleTranscriptionError(error, startSessionId: startSessionId)
         }
     }
 
@@ -862,6 +918,22 @@ final class RecordingViewModel {
         guard var session = currentSession else {
             AppLogger.error(AppLogger.viewModel, "[\(viewModelId)] insertTextWithFallback: no active session")
             throw RecordingError.noActiveSession
+        }
+
+        // PHI gate (#98). See `insertText` above for rationale. The
+        // hold-to-record chord is a non-clinical path today, but defending
+        // both insertion entry points keeps the invariant local to the VM:
+        // *no* code path can leak a clinical transcript into the focused
+        // app or `NSPasteboard.general` regardless of which path the modal
+        // routed through.
+        if clinicalMode {
+            AppLogger.info(AppLogger.viewModel, "[\(viewModelId)] insertTextWithFallback: clinicalMode active — skipping text insertion (PHI gate, #98)")
+            session.insertionSuccess = true
+            session.state = .completed
+            currentSession = session
+            lastTranscriptionCopiedToClipboard = false
+            await saveStatistics(session: session)
+            return
         }
 
         // Capture session ID at start to detect staleness after await

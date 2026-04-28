@@ -251,13 +251,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private func setupMenuActionObservers() {
         // Observer for "Start Recording" action (T046)
+        //
+        // `userInfo["clinicalMode"]` (#98) is the seam by which the dedicated
+        // clinical chord (#91) and the "Start Clinical Note" menu item (#92)
+        // tell the modal "this recording is PHI." Absent / non-Bool / false
+        // means general dictation, which is the safe default and also the
+        // shape the older callers (UI-test launch arg, future generic
+        // surfaces) emit. We extract the Bool synchronously on `.main` —
+        // `Notification` is non-Sendable, so reading `userInfo` here is the
+        // pattern (mirrors `voiceTriggerEnabledDidChange`).
         recordingModalObserver = NotificationCenter.default.addObserver(
             forName: .showRecordingModal,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
+            let clinicalMode = (notification.userInfo?["clinicalMode"] as? Bool) ?? false
             Task { @MainActor in
-                self?.showRecordingModal()
+                self?.showRecordingModal(clinicalMode: clinicalMode)
             }
         }
 
@@ -460,10 +470,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Posts `.showRecordingModal` so the existing observer presents the modal
     /// (which auto-starts recording via `.task(id:)`). Invoked from the
     /// clinical-notes hotkey start callback (#91).
+    ///
+    /// `userInfo["clinicalMode"] = true` (#98) tells the observer to
+    /// construct the modal's view model with the PHI invariant active —
+    /// the transcript is held in memory only and never handed to
+    /// `TextInsertionService`.
     @MainActor
     private func startClinicalNotesRecordingFromHotkey() async {
-        AppLogger.app.debug("AppDelegate: clinical-notes hotkey start - posting .showRecordingModal")
-        NotificationCenter.default.post(name: .showRecordingModal, object: self)
+        AppLogger.app.debug("AppDelegate: clinical-notes hotkey start - posting .showRecordingModal (clinicalMode=true)")
+        NotificationCenter.default.post(
+            name: .showRecordingModal,
+            object: self,
+            userInfo: ["clinicalMode": true]
+        )
     }
 
     /// Stops the active modal's recording session via the same lifecycle the Done
@@ -953,11 +972,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private weak var activeRecordingViewModel: RecordingViewModel?
 
     @MainActor
-    private func showRecordingModal() {
-        print("🔴🔴🔴 showRecordingModal CALLED 🔴🔴🔴")
-        // Don't show multiple modals
-        if recordingWindow != nil {
-            print("🔴 Already have a window, returning")
+    private func showRecordingModal(clinicalMode: Bool = false) {
+        AppLogger.app.debug("showRecordingModal called clinicalMode=\(clinicalMode, privacy: .public)")
+        // Don't show multiple modals.
+        //
+        // Race tightening (#98 review): two `.showRecordingModal` posts in
+        // the same runloop tick (e.g. menu item + chord) both reach the
+        // observer; the first builds the window with its `clinicalMode`,
+        // the second silently returns here. If the second was clinical and
+        // the first wasn't (or vice versa), the user got a different mode
+        // than they last asked for. Surface the discrepancy in the unified
+        // log so a doctor's bug report has something to correlate against.
+        if let active = activeRecordingViewModel, recordingWindow != nil {
+            if active.clinicalMode != clinicalMode {
+                AppLogger.app.warning(
+                    "showRecordingModal: window already present with clinicalMode=\(active.clinicalMode, privacy: .public), ignoring duplicate post for clinicalMode=\(clinicalMode, privacy: .public)"
+                )
+            } else {
+                AppLogger.app.debug("showRecordingModal: window already present, ignoring duplicate post")
+            }
             return
         }
 
@@ -965,23 +998,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // actor existential crashes during body evaluation.
         // The ViewModel contains `any FluidAudioServiceProtocol` which triggers
         // executor checks that can crash on ARM64 if created during rendering.
-        let viewModel = RecordingViewModel()
+        //
+        // `clinicalMode` (#98) gates the in-VM PHI invariant: when true,
+        // `RecordingViewModel.insertText` / `insertTextWithFallback`
+        // short-circuit so the transcript is never handed to
+        // `TextInsertionService` (no Cmd+V into the focused app, no
+        // `NSPasteboard.general` write).
+        let viewModel = RecordingViewModel(clinicalMode: clinicalMode)
         activeRecordingViewModel = viewModel
 
         // Create SwiftUI view with pre-created ViewModel
         // Using LiquidGlassRecordingModal for stunning prismatic glass effects
-        print("🔴 DEBUG: Creating LiquidGlassRecordingModal")
+        AppLogger.app.debug("showRecordingModal: creating LiquidGlassRecordingModal")
         let contentView = LiquidGlassRecordingModal(viewModel: viewModel)
             .onDisappear { [weak self] in
-                print("🔴 DEBUG: LiquidGlassRecordingModal disappeared")
+                AppLogger.app.debug("showRecordingModal: LiquidGlassRecordingModal disappeared")
                 self?.recordingWindow?.close()
                 self?.recordingWindow = nil
                 // weak `activeRecordingViewModel` auto-nils once the SwiftUI host releases the strong ref
             }
 
-        // Create floating window for the liquid glass recording modal
+        // #98 Bug C: clinical recordings need room for a 5–20 min
+        // transcript review; the 480×450 size that suits a one-line
+        // dictation preview is too small. The modal-card width
+        // (`viewModel.clinicalMode ? 600 : 320`) is sized in lockstep
+        // inside `LiquidGlassRecordingModal.liquidGlassModal`.
+        let windowSize = clinicalMode
+            ? NSRect(x: 0, y: 0, width: 720, height: 600)
+            : NSRect(x: 0, y: 0, width: 480, height: 450)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 450),
+            contentRect: windowSize,
             styleMask: [.borderless, .fullSizeContentView],
             backing: .buffered,
             defer: false

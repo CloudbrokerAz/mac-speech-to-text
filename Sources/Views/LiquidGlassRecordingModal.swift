@@ -77,7 +77,32 @@ struct LiquidGlassRecordingModal: View {
         .task(id: dismissTaskId) {
             guard dismissTaskId != nil else { return }
             let dismissAction = dismiss
-            await viewModel.cancelRecording()
+            // PHI guard (#98 Bug B): in clinical mode, refuse to call
+            // `cancelRecording()` while a transcript is sitting on the
+            // view model — that would wipe `transcribedText = ""` and
+            // silently lose the doctor's recording before they had a
+            // chance to act on Generate Notes. Once we reach this branch
+            // the user has explicitly chosen to dismiss (Generate Notes
+            // already handed the transcript off via
+            // `.clinicalNotesGenerateRequested`, or they tapped the
+            // post-transcription "Done" / Esc / close-X to discard).
+            // The VM gets dropped when the window tears down; audio
+            // capture is already stopped by the preceding `stopRecording`.
+            //
+            // Mid-recording dismiss in clinical mode (Cancel button,
+            // ESC during recording) still hits the else-branch below
+            // because `transcribedText` is empty until transcribe
+            // returns, so audio capture is properly torn down.
+            if viewModel.clinicalMode && !viewModel.transcribedText.isEmpty {
+                // `.info` (not `.debug`) so the dismiss-skip is visible in
+                // sysdiagnose without raising the log level — this is the
+                // breadcrumb a doctor's bug report would need to correlate
+                // with the post on `.clinicalNotesGenerateRequested`. PHI
+                // rule: length only, never the transcript body.
+                AppLogger.viewModel.info("Modal dismiss: clinicalMode with transcript present (length=\(viewModel.transcribedText.count, privacy: .public)) — skipping cancelRecording (#98)")
+            } else {
+                await viewModel.cancelRecording()
+            }
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard !Task.isCancelled else { return }
             dismissAction()
@@ -96,7 +121,19 @@ struct LiquidGlassRecordingModal: View {
                 )
             }
             guard !isDismissing else { return }
+            // #98 Bug B (defence-in-depth): mirror the dismiss-task guard.
+            // Any window-close path that bypasses `handleDismiss()` —
+            // NSWindow `performClose(_:)` from Carbon, AppKit teardown on
+            // logout, system-initiated close — sets `isDismissing = false`
+            // and reaches this branch. Without the guard, a clinical
+            // transcript that hasn't yet been posted via
+            // `.clinicalNotesGenerateRequested` would be silently wiped.
+            // PHI rule: log length only, never the body.
             Task.detached { @MainActor in
+                if viewModel.clinicalMode && !viewModel.transcribedText.isEmpty {
+                    AppLogger.viewModel.info("Modal onDisappear: clinical transcript present (length=\(viewModel.transcribedText.count, privacy: .public)) — skipping cancelRecording (#98)")
+                    return
+                }
                 await viewModel.cancelRecording()
             }
         }
@@ -164,7 +201,13 @@ struct LiquidGlassRecordingModal: View {
                 .padding(.top, 16)
                 .padding(.bottom, 20)
         }
-        .frame(width: 320)
+        // #98 Bug C: clinical mode hosts a 5–20 min consultation transcript
+        // that the doctor needs to verify before Generate Notes. The 320pt
+        // card width that suits a one-line dictation preview is too narrow
+        // for that — bump to 600pt so the scrollable transcript above has
+        // legible line lengths. AppDelegate widens the host NSWindow in
+        // step (480→720) so the card doesn't overflow.
+        .frame(width: viewModel.clinicalMode ? 600 : 320)
         .background(glassBackground)
         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         .overlay(glassOverlays)
@@ -322,12 +365,42 @@ struct LiquidGlassRecordingModal: View {
                         .foregroundStyle(.secondary)
                 }
             } else if !viewModel.transcribedText.isEmpty {
-                Text(viewModel.transcribedText)
-                    .font(.system(size: 14, weight: .regular, design: .rounded))
-                    .foregroundStyle(.primary)
-                    .lineLimit(3)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 8)
+                if viewModel.clinicalMode {
+                    // #98 Bug C: a chiropractic consultation is typically
+                    // 5–20 min of speech. The 3-line clamp used for general
+                    // dictation forced the doctor to commit to Generate
+                    // Notes (or discard) without being able to verify the
+                    // transcript. Render the full body in a scrollable
+                    // region instead. PHI rule: this is a SwiftUI-only
+                    // surface — the text isn't logged or copied; it lives
+                    // exclusively on `viewModel.transcribedText` until the
+                    // doctor chooses Generate Notes.
+                    ScrollView {
+                        Text(viewModel.transcribedText)
+                            .font(.system(size: 14, weight: .regular, design: .rounded))
+                            .foregroundStyle(.primary)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .textSelection(.enabled)
+                    }
+                    .frame(minHeight: 180, maxHeight: 320)
+                    .background(.ultraThinMaterial.opacity(0.4))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+                    .accessibilityIdentifier("clinicalTranscriptScrollView")
+                } else {
+                    Text(viewModel.transcribedText)
+                        .font(.system(size: 14, weight: .regular, design: .rounded))
+                        .foregroundStyle(.primary)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 8)
+                }
             } else if viewModel.isRecording {
                 Text("Listening...")
                     .font(.system(size: 13, weight: .medium, design: .rounded))
@@ -410,8 +483,18 @@ struct LiquidGlassRecordingModal: View {
                     Task {
                         do {
                             try await viewModel.stopRecording()
-                            try? await Task.sleep(nanoseconds: 700_000_000)
-                            handleDismiss()
+                            // #98 Bug A: auto-dismiss only in general dictation.
+                            // In clinical mode, leave the modal up so the
+                            // post-transcript Generate Notes / Done branch
+                            // (lines below) becomes interactive and the
+                            // doctor explicitly chooses what happens to the
+                            // transcript. Auto-dismissing here races
+                            // Generate Notes off-screen and (combined with
+                            // Bug B) silently discards the recording.
+                            if !viewModel.clinicalMode {
+                                try? await Task.sleep(nanoseconds: 700_000_000)
+                                handleDismiss()
+                            }
                         } catch {
                             viewModel.errorMessage = error.localizedDescription
                             AppLogger.viewModel.error("stopRecording failed: \(error.localizedDescription, privacy: .public)")
@@ -461,7 +544,25 @@ struct LiquidGlassRecordingModal: View {
                 EmptyView()
 
             } else if !viewModel.transcribedText.isEmpty {
-                if viewModel.isClinicalNotesEnabled {
+                // #98: route on `clinicalMode` (immutable VM state set at the
+                // trigger surface), NOT on `isClinicalNotesEnabled` (a
+                // settings-toggle read on every body evaluation). The
+                // settings toggle is a *visibility* gate for the menu item +
+                // hotkey; once the doctor has actually entered a clinical
+                // session via either, the recording is PHI regardless of
+                // whether they then toggle the setting off mid-flight. If
+                // we routed on `isClinicalNotesEnabled` here, a mid-session
+                // toggle would silently fall into the "Inserted!" branch
+                // below — which auto-dismisses *without* offering Generate
+                // Notes and (combined with the dismiss-task PHI guard) leaves
+                // the doctor staring at a misleading success indicator while
+                // their consultation transcript silently evaporates. We
+                // also fall into this branch when `isClinicalNotesEnabled`
+                // is on but the VM was constructed without `clinicalMode`
+                // (e.g. a future surface that posts `.showRecordingModal`
+                // without `userInfo["clinicalMode"]`) — the OR keeps the
+                // existing #11 behaviour for that path.
+                if viewModel.clinicalMode || viewModel.isClinicalNotesEnabled {
                     // Clinical Notes Mode (#11): show "Generate Notes" + "Done"
                     // instead of auto-dismissing. Tap surfaces the transcript
                     // to whoever listens for `.clinicalNotesGenerateRequested`
