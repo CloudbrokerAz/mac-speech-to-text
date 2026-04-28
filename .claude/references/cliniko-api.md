@@ -70,7 +70,7 @@ Logging around Cliniko calls must follow the PHI rules from
 
 | Endpoint | Method | Purpose | Issue |
 |---|---|---|---|
-| `/users/me` | GET | "Test connection" in the Cliniko settings UI | #7 |
+| `/user` | GET | "Test connection" in the Cliniko settings UI | #7 |
 | `/patients?q={term}` | GET | Patient picker search (debounced 300 ms) | #9 |
 | `/patients/{id}/appointments?from=…&to=…` | GET | List recent + today's appointments for the chosen patient | #9 |
 | `/treatment_notes` | POST | Submit the generated SOAP note (+ optional `appointment_id`) | #10 |

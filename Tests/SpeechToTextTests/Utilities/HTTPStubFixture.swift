@@ -8,7 +8,7 @@ import Foundation
 /// on the target.
 ///
 /// Path convention: use forward-slash segments relative to `Fixtures/`,
-/// e.g. `cliniko/responses/users_me.json`.
+/// e.g. `cliniko/responses/user.json`.
 enum HTTPStubFixture {
     enum FixtureError: Swift.Error, CustomStringConvertible, Equatable, Sendable {
         case notFound(path: String)

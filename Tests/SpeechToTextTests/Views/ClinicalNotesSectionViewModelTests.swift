@@ -273,7 +273,7 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
         let vm = ClinicalNotesSectionViewModel(
             credentialStore: store,
             authProbe: makeProbe { request in
-                XCTAssertEqual(request.url?.absoluteString, "https://api.uk1.cliniko.com/v1/users/me")
+                XCTAssertEqual(request.url?.absoluteString, "https://api.uk1.cliniko.com/v1/user")
                 let response = HTTPURLResponse(
                     url: request.url!,
                     statusCode: 200,

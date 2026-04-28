@@ -526,7 +526,7 @@ final class ClinicalNotesSectionViewModel {
         }
     }
 
-    /// Persist the API key + shard, then probe `/users/me` to confirm the key
+    /// Persist the API key + shard, then probe `/user` to confirm the key
     /// works. The probe failure does not roll back the save — operators
     /// frequently rotate keys while offline.
     func saveAndTest() async {
@@ -565,7 +565,7 @@ final class ClinicalNotesSectionViewModel {
         await runProbe()
     }
 
-    /// Run `/users/me` against the currently stored credentials. Used by the
+    /// Run `/user` against the currently stored credentials. Used by the
     /// "Test connection" button when credentials are already saved.
     func testConnection() async {
         guard hasStoredCredentials else {

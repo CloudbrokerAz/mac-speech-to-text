@@ -14,7 +14,7 @@ import Foundation
 ///         httpVersion: "HTTP/1.1",
 ///         headerFields: ["Content-Type": "application/json"]
 ///     )!
-///     let body = try HTTPStubFixture.load("cliniko/responses/users_me.json")
+///     let body = try HTTPStubFixture.load("cliniko/responses/user.json")
 ///     return (response, body)
 /// }
 /// let session = URLSession(configuration: config)

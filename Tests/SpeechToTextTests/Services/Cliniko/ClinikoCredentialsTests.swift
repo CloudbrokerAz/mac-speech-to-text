@@ -53,11 +53,11 @@ struct ClinikoCredentialsTests {
         #expect(a != d)
     }
 
-    @Test("baseURL composes against `users/me` endpoint")
-    func appendingUsersMe() throws {
+    @Test("baseURL composes against `user` endpoint")
+    func appendingUser() throws {
         let creds = try ClinikoCredentials(apiKey: "k", shard: .au1)
-        let url = creds.baseURL.appendingPathComponent("users/me")
-        #expect(url.absoluteString == "https://api.au1.cliniko.com/v1/users/me")
+        let url = creds.baseURL.appendingPathComponent("user")
+        #expect(url.absoluteString == "https://api.au1.cliniko.com/v1/user")
     }
 
     @Test("base64 of the auth value uses standard alphabet")

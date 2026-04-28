@@ -39,7 +39,7 @@ final class ClinikoAuthProbeTests: XCTestCase {
                 httpVersion: "HTTP/1.1",
                 headerFields: ["Content-Type": "application/json"]
             )!
-            let body = try HTTPStubFixture.load("cliniko/responses/users_me.json")
+            let body = try HTTPStubFixture.load("cliniko/responses/user.json")
             return (response, body)
         }
         let probe = ClinikoAuthProbe(session: session, userAgent: "mac-speech-to-text/9.9.9 (test)")
@@ -48,7 +48,7 @@ final class ClinikoAuthProbeTests: XCTestCase {
 
         let unwrapped = try XCTUnwrap(captured.value)
         XCTAssertEqual(unwrapped.httpMethod, "GET")
-        XCTAssertEqual(unwrapped.url?.absoluteString, "https://api.au1.cliniko.com/v1/users/me")
+        XCTAssertEqual(unwrapped.url?.absoluteString, "https://api.au1.cliniko.com/v1/user")
         XCTAssertEqual(unwrapped.value(forHTTPHeaderField: "Accept"), "application/json")
         XCTAssertEqual(unwrapped.value(forHTTPHeaderField: "User-Agent"), "mac-speech-to-text/9.9.9 (test)")
 

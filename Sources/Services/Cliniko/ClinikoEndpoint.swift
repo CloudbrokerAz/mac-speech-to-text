@@ -12,9 +12,12 @@ import Foundation
 /// (#9 / #10) — `ClinikoEndpoint` is intentionally untyped on the response
 /// shape so #8 doesn't pre-empt those design decisions.
 public enum ClinikoEndpoint: Sendable, Equatable {
-    /// `GET /users/me` — used by the Cliniko settings UI's Test Connection
+    /// `GET /user` — used by the Cliniko settings UI's Test Connection
     /// button (originally via `ClinikoAuthProbe` in #7; the VM may switch
-    /// to `client.send(.usersMe)` in a follow-up).
+    /// to `client.send(.usersMe)` in a follow-up). The case name keeps the
+    /// `usersMe` identifier for source-compat; only the path is `/user`,
+    /// which is Cliniko's actual authenticated-user endpoint
+    /// (`/users/me` does not exist — it 404s, see #88).
     case usersMe
 
     /// `GET /patients?q={query}` — debounced patient search for #9.
@@ -50,7 +53,7 @@ public enum ClinikoEndpoint: Sendable, Equatable {
     /// while building the resolved URL separately.
     public var pathTemplate: String {
         switch self {
-        case .usersMe: return "/users/me"
+        case .usersMe: return "/user"
         case .patientSearch: return "/patients?q={query}"
         case .patientAppointments: return "/patients/:id/appointments"
         case .createTreatmentNote: return "/treatment_notes"
@@ -124,7 +127,7 @@ public enum ClinikoEndpoint: Sendable, Equatable {
     private var pathSuffix: String {
         switch self {
         case .usersMe:
-            return "users/me"
+            return "user"
         case .patientSearch:
             return "patients"
         case .patientAppointments(let patientID, _, _):
