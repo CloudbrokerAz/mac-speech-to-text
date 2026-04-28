@@ -108,8 +108,15 @@ actor FluidAudioService: FluidAudioServiceProtocol {
     /// from its predecessor in well-defined FIFO order — no risk of a
     /// completed-Task `await` returning before the holder's defer has
     /// cleared the flag, no busy-loop on contention.
+    ///
+    /// The continuation type is `<Void, Error>` (throwing) so
+    /// `shutdown()` can `resume(throwing: .notInitialized)` to drain
+    /// waiters. Drained waiters throw at the await site and never
+    /// reach `runTranscribe` — even if a concurrent `initialize(...)`
+    /// re-arms `asrManager` between drain and wake, two drained
+    /// waiters can never race on the same `AsrManager` instance.
     private var transcribeInFlight: Bool = false
-    private var transcribeWaiters: [CheckedContinuation<Void, Never>] = []
+    private var transcribeWaiters: [CheckedContinuation<Void, Error>] = []
 
     private var currentLanguage: String = "en"
     private var models: AsrModels?
@@ -242,7 +249,15 @@ actor FluidAudioService: FluidAudioServiceProtocol {
                 AppLogger.service,
                 "[\(self.serviceId)] reentrant transcribe(); awaiting prior call (queue depth: \(transcribeWaiters.count + 1))"
             )
-            await withCheckedContinuation { cont in
+            // Throwing continuation: a clean hand-off resumes with
+            // success and we fall through to `holdsSlot = true`. A
+            // `shutdown()`-driven drain resumes with
+            // `FluidAudioError.notInitialized`, which throws here —
+            // `holdsSlot` stays false, the defer is a no-op, and we
+            // never reach `runTranscribe`. This closes the
+            // drain-then-reinit race where a re-armed `asrManager`
+            // could otherwise let two drained waiters race the SDK.
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
                 transcribeWaiters.append(cont)
             }
             // Slot was handed off to us by the prior caller's defer above;
@@ -414,13 +429,17 @@ actor FluidAudioService: FluidAudioServiceProtocol {
         // Drain any queued waiters so their `CheckedContinuation`s don't
         // leak (the runtime would surface a "leaked checked continuation"
         // warning on actor teardown) and their callers don't hang forever.
-        // Drained waiters wake, hit the `notInitialized` guard inside
-        // `runTranscribe` (since `asrManager` is being cleared below),
-        // and surface a clean error to their callers.
+        // We `resume(throwing: .notInitialized)` so drained waiters throw
+        // at their await site and never reach `runTranscribe` — closes
+        // the race where a concurrent re-`initialize(...)` could
+        // otherwise let two drained waiters race the freshly-armed
+        // `AsrManager`.
         let stranded = transcribeWaiters
         transcribeWaiters.removeAll()
         transcribeInFlight = false
-        for cont in stranded { cont.resume() }
+        for cont in stranded {
+            cont.resume(throwing: FluidAudioError.notInitialized)
+        }
 
         asrManager = nil
         models = nil

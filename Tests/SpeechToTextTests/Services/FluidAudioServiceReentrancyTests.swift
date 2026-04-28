@@ -148,16 +148,24 @@ struct FluidAudioServiceReentrancyTests {
     }
 
     /// Verifies that `shutdown()` drains queued waiters so their
-    /// `CheckedContinuation`s don't leak (the runtime would surface a
-    /// "leaked checked continuation" warning) and their callers don't
-    /// hang forever. Uses the wait-path delay seam to ensure waiters
-    /// are genuinely queued before shutdown.
+    /// `CheckedContinuation`s don't leak and their callers don't hang.
+    /// Crucially, asserts that the drained waiter throws
+    /// `.notInitialized` — proving it threw at the *await site* via
+    /// `cont.resume(throwing:)` rather than reaching `runTranscribe`.
+    /// This is what closes the drain-then-reinit race: drained waiters
+    /// can never proceed to call `asrManager.transcribe(...)`, so two
+    /// drained waiters cannot race against a re-armed `AsrManager`
+    /// even if `initialize(...)` runs between drain and wake.
+    ///
+    /// The holder, by contrast, ran `runTranscribe` to completion and
+    /// throws `.transcriptionFailed` from `simulatedError = .transcription`
+    /// — proving the two paths surface distinct errors.
     ///
     /// Tagged `.slow` because the holder's 200ms delay is what gives
     /// the queued caller time to enter the wait path before we tear
     /// the service down.
     @Test(
-        "shutdown() drains queued waiters so their continuations don't hang",
+        "shutdown() drains queued waiters via throwing resume (no race possible)",
         .tags(.slow)
     )
     func shutdown_drainsQueuedWaiters() async {
@@ -192,11 +200,24 @@ struct FluidAudioServiceReentrancyTests {
         let holderError = await holder
         let queuedError = await queued
 
-        // Both calls return (no hang). The holder finishes its simulated
-        // delay then throws transcriptionFailed. The queued caller is
-        // woken by shutdown's drain; it then hits the notInitialized
-        // guard inside runTranscribe (asrManager is now nil).
-        #expect(holderError != nil, "holder should have surfaced an error")
-        #expect(queuedError != nil, "queued caller should have surfaced an error")
+        // Holder ran runTranscribe and hit the simulated transcription
+        // failure — proves it actually executed the body.
+        if case .transcriptionFailed = holderError as? FluidAudioError {
+            // pass
+        } else {
+            Issue.record(
+                "Expected holder to throw .transcriptionFailed (proving it ran runTranscribe), got \(String(describing: holderError))"
+            )
+        }
+
+        // Queued caller threw .notInitialized at the await site via
+        // shutdown's `resume(throwing:)` — proves it never reached
+        // runTranscribe. If we instead saw .transcriptionFailed (or a
+        // success), that would indicate the drained waiter ran its
+        // body, opening the drain-then-reinit race.
+        #expect(
+            (queuedError as? FluidAudioError) == .notInitialized,
+            "queued caller must throw .notInitialized at the await site (drained), not after running runTranscribe"
+        )
     }
 }
