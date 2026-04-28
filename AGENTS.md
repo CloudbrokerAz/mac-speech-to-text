@@ -251,7 +251,17 @@ on-device, session-only PHI, opt-in via Settings.
 
 1. **Settings toggle** flips Clinical Notes Mode on (`AppState`
    wires the dependencies — see `Sources/SpeechToTextApp/AppState.swift`).
+   Once on + Cliniko credentials present, Settings → Clinical Notes
+   exposes a **dedicated "Recording shortcut"** row (`#91`) bound to
+   `KeyboardShortcuts.Name.clinicalNotesRecord` (unbound by default).
+   The default `holdToRecord` / `toggleRecording` chord stays pure STT
+   for general dictation; the new chord is the only production trigger
+   for the clinical pipeline — both gates flip the shortcut off so a
+   stale binding never fires.
 2. **Recording** runs unchanged (FluidAudio → `RecordingSession`).
+   General dictation uses the existing chord. Clinical sessions use
+   `clinicalNotesRecord` → `LiquidGlassRecordingModal` (auto-starts
+   recording on present via the modal's existing `.task(id:)`).
 3. **Generate Notes** action on the recording modal hands the transcript to
    `SessionStore` → `ClinicalNotesProcessor` → `LLMProvider`
    (`MLXGemmaProvider` / `MockLLMProvider`). Retry-once on schema-invalid

@@ -1,4 +1,5 @@
 import Cocoa
+import KeyboardShortcuts
 import OSLog
 import SwiftUI
 
@@ -432,8 +433,96 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             await self?.toggleVoiceMonitoring()
         }
 
+        // Configure callbacks for clinical-notes recording chord (#91).
+        // Start: post `.showRecordingModal` so the existing observer presents
+        // `LiquidGlassRecordingModal`; the modal's `.task(id:)` auto-starts recording.
+        // Stop: invoke `stopRecording()` on the live view model so the existing
+        // transcription → Generate Notes flow runs identically to the modal Done button.
+        hotkeyManager?.onClinicalNotesRecordingStart = { [weak self] in
+            await self?.startClinicalNotesRecordingFromHotkey()
+        }
+
+        hotkeyManager?.onClinicalNotesRecordingStop = { [weak self] in
+            await self?.stopClinicalNotesRecordingFromHotkey()
+        }
+
         print("[DEBUG] setupGlobalHotkey: All callbacks configured")
         AppLogger.app.info("Global hotkey initialized via KeyboardShortcuts")
+
+        // Initial gate for the clinical-notes shortcut (#91): disable unless the
+        // mode toggle is on AND Cliniko credentials are present. Runtime state
+        // changes are handled by ClinicalNotesSection.
+        Task { @MainActor in
+            await self.applyInitialClinicalNotesShortcutGate()
+        }
+    }
+
+    /// Posts `.showRecordingModal` so the existing observer presents the modal
+    /// (which auto-starts recording via `.task(id:)`). Invoked from the
+    /// clinical-notes hotkey start callback (#91).
+    @MainActor
+    private func startClinicalNotesRecordingFromHotkey() async {
+        AppLogger.app.debug("AppDelegate: clinical-notes hotkey start - posting .showRecordingModal")
+        NotificationCenter.default.post(name: .showRecordingModal, object: self)
+    }
+
+    /// Stops the active modal's recording session via the same lifecycle the Done
+    /// button uses, so transcription + Generate Notes flow run identically.
+    /// Invoked from the clinical-notes hotkey stop callback (#91).
+    @MainActor
+    private func stopClinicalNotesRecordingFromHotkey() async {
+        guard let viewModel = activeRecordingViewModel else {
+            AppLogger.app.debug("AppDelegate: clinical-notes hotkey stop - no active modal, ignoring")
+            return
+        }
+        // Race window: the start callback posts `.showRecordingModal` and returns
+        // immediately, but the modal's `.task(id:)` does the actual `startRecording()`
+        // a moment later. If the doctor double-presses the chord before recording
+        // is in flight, `stopRecording()` would be a no-op and we'd wedge the modal
+        // into a half-open state. Treat the early-press as a cancel — close the
+        // session cleanly so the next chord press starts a fresh one.
+        guard viewModel.isRecording else {
+            AppLogger.app.debug("AppDelegate: clinical-notes hotkey stop - modal not yet recording, cancelling instead")
+            await viewModel.cancelRecording()
+            return
+        }
+        do {
+            try await viewModel.stopRecording()
+            AppLogger.app.debug("AppDelegate: clinical-notes hotkey stop - stopRecording() returned")
+        } catch {
+            // PHI/transcript stays inside the view model; only the error type is logged.
+            AppLogger.app.error("AppDelegate: clinical-notes hotkey stop - stopRecording threw \(String(describing: type(of: error)), privacy: .public)")
+        }
+    }
+
+    /// Apply the startup gate for `.clinicalNotesRecord` so a stale binding from a
+    /// previous session can't fire when the mode toggle is off or credentials are
+    /// absent. ClinicalNotesSection takes over for runtime transitions.
+    @MainActor
+    private func applyInitialClinicalNotesShortcutGate() async {
+        let modeEnabled = settingsService.load().general.clinicalNotesModeEnabled
+        let credentialStore = ClinikoCredentialStore()
+        let hasCredentials: Bool
+        do {
+            hasCredentials = try await credentialStore.hasAPIKey()
+        } catch {
+            // Default to disabled at launch on Keychain read failure. The chord
+            // is a global trigger; we'd rather leave it inert than fire it
+            // against missing creds and have the eventual Cliniko POST fail.
+            // The Settings UI's `.task { applyClinicalNotesShortcutGate() }`
+            // re-evaluates once `viewModel.refreshState()` succeeds, so the
+            // user can recover by opening Settings.
+            hasCredentials = false
+            AppLogger.app.warning("AppDelegate: clinical-notes shortcut gate - credential read failed (\(String(describing: type(of: error)), privacy: .public)), disabling at launch")
+        }
+
+        if modeEnabled && hasCredentials {
+            KeyboardShortcuts.enable(.clinicalNotesRecord)
+            AppLogger.app.debug("AppDelegate: clinical-notes shortcut enabled at launch")
+        } else {
+            KeyboardShortcuts.disable(.clinicalNotesRecord)
+            AppLogger.app.debug("AppDelegate: clinical-notes shortcut disabled at launch (mode=\(modeEnabled, privacy: .public) creds=\(hasCredentials, privacy: .public))")
+        }
     }
 
     // MARK: - Voice Trigger Monitoring
@@ -857,6 +946,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var recordingWindow: NSWindow?
 
+    /// Weak handle to the currently-presented modal's view model so the clinical-notes
+    /// stop chord (#91) can invoke `stopRecording()` on the same lifecycle the Done
+    /// button uses — keeping transcription + Generate Notes flow identical regardless
+    /// of how the doctor stopped.
+    private weak var activeRecordingViewModel: RecordingViewModel?
+
     @MainActor
     private func showRecordingModal() {
         print("🔴🔴🔴 showRecordingModal CALLED 🔴🔴🔴")
@@ -871,6 +966,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // The ViewModel contains `any FluidAudioServiceProtocol` which triggers
         // executor checks that can crash on ARM64 if created during rendering.
         let viewModel = RecordingViewModel()
+        activeRecordingViewModel = viewModel
 
         // Create SwiftUI view with pre-created ViewModel
         // Using LiquidGlassRecordingModal for stunning prismatic glass effects
@@ -880,6 +976,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 print("🔴 DEBUG: LiquidGlassRecordingModal disappeared")
                 self?.recordingWindow?.close()
                 self?.recordingWindow = nil
+                // weak `activeRecordingViewModel` auto-nils once the SwiftUI host releases the strong ref
             }
 
         // Create floating window for the liquid glass recording modal
