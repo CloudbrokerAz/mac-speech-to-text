@@ -152,8 +152,9 @@ actor TreatmentNoteExporter {
         }
 
         let created: TreatmentNoteCreated
+        let httpStatus: Int
         do {
-            created = try await client.send(.createTreatmentNote(body: data))
+            (created, httpStatus) = try await client.sendWithStatus(.createTreatmentNote(body: data))
         } catch ClinikoError.decoding {
             // 2xx + undecodable body. The note may have landed on
             // Cliniko's side — we just lost track of its id. Surface
@@ -162,13 +163,11 @@ actor TreatmentNoteExporter {
             throw Failure.responseUndecodable
         }
 
-        // Cliniko POST `/treatment_notes` returns `201 Created` per the
-        // documented endpoint contract; `ClinikoClient.send<T>` only
-        // routes 2xx into the success path but discards the actual
-        // status code. The audit row therefore records the documented
-        // status. Threading the real HTTP status through `send<T>`
-        // is tracked as a follow-up (issue #58) — until then, this
-        // value is the contract.
+        // Cliniko POST `/treatment_notes` is documented as `201 Created`,
+        // but the audit ledger records what *actually* came back so a
+        // future endpoint variant returning a different 2xx (e.g. 200 or
+        // a 202 from a queued model) doesn't make the row lie. Threaded
+        // through `ClinikoClient.sendWithStatus` per issue #58.
         //
         // Type-tag the Int IDs into `OpaqueClinikoID` at this audit
         // boundary (#59). The wire-payload Ints flow into the
@@ -179,7 +178,7 @@ actor TreatmentNoteExporter {
             patientID: OpaqueClinikoID(patientID),
             appointmentID: appointmentID.map(OpaqueClinikoID.init),
             noteID: OpaqueClinikoID(created.id),
-            clinikoStatus: 201,
+            clinikoStatus: httpStatus,
             appVersion: appVersion
         )
 
@@ -192,8 +191,9 @@ actor TreatmentNoteExporter {
             // would re-submit and duplicate the clinical record. The
             // UI surfaces "exported successfully — audit log
             // unavailable" via `ExportOutcome.auditPersisted = false`.
-            // PHI: status is the documented Cliniko 201; nothing about
-            // the failure carries patient data.
+            // PHI: `clinikoStatus` is a 2xx Int (observed, not
+            // hardcoded — see #58); nothing about the failure carries
+            // patient data.
             logger.error("TreatmentNoteExporter: audit-write failed status=\(record.clinikoStatus, privacy: .public)")
             auditPersisted = false
         }
