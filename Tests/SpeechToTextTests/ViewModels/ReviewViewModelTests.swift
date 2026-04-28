@@ -303,7 +303,7 @@ struct ReviewViewModelTests {
         let store = makeSessionWith()
         let viewModel = ReviewViewModel(sessionStore: store, manipulations: stubManipulations())
 
-        viewModel.triggerExport()
+        await viewModel.triggerExport()
 
         // No sheet — the canExport gate fires before the factory is
         // ever consulted, so the export sheet does not present.
@@ -329,7 +329,7 @@ struct ReviewViewModelTests {
             auditStore: InMemoryAuditStore(),
             manipulations: stubManipulations()
         )
-        let factory: () -> ExportFlowViewModel? = {
+        let factory: () async -> ExportFlowViewModel? = {
             ExportFlowViewModel(
                 sessionStore: store,
                 dependencies: ExportFlowDependencies(
@@ -347,7 +347,7 @@ struct ReviewViewModelTests {
             makeExportFlowViewModel: factory
         )
 
-        viewModel.triggerExport()
+        await viewModel.triggerExport()
 
         #expect(viewModel.exportFlowSheet != nil)
         #expect(viewModel.errorMessage == nil)
@@ -361,7 +361,7 @@ struct ReviewViewModelTests {
         // Default factory closure returns nil.
         let viewModel = ReviewViewModel(sessionStore: store, manipulations: stubManipulations())
 
-        viewModel.triggerExport()
+        await viewModel.triggerExport()
 
         #expect(viewModel.exportFlowSheet == nil)
         #expect(viewModel.errorMessage != nil)
@@ -381,7 +381,7 @@ struct ReviewViewModelTests {
             auditStore: InMemoryAuditStore(),
             manipulations: stubManipulations()
         )
-        let factory: () -> ExportFlowViewModel? = {
+        let factory: () async -> ExportFlowViewModel? = {
             ExportFlowViewModel(
                 sessionStore: store,
                 dependencies: ExportFlowDependencies(
@@ -399,7 +399,7 @@ struct ReviewViewModelTests {
             makeExportFlowViewModel: factory
         )
 
-        viewModel.triggerExport()
+        await viewModel.triggerExport()
         #expect(viewModel.exportFlowSheet != nil)
 
         viewModel.dismissExportFlow()
@@ -407,6 +407,168 @@ struct ReviewViewModelTests {
     }
 
     private func stubManipulationsRepo() -> ManipulationsRepository { stubManipulations() }
+
+    // MARK: - Post-credential-change race (#65)
+
+    @Test(
+        "triggerExport awaits the async factory — first tap after a credential change presents the sheet without a 'Cliniko isn't set up' banner"
+    )
+    func triggerExportAwaitsAsyncFactoryAfterCredentialChange() async {
+        let store = makeSessionWith()
+        store.setSelectedPatient(id: OpaqueClinikoID(99))
+        store.setDraftNotes(StructuredNotes(subjective: "s"))
+
+        let exporter = TreatmentNoteExporter(
+            client: ClinikoClient(
+                credentials: try! ClinikoCredentials(apiKey: "MS-test-au1", shard: .au1),
+                session: URLSession.shared
+            ),
+            auditStore: InMemoryAuditStore(),
+            manipulations: stubManipulations()
+        )
+
+        // Mirror the production race: the configure-pipeline Task
+        // hasn't completed when `triggerExport` first runs. The
+        // pre-#65 sync factory would have read the coordinator
+        // immediately and returned nil. The fix's async factory
+        // suspends mid-flight (here: two `Task.yield()`s — one
+        // hop per actor boundary the production
+        // `configureClinikoExportPipelineIfNeeded()` crosses), and
+        // `triggerExport` awaits it. The end-state assertions pin
+        // the user-visible contract: sheet present, no spurious
+        // banner.
+        let factory: () async -> ExportFlowViewModel? = {
+            await Task.yield()
+            await Task.yield()
+            return ExportFlowViewModel(
+                sessionStore: store,
+                dependencies: ExportFlowDependencies(
+                    exporter: exporter,
+                    manipulations: stubManipulationsRepo(),
+                    onSuccess: {},
+                    openClinikoSettings: {},
+                    copyToClipboard: { _ in }
+                )
+            )
+        }
+        let viewModel = ReviewViewModel(
+            sessionStore: store,
+            manipulations: stubManipulations(),
+            makeExportFlowViewModel: factory
+        )
+
+        await viewModel.triggerExport()
+
+        #expect(!viewModel.isPreparingExport, "isPreparingExport should be cleared by the defer once the await completes")
+        #expect(viewModel.exportFlowSheet != nil, "First tap should present the sheet, not surface 'Cliniko isn't set up'")
+        #expect(viewModel.errorMessage == nil)
+    }
+
+    @Test("triggerExport's isPreparingExport flag is true mid-await and false after — the spinner UI binds to this signal")
+    func triggerExportSurfacesPreparingFlagDuringAwait() async {
+        let store = makeSessionWith()
+        store.setSelectedPatient(id: OpaqueClinikoID(99))
+        store.setDraftNotes(StructuredNotes(subjective: "s"))
+
+        let exporter = TreatmentNoteExporter(
+            client: ClinikoClient(
+                credentials: try! ClinikoCredentials(apiKey: "MS-test-au1", shard: .au1),
+                session: URLSession.shared
+            ),
+            auditStore: InMemoryAuditStore(),
+            manipulations: stubManipulations()
+        )
+
+        // Probe the flag from inside the factory's await — the
+        // factory closure runs while `triggerExport` is suspended
+        // mid-`await`, so reading the VM's flag here proves the
+        // ProgressView swap on `reviewScreen.actions.export.loading`
+        // would render.
+        var observedFlagDuringAwait = false
+        var capturedViewModel: ReviewViewModel?
+        let factory: () async -> ExportFlowViewModel? = {
+            // The factory is async-isolated; hop back to MainActor
+            // to read the @MainActor flag.
+            observedFlagDuringAwait = await MainActor.run {
+                capturedViewModel?.isPreparingExport ?? false
+            }
+            return ExportFlowViewModel(
+                sessionStore: store,
+                dependencies: ExportFlowDependencies(
+                    exporter: exporter,
+                    manipulations: stubManipulationsRepo(),
+                    onSuccess: {},
+                    openClinikoSettings: {},
+                    copyToClipboard: { _ in }
+                )
+            )
+        }
+        let viewModel = ReviewViewModel(
+            sessionStore: store,
+            manipulations: stubManipulations(),
+            makeExportFlowViewModel: factory
+        )
+        capturedViewModel = viewModel
+
+        await viewModel.triggerExport()
+
+        #expect(observedFlagDuringAwait, "isPreparingExport should be true while the factory is awaiting")
+        #expect(!viewModel.isPreparingExport, "defer should clear the flag once the await completes")
+        #expect(viewModel.exportFlowSheet != nil)
+    }
+
+    @Test("triggerExport ignores re-entrant calls while the async factory is still preparing")
+    func triggerExportIgnoresReentrantCallWhilePreparing() async {
+        let store = makeSessionWith()
+        store.setSelectedPatient(id: OpaqueClinikoID(99))
+        store.setDraftNotes(StructuredNotes(subjective: "s"))
+
+        let exporter = TreatmentNoteExporter(
+            client: ClinikoClient(
+                credentials: try! ClinikoCredentials(apiKey: "MS-test-au1", shard: .au1),
+                session: URLSession.shared
+            ),
+            auditStore: InMemoryAuditStore(),
+            manipulations: stubManipulations()
+        )
+
+        // The factory issues a re-entrant `triggerExport` call from
+        // INSIDE its own await. Because we're suspended inside the
+        // factory, `isPreparingExport` is still true on the VM, so
+        // the re-entry guard (`guard !isPreparingExport`) must
+        // short-circuit and the factory body must be invoked
+        // exactly once.
+        var factoryCallCount = 0
+        var capturedViewModel: ReviewViewModel?
+        let factory: () async -> ExportFlowViewModel? = {
+            factoryCallCount += 1
+            // Issue the re-entrant call from the awaited path. If
+            // the guard is missing, this would stack a second
+            // factory invocation and bump factoryCallCount to 2.
+            await capturedViewModel?.triggerExport()
+            return ExportFlowViewModel(
+                sessionStore: store,
+                dependencies: ExportFlowDependencies(
+                    exporter: exporter,
+                    manipulations: stubManipulationsRepo(),
+                    onSuccess: {},
+                    openClinikoSettings: {},
+                    copyToClipboard: { _ in }
+                )
+            )
+        }
+        let viewModel = ReviewViewModel(
+            sessionStore: store,
+            manipulations: stubManipulations(),
+            makeExportFlowViewModel: factory
+        )
+        capturedViewModel = viewModel
+
+        await viewModel.triggerExport()
+
+        #expect(factoryCallCount == 1, "Re-entrant tap should hit the guard, not stack a second factory call")
+        #expect(viewModel.exportFlowSheet != nil)
+    }
 
     // MARK: - cancelReview
 

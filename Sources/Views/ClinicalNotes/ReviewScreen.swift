@@ -124,18 +124,29 @@ struct ReviewScreen: View {
     /// "Select patient" when none is chosen, "Patient: <name>" with
     /// a chevron once selected. Tapping either form opens the
     /// `PatientPickerView` sheet.
+    ///
+    /// While `viewModel.isPreparingPatientPicker` is true the
+    /// chevron swaps for a `ProgressView` and the chip is
+    /// disabled — the doctor sees the credentials-load progress
+    /// instead of an unresponsive chip (#65).
     private var patientChip: some View {
         Button {
-            viewModel.presentPatientPicker()
+            Task { await viewModel.presentPatientPicker() }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "person.crop.circle")
                     .font(.system(size: 12, weight: .semibold))
                 Text(patientChipLabel)
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                if viewModel.isPreparingPatientPicker {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .accessibilityIdentifier("reviewScreen.patientChip.loading")
+                } else {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
@@ -148,6 +159,7 @@ struct ReviewScreen: View {
             )
         }
         .buttonStyle(.plain)
+        .disabled(viewModel.isPreparingPatientPicker)
         .accessibilityIdentifier("reviewScreen.patientChip")
     }
 
@@ -276,10 +288,16 @@ struct ReviewScreen: View {
             .accessibilityIdentifier("reviewScreen.actions.cancel")
 
             Button {
-                viewModel.triggerExport()
+                Task { await viewModel.triggerExport() }
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "arrow.up.forward.app.fill")
+                    if viewModel.isPreparingExport {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .accessibilityIdentifier("reviewScreen.actions.export.loading")
+                    } else {
+                        Image(systemName: "arrow.up.forward.app.fill")
+                    }
                     Text("Export to Cliniko")
                 }
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
@@ -287,7 +305,7 @@ struct ReviewScreen: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(Color.amberPrimary)
-            .disabled(!viewModel.canExport)
+            .disabled(!viewModel.canExport || viewModel.isPreparingExport)
             .accessibilityIdentifier("reviewScreen.actions.export")
         }
         .padding(.horizontal, 20)
@@ -323,12 +341,12 @@ struct ReviewScreen: View {
             }
 
             Button("Export") {
-                viewModel.triggerExport()
+                Task { await viewModel.triggerExport() }
             }
             .keyboardShortcut("e", modifiers: [.command])
             .frame(width: 0, height: 0)
             .opacity(0)
-            .disabled(!viewModel.canExport)
+            .disabled(!viewModel.canExport || viewModel.isPreparingExport)
             .accessibilityHidden(true)
         }
     }

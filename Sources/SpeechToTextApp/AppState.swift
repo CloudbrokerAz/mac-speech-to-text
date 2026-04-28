@@ -153,15 +153,18 @@ class AppState {
             sessionStore: self.sessionStore,
             manipulations: self.manipulations,
             makeExportFlowViewModel: { [weak self] in
-                // Re-validate config on every tap so a freshly-pasted
-                // API key is picked up without restarting the app —
-                // the launch-time pre-configure (below) handles the
-                // common "key was already set" path.
-                self?.ensureClinikoSetupSync()
+                // Re-validate config on every tap and AWAIT the
+                // credential load so a freshly-pasted API key is
+                // picked up before we read the coordinator. The
+                // sync return path used to race
+                // `configureClinikoExportPipelineIfNeeded()` and
+                // produce a spurious "Cliniko isn't set up" banner
+                // on the first tap after a credential change (#65).
+                await self?.ensureClinikoSetupAsync()
                 return ExportFlowCoordinator.shared.makeViewModel()
             },
             makePatientPickerViewModel: { [weak self] in
-                self?.ensureClinikoSetupSync()
+                await self?.ensureClinikoSetupAsync()
                 return self?.makePatientPickerViewModel()
             }
         )
@@ -171,10 +174,12 @@ class AppState {
         // credential load. The recording flow takes at minimum a few
         // seconds; this Task completes well before the user reaches
         // the review window in the common path. The factory closures
-        // above also re-call `ensureClinikoSetupSync()` to handle
+        // above also `await ensureClinikoSetupAsync()` to handle
         // "user just configured Cliniko in Settings and clicked
         // Generate Notes" — a much narrower window than first-tap.
-        ensureClinikoSetupSync()
+        Task { @MainActor [weak self] in
+            await self?.ensureClinikoSetupAsync()
+        }
 
         // Load statistics asynchronously (actor isolation)
         // Track the task for proper lifecycle management. `statistics`
@@ -550,22 +555,29 @@ class AppState {
     /// calls re-load credentials so a freshly-pasted API key is
     /// picked up without restarting the app.
     ///
-    /// "Sync" because the factory closures are sync. Internally
-    /// kicks off an async credential load and configures the
-    /// coordinator on completion; the same closure-call cycle that
-    /// returned `nil` once will succeed on the next tap once the
-    /// async load lands.
-    private func ensureClinikoSetupSync() {
-        Task { @MainActor [weak self] in
-            await self?.configureClinikoExportPipelineIfNeeded()
-        }
+    /// `async` so the review window's factory closures can `await`
+    /// the credential load before reading the coordinator. The
+    /// previous sync wrapper kicked off an async Task and returned
+    /// immediately — fine for cold-launch (the Task lands well
+    /// before the recording flow ends) but raced the post-credential-
+    /// change tap path (#65). Both call sites now await.
+    func ensureClinikoSetupAsync() async {
+        await configureClinikoExportPipelineIfNeeded()
     }
 
     /// Async configuration of the Cliniko export pipeline. Safe to
     /// call repeatedly — overwrites the existing coordinator config
-    /// with the latest credentials. Returns silently when no API
-    /// key is set (export factories return nil; UI surfaces
-    /// "Cliniko isn't set up").
+    /// with the latest credentials.
+    ///
+    /// Returns silently in two cases that share the same downstream
+    /// banner ("Cliniko isn't set up — configure your API key in
+    /// Settings"):
+    /// 1. No API key in the keychain (`loadCredentials` returns nil).
+    /// 2. The keychain load *threw* (locked keychain, denied prompt,
+    ///    code-signing change). Tracked as a follow-up: the post-#65
+    ///    always-await flow now runs this on the user's tap, so the
+    ///    failed-load case deserves a distinct banner. Until that
+    ///    lands, the structural log line above is the only signal.
     private func configureClinikoExportPipelineIfNeeded() async {
         let credentials: ClinikoCredentials?
         do {

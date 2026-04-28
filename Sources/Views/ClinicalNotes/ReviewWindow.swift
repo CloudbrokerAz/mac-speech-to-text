@@ -143,11 +143,15 @@ final class ReviewWindowController {
     /// `ExportFlowCoordinator` hasn't been configured (Cliniko not
     /// set up). The host's UI surfaces a structural banner in
     /// that case.
-    private var makeExportFlowViewModel: (() -> ExportFlowViewModel?)?
+    ///
+    /// `async` so the production wiring can `await` the Cliniko
+    /// credentials load before reading the coordinator (#65). Test
+    /// fixtures pass `{ nil }` — sync closures coerce to async.
+    private var makeExportFlowViewModel: (() async -> ExportFlowViewModel?)?
     /// Factory for the header-hosted patient picker (#14).
     /// Returning `nil` has the same Cliniko-not-configured
     /// semantics as the export factory.
-    private var makePatientPickerViewModel: (() -> PatientPickerViewModel?)?
+    private var makePatientPickerViewModel: (() async -> PatientPickerViewModel?)?
     private var dismissObserver: NSObjectProtocol?
 
     private let logger = Logger(
@@ -202,8 +206,8 @@ final class ReviewWindowController {
     func configure(
         sessionStore: SessionStore,
         manipulations: ManipulationsRepository,
-        makeExportFlowViewModel: @escaping () -> ExportFlowViewModel? = { nil },
-        makePatientPickerViewModel: @escaping () -> PatientPickerViewModel? = { nil }
+        makeExportFlowViewModel: @escaping () async -> ExportFlowViewModel? = { nil },
+        makePatientPickerViewModel: @escaping () async -> PatientPickerViewModel? = { nil }
     ) {
         self.sessionStore = sessionStore
         self.manipulations = manipulations

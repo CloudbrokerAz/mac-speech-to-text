@@ -126,6 +126,16 @@ final class ReviewViewModel {
     /// not mutate from non-view code.
     var patientPickerSheet: PatientPickerViewModel?
 
+    /// Whether `triggerExport()` is awaiting its async factory. The
+    /// view binds this to render a `ProgressView` swap on the Export
+    /// button so the doctor sees a spinner instead of a frozen
+    /// button while the Cliniko credentials load lands (#65).
+    private(set) var isPreparingExport: Bool = false
+
+    /// Whether `presentPatientPicker()` is awaiting its async factory.
+    /// Same UX role as `isPreparingExport` for the header chip (#65).
+    private(set) var isPreparingPatientPicker: Bool = false
+
     /// Last surfaced error banner, if any. Cleared on retry / dismiss.
     /// Public-mutable so SwiftUI two-way bindings (`@Bindable`) work; do
     /// not mutate from non-view code.
@@ -141,14 +151,18 @@ final class ReviewViewModel {
     /// `ExportFlowCoordinator` was never configured — gated on
     /// `coordinatorIsConfigured` so the visible UI never reaches
     /// that branch. Tests pass a fake closure.
-    @ObservationIgnored private let makeExportFlowViewModel: () -> ExportFlowViewModel?
+    ///
+    /// `async` so production wiring can `await` the Cliniko
+    /// credentials load before reading the coordinator. Sync test
+    /// closures coerce to async, so the seam stays test-friendly (#65).
+    @ObservationIgnored private let makeExportFlowViewModel: () async -> ExportFlowViewModel?
 
     /// Factory that produces a fresh `PatientPickerViewModel` for
     /// the header-hosted picker sheet. Returning `nil` means
     /// `AppState` hasn't wired the Cliniko patient/appointment
     /// services yet (no API key configured) — the UI surfaces a
     /// "set up Cliniko in Settings" message in that case.
-    @ObservationIgnored private let makePatientPickerViewModel: () -> PatientPickerViewModel?
+    @ObservationIgnored private let makePatientPickerViewModel: () async -> PatientPickerViewModel?
 
     @ObservationIgnored private let now: @Sendable () -> Date
     @ObservationIgnored private let reAddTargetWindow: TimeInterval
@@ -178,8 +192,8 @@ final class ReviewViewModel {
         manipulations: ManipulationsRepository,
         reAddTargetWindow: TimeInterval = 5.0,
         now: @escaping @Sendable () -> Date = { Date() },
-        makeExportFlowViewModel: @escaping () -> ExportFlowViewModel? = { nil },
-        makePatientPickerViewModel: @escaping () -> PatientPickerViewModel? = { nil }
+        makeExportFlowViewModel: @escaping () async -> ExportFlowViewModel? = { nil },
+        makePatientPickerViewModel: @escaping () async -> PatientPickerViewModel? = { nil }
     ) {
         self.sessionStore = sessionStore
         self.manipulationsRepo = manipulations
@@ -462,13 +476,27 @@ final class ReviewViewModel {
     /// `canExport`), or the coordinator hasn't been configured
     /// (e.g. Cliniko credentials missing — the export factory
     /// returns nil in that case).
-    func triggerExport() {
+    ///
+    /// `async` so the factory can `await` the Cliniko credentials
+    /// load before reading the coordinator (#65). Re-entrancy is
+    /// guarded by `isPreparingExport` — a second tap during the
+    /// await is a no-op rather than a stacked Task. The view binds
+    /// `isPreparingExport` to a `ProgressView` swap so the doctor
+    /// sees a spinner instead of a frozen button during the await.
+    func triggerExport() async {
         guard canExport else {
             logger.info("ReviewViewModel: triggerExport blocked — no patient selected")
             errorMessage = "Select a patient before exporting."
             return
         }
-        guard let viewModel = makeExportFlowViewModel() else {
+        guard !isPreparingExport else {
+            logger.info("ReviewViewModel: triggerExport ignored — already preparing")
+            return
+        }
+        isPreparingExport = true
+        defer { isPreparingExport = false }
+
+        guard let viewModel = await makeExportFlowViewModel() else {
             logger.error("ReviewViewModel: triggerExport blocked — coordinator not configured")
             errorMessage = "Cliniko isn't set up — configure your API key in Settings."
             return
@@ -491,8 +519,20 @@ final class ReviewViewModel {
     /// ReviewScreen header so the practitioner picks a patient
     /// before tapping Export. Surfaces a structural banner when
     /// Cliniko isn't configured.
-    func presentPatientPicker() {
-        guard let viewModel = makePatientPickerViewModel() else {
+    ///
+    /// `async` so the factory can `await` the Cliniko credentials
+    /// load (#65). Re-entrancy is guarded by
+    /// `isPreparingPatientPicker`; the view binds it to a spinner
+    /// swap on the patient chip during the await.
+    func presentPatientPicker() async {
+        guard !isPreparingPatientPicker else {
+            logger.info("ReviewViewModel: presentPatientPicker ignored — already preparing")
+            return
+        }
+        isPreparingPatientPicker = true
+        defer { isPreparingPatientPicker = false }
+
+        guard let viewModel = await makePatientPickerViewModel() else {
             logger.error("ReviewViewModel: presentPatientPicker blocked — coordinator not configured")
             errorMessage = "Cliniko isn't set up — configure your API key in Settings."
             return
