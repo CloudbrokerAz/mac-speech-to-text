@@ -93,17 +93,20 @@ in `Sources/`. Always derive from `ClinikoShard.apiHost` via
 the API key (e.g. `MS-XXXXX-au1`) but v1 takes the explicit picker
 route — auto-detection is a possible follow-up.
 
-### Known limitation: `ClinikoClient.send<T>` doesn't thread the real HTTP status into audit rows
+### Real HTTP status in audit rows: use `sendWithStatus(_:)`
 
-`TreatmentNoteExporter` currently writes `clinikoStatus: 201` as a
-documented-contract constant rather than reading the actual response
-status, because `send<T>` discards the `HTTPURLResponse` after
-classifying 2xx into the success path. Tracked as
-[issue #58](https://github.com/CloudbrokerAz/mac-speech-to-text/issues/58);
-when that lands, replace the literal in
-`TreatmentNoteExporter.export(...)` with the threaded value. Until
-then, the audit row's status is the documented value, not the observed
-one.
+`ClinikoClient` exposes two public entry points:
+
+- `send<T>(_:) async throws -> T` — the common path; most call sites
+  (patient search, appointment list, `/users/me`) don't care about the
+  status and use this.
+- `sendWithStatus<T>(_:) async throws -> (T, Int)` — additive overload
+  that surfaces the actual 2xx status the server returned. Use this
+  when the caller audits on the observed status (today: only
+  `TreatmentNoteExporter`, which records it as `AuditRecord.clinikoStatus`).
+  Don't reach for it elsewhere — the audit ledger contract is what
+  motivates the tuple shape, and threading a status nobody reads adds
+  noise. Issue #58.
 
 ---
 

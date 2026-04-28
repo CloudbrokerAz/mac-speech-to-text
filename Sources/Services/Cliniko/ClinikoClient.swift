@@ -122,7 +122,25 @@ public actor ClinikoClient {
     /// Throws `ClinikoError` for every non-success path. The retry loop
     /// honours the endpoint's `allowsRetryOn5xx` flag for 5xx + transport;
     /// 429 always retries (up to the policy's budget) regardless of method.
+    ///
+    /// Callers that need the actual HTTP status (e.g. the audit ledger row
+    /// in `TreatmentNoteExporter`) should use `sendWithStatus(_:)` instead.
     public func send<T: Decodable & Sendable>(_ endpoint: ClinikoEndpoint) async throws -> T {
+        // Explicit annotation on the destructure so `T` flows from the
+        // caller's expected return type into `sendWithStatus`'s generic
+        // parameter — Swift can't infer it from a discarded tuple element.
+        let (value, _): (T, Int) = try await sendWithStatus(endpoint)
+        return value
+    }
+
+    /// Same retry / decode / error contract as `send(_:)`, but additionally
+    /// surfaces the actual 2xx HTTP status the server returned alongside the
+    /// decoded body. Issue [#58] — the audit ledger needs to record the
+    /// observed status, not the documented constant. Most callers don't care
+    /// about the status and should keep using `send(_:)`.
+    public func sendWithStatus<T: Decodable & Sendable>(
+        _ endpoint: ClinikoEndpoint
+    ) async throws -> (T, Int) {
         guard let url = endpoint.buildURL(against: credentials.baseURL) else {
             // Closed-set inputs (enum-constrained shard host + endpoint cases)
             // make this unreachable; tests pin every-shard × every-endpoint
@@ -142,8 +160,8 @@ public actor ClinikoClient {
                 attempt: attempt
             )
             switch outcome {
-            case .success(let value):
-                return value
+            case .success(let value, let status):
+                return (value, status)
             case .terminal(let error):
                 throw error
             case .retry(let delay):
@@ -156,10 +174,12 @@ public actor ClinikoClient {
     // MARK: - Attempt execution
 
     /// Outcome of a single network attempt. `success` returns the decoded
-    /// body; `terminal` is an error the caller will rethrow; `retry`
-    /// re-enters the loop after the named delay.
+    /// body alongside the actual 2xx HTTP status (so `sendWithStatus(_:)`
+    /// can thread it to callers that audit on it); `terminal` is an error
+    /// the caller will rethrow; `retry` re-enters the loop after the named
+    /// delay.
     private enum AttemptOutcome<T> {
-        case success(T)
+        case success(T, Int)
         case terminal(ClinikoError)
         case retry(TimeInterval)
     }
@@ -220,7 +240,7 @@ public actor ClinikoClient {
         let status = http.statusCode
         switch status {
         case 200..<300:
-            return decodeOutcome(T.self, from: data)
+            return decodeOutcome(T.self, from: data, status: status)
         case 401: return .terminal(.unauthenticated)
         case 403: return .terminal(.forbidden)
         case 404: return .terminal(.notFound(resource: endpoint.resource))
@@ -250,11 +270,12 @@ public actor ClinikoClient {
 
     private func decodeOutcome<T: Decodable & Sendable>(
         _ type: T.Type,
-        from data: Data
+        from data: Data,
+        status: Int
     ) -> AttemptOutcome<T> {
         do {
             let value = try decodeBody(T.self, from: data)
-            return .success(value)
+            return .success(value, status)
         } catch let error as ClinikoError {
             return .terminal(error)
         } catch {
