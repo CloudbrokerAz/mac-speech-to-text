@@ -134,18 +134,29 @@ Don't flip this without a session-only-PHI review.
 ### `ExportFlowCoordinator.shared` not configured
 
 `ReviewWindowController.configure(...)` accepts the export and
-patient-picker factories with `{ nil }` defaults. When Cliniko isn't
-set up (no API key in Keychain), the factory returns `nil`:
+patient-picker factories with `{ nil }` defaults. The factories are
+`async` so production wiring `await`s the Cliniko credentials load
+before reading the coordinator (#65 — closes the post-credential-
+change tap race that #14 left open). When Cliniko isn't set up (no
+API key in Keychain), the factory returns `nil`:
 
-- `ReviewViewModel.triggerExport()` shows
+- `ReviewViewModel.triggerExport()` is `async`. It surfaces
   `"Cliniko isn't set up — configure your API key in Settings."` in
-  the action-bar error banner.
-- `ReviewViewModel.presentPatientPicker()` shows the same banner.
+  the action-bar error banner. The view's button action wraps in
+  `Task { await viewModel.triggerExport() }`, and
+  `viewModel.isPreparingExport` swaps the icon for a `ProgressView`
+  during the await so the doctor sees a spinner instead of a frozen
+  button.
+- `ReviewViewModel.presentPatientPicker()` is `async`. Same banner,
+  and `viewModel.isPreparingPatientPicker` drives the same spinner
+  swap on the header chip.
 - `canExport` stays `false` until a patient is selected, so ⌘E and
   the Export button stay disabled too.
 
 Don't surface a sheet that the user can't act on — keep the banner
-copy aligned with the Settings entry-point name.
+copy aligned with the Settings entry-point name. Sync `{ nil }` test
+factories coerce to the async signature, so test wiring stays
+unchanged for the simple cases.
 
 ### `@ObservedObject` / `@StateObject` / `ObservableObject`
 
