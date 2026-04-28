@@ -77,21 +77,29 @@ KeyboardShortcuts.onKeyDown(for: .startRecording) { [weak self] in
   automatically; the settings UI uses `KeyboardShortcuts.Recorder`.
 
 For Clinical Notes Mode the `#11` toggle is paired with a **second**
-dedicated hotkey, `clinicalNotesRecord` (#91). The default
+dedicated hotkey, `clinicalNotesRecord` (#91), and a sibling
+**menu-bar item** "Start Clinical Note" (#92). The default
 `holdToRecord` / `toggleRecording` chord stays untouched: pure STT,
-glass overlay, text insertion. The clinical chord opens
-`LiquidGlassRecordingModal` directly (auto-starts recording on present
-via the modal's existing `.task(id:)`), so the Generate Notes / Done
-buttons surface automatically when the mode is on.
+glass overlay, text insertion. Both clinical surfaces post the same
+`.showRecordingModal` notification, which AppDelegate's existing
+observer handles by presenting `LiquidGlassRecordingModal`
+(auto-starts recording on present via the modal's `.task(id:)`).
 
 The clinical chord is **unbound by default** to avoid OS / browser /
-IDE conflicts on install. It is gated by the toggle and Cliniko
-credential presence: when either gate flips off,
-`KeyboardShortcuts.disable(.clinicalNotesRecord)` runs so a stale
-binding never fires. The Settings → Clinical Notes section's
-"Recording shortcut" row uses `ShortcutRecorderView`'s `validate:`
-closure to reject any chord already bound to `.holdToRecord` or
-`.toggleRecording`.
+IDE conflicts on install; the menu-bar item provides a tap-target
+for discoverability and for hands-off-keyboard moments. Both are
+gated by the toggle and Cliniko credential presence: when either
+gate flips off,
+`KeyboardShortcuts.disable(.clinicalNotesRecord)` runs (chord side)
+and `MenuBarViewModel.canStartClinicalNote` returns false (menu
+side), so neither surface fires when prerequisites are missing. The
+Settings → Clinical Notes "Recording shortcut" row uses
+`ShortcutRecorderView`'s `validate:` closure to reject any chord
+already bound to `.holdToRecord` or `.toggleRecording`.
+
+`MenuBarViewModel.refreshState()` is called from `MenuBarView`'s
+`.task` on each menu open, so toggle / credential changes made
+elsewhere in the session are picked up without an app restart.
 
 ---
 

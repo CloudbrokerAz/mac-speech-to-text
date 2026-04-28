@@ -108,4 +108,105 @@ final class MenuBarViewModelTests: XCTestCase {
         // Then
         XCTAssertTrue(notificationReceived)
     }
+
+    // MARK: - #92 Clinical Notes gate
+
+    /// Builds a VM with isolated SettingsService + ClinikoCredentialStore so
+    /// each test starts from a clean gate.
+    private func makeIsolatedViewModel() -> MenuBarViewModel {
+        let suiteName = "MenuBarViewModelTests-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            preconditionFailure("UserDefaults(suiteName:) returned nil")
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+        let settingsService = SettingsService(userDefaults: defaults)
+        let credentialStore = ClinikoCredentialStore(
+            secureStore: InMemorySecureStore(),
+            userDefaults: defaults
+        )
+        return MenuBarViewModel(
+            permissionService: PermissionService(),
+            settingsService: settingsService,
+            credentialStore: credentialStore
+        )
+    }
+
+    func test_canStartClinicalNote_falseWhenModeOffAndCredsAbsent() async {
+        let vm = makeIsolatedViewModel()
+        await vm.refreshState()
+        XCTAssertFalse(vm.clinicalNotesModeEnabled)
+        XCTAssertFalse(vm.hasStoredCredentials)
+        XCTAssertFalse(vm.canStartClinicalNote)
+    }
+
+    func test_canStartClinicalNote_falseWhenCredsPresentButModeOff() async throws {
+        let suiteName = "MenuBarViewModelTests-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            preconditionFailure("UserDefaults(suiteName:) returned nil")
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+        let settingsService = SettingsService(userDefaults: defaults)
+        let credentialStore = ClinikoCredentialStore(
+            secureStore: InMemorySecureStore(),
+            userDefaults: defaults
+        )
+        try await credentialStore.saveCredentials(apiKey: "MS-test-au1", shard: .au1)
+
+        let vm = MenuBarViewModel(
+            permissionService: PermissionService(),
+            settingsService: settingsService,
+            credentialStore: credentialStore
+        )
+        await vm.refreshState()
+
+        XCTAssertTrue(vm.hasStoredCredentials)
+        XCTAssertFalse(vm.clinicalNotesModeEnabled)
+        XCTAssertFalse(vm.canStartClinicalNote, "Mode-off should hide the menu item even with creds")
+    }
+
+    func test_canStartClinicalNote_trueWhenModeOnAndCredsPresent() async throws {
+        let suiteName = "MenuBarViewModelTests-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            preconditionFailure("UserDefaults(suiteName:) returned nil")
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+        let settingsService = SettingsService(userDefaults: defaults)
+        let credentialStore = ClinikoCredentialStore(
+            secureStore: InMemorySecureStore(),
+            userDefaults: defaults
+        )
+        try await credentialStore.saveCredentials(apiKey: "MS-test-au1", shard: .au1)
+        var settings = settingsService.load()
+        settings.general.applyClinicalNotesMode(true)
+        try settingsService.save(settings)
+
+        let vm = MenuBarViewModel(
+            permissionService: PermissionService(),
+            settingsService: settingsService,
+            credentialStore: credentialStore
+        )
+        await vm.refreshState()
+
+        XCTAssertTrue(vm.clinicalNotesModeEnabled)
+        XCTAssertTrue(vm.hasStoredCredentials)
+        XCTAssertTrue(vm.canStartClinicalNote)
+    }
+
+    func test_startClinicalNote_postsShowRecordingModalNotification() {
+        // Given
+        var notificationReceived = false
+        notificationObserver = NotificationCenter.default.addObserver(
+            forName: .showRecordingModal,
+            object: nil,
+            queue: .main
+        ) { _ in
+            notificationReceived = true
+        }
+
+        // When
+        sut.startClinicalNote()
+
+        // Then
+        XCTAssertTrue(notificationReceived)
+    }
 }

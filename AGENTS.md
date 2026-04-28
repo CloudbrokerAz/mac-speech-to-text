@@ -253,15 +253,20 @@ on-device, session-only PHI, opt-in via Settings.
    wires the dependencies — see `Sources/SpeechToTextApp/AppState.swift`).
    Once on + Cliniko credentials present, Settings → Clinical Notes
    exposes a **dedicated "Recording shortcut"** row (`#91`) bound to
-   `KeyboardShortcuts.Name.clinicalNotesRecord` (unbound by default).
-   The default `holdToRecord` / `toggleRecording` chord stays pure STT
-   for general dictation; the new chord is the only production trigger
-   for the clinical pipeline — both gates flip the shortcut off so a
-   stale binding never fires.
+   `KeyboardShortcuts.Name.clinicalNotesRecord` (unbound by default),
+   and the menu bar grows a **"Start Clinical Note"** item (`#92`) as
+   the discoverability sibling. The default
+   `holdToRecord` / `toggleRecording` chord stays pure STT for general
+   dictation; the new chord and menu item are the only production
+   triggers for the clinical pipeline — both gates flip the shortcut
+   off (`KeyboardShortcuts.disable(.clinicalNotesRecord)`) and hide
+   the menu item (`MenuBarViewModel.canStartClinicalNote` returns
+   false) so neither surface fires when prerequisites are missing.
 2. **Recording** runs unchanged (FluidAudio → `RecordingSession`).
    General dictation uses the existing chord. Clinical sessions use
-   `clinicalNotesRecord` → `LiquidGlassRecordingModal` (auto-starts
-   recording on present via the modal's existing `.task(id:)`).
+   `clinicalNotesRecord` or the "Start Clinical Note" menu item →
+   `LiquidGlassRecordingModal` (auto-starts recording on present via
+   the modal's existing `.task(id:)`).
 3. **Generate Notes** action on the recording modal hands the transcript to
    `SessionStore` → `ClinicalNotesProcessor` → `LLMProvider`
    (`MLXGemmaProvider` / `MockLLMProvider`). Retry-once on schema-invalid
