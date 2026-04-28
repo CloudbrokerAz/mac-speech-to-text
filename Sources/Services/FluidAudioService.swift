@@ -245,9 +245,14 @@ actor FluidAudioService: FluidAudioServiceProtocol {
         try Task.checkCancellation()
 
         if transcribeInFlight {
-            AppLogger.warning(
-                AppLogger.service,
-                "[\(self.serviceId)] reentrant transcribe(); awaiting prior call (queue depth: \(transcribeWaiters.count + 1))"
+            // Direct OSLog interpolation with `privacy: .public` for the
+            // structural fields (serviceId, queue depth) — matches the
+            // `init()` logging pattern and the project styleguide rule
+            // that `.public` is reserved for structural debugging values.
+            // Neither field can carry PHI: `serviceId` is a UUID prefix
+            // chosen at construction; queue depth is an Int.
+            AppLogger.service.warning(
+                "[\(self.serviceId, privacy: .public)] reentrant transcribe(); awaiting prior call (queue depth: \(self.transcribeWaiters.count + 1, privacy: .public))"
             )
             // Throwing continuation: a clean hand-off resumes with
             // success and we fall through to `holdsSlot = true`. A
