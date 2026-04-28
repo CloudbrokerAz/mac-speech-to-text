@@ -16,18 +16,29 @@ struct ShortcutRecorderView: View {
     let shortcutName: KeyboardShortcuts.Name
     let placeholder: String
 
+    /// Optional validator (#91). Called with the candidate `Shortcut` before it is persisted.
+    /// Returning a non-nil String rejects the binding and renders the message inline.
+    /// The default `nil` preserves the original "no app-internal conflict check" behaviour.
+    let validate: ((KeyboardShortcuts.Shortcut) -> String?)?
+
     @State private var isRecording = false
     @State private var currentShortcut: KeyboardShortcuts.Shortcut?
     @State private var keyEventMonitor: Any?
     @State private var mouseEventMonitor: Any?
+    @State private var validationError: String?
 
     @Environment(\.colorScheme) private var colorScheme
 
     // MARK: - Initialization
 
-    init(for name: KeyboardShortcuts.Name, placeholder: String = "Record Shortcut") {
+    init(
+        for name: KeyboardShortcuts.Name,
+        placeholder: String = "Record Shortcut",
+        validate: ((KeyboardShortcuts.Shortcut) -> String?)? = nil
+    ) {
         self.shortcutName = name
         self.placeholder = placeholder
+        self.validate = validate
         // Initialize current shortcut from stored value
         self._currentShortcut = State(initialValue: KeyboardShortcuts.getShortcut(for: name))
     }
@@ -35,36 +46,46 @@ struct ShortcutRecorderView: View {
     // MARK: - Body
 
     var body: some View {
-        HStack(spacing: 4) {
-            // Shortcut display or placeholder
-            Text(displayText)
-                .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(isRecording ? Color.warmAmber : .primary)
-                .frame(minWidth: 80)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(backgroundColor)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(borderColor, lineWidth: 1)
-                )
+        VStack(alignment: .trailing, spacing: 4) {
+            HStack(spacing: 4) {
+                // Shortcut display or placeholder
+                Text(displayText)
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(isRecording ? Color.warmAmber : .primary)
+                    .frame(minWidth: 80)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(backgroundColor)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(borderColor, lineWidth: 1)
+                    )
 
-            // Clear button (only when shortcut is set and not recording)
-            if currentShortcut != nil && !isRecording {
-                Button(action: clearShortcut) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
+                // Clear button (only when shortcut is set and not recording)
+                if currentShortcut != nil && !isRecording {
+                    Button(action: clearShortcut) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 14))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear shortcut")
                 }
-                .buttonStyle(.plain)
-                .help("Clear shortcut")
             }
-        }
-        .onTapGesture {
-            startRecording()
+            .onTapGesture {
+                startRecording()
+            }
+
+            // Inline validation error (#91)
+            if let validationError {
+                Text(validationError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("shortcutValidationError")
+            }
         }
         .onAppear {
             // Refresh shortcut on appear
@@ -118,6 +139,7 @@ struct ShortcutRecorderView: View {
         guard !isRecording else { return }
 
         isRecording = true
+        validationError = nil // clear any prior rejection so the user sees the new attempt's outcome
 
         // Start monitoring key events
         keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [self] event in
@@ -192,8 +214,19 @@ struct ShortcutRecorderView: View {
 
         let newShortcut = KeyboardShortcuts.Shortcut(key, modifiers: shortcutModifiers)
 
-        // Check if shortcut conflicts with system shortcuts
-        // For now, just save it - the library handles conflict detection
+        // Run app-internal validator if provided (#91 conflict guard).
+        // The validator is a pure function over Shortcut → optional reason; if non-nil the
+        // chord is rejected and the binding is left untouched.
+        if let validate, let reason = validate(newShortcut) {
+            validationError = reason
+            // Structural-only log: shortcut name + the fact that validation rejected, not the chord.
+            AppLogger.app.debug("ShortcutRecorderView: validator rejected new chord for \(shortcutName.rawValue, privacy: .public)")
+            stopRecording()
+            return
+        }
+
+        // Persist the chord. The KeyboardShortcuts library handles macOS system-shortcut
+        // conflict detection at the OS level.
         KeyboardShortcuts.setShortcut(newShortcut, for: shortcutName)
         currentShortcut = newShortcut
 
@@ -205,6 +238,9 @@ struct ShortcutRecorderView: View {
     private func clearShortcut() {
         KeyboardShortcuts.setShortcut(nil, for: shortcutName)
         currentShortcut = nil
+        // A stale validation error from the previous attempt would otherwise
+        // sit under an empty pill and confuse the user (#91 review feedback).
+        validationError = nil
         AppLogger.app.debug("ShortcutRecorderView: Cleared shortcut for \(shortcutName.rawValue)")
     }
 

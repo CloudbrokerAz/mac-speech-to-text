@@ -11,6 +11,11 @@ class HotkeyManager {
     private var isProcessing: Bool = false
     private var isRecordingToggleMode: Bool = false
 
+    /// Tracks whether a clinical-notes recording session is currently active (#91).
+    /// Kept separate from `isProcessing` so the clinical-notes chord cannot interleave
+    /// with hold-to-record / toggle-recording — and vice versa.
+    private var isRecordingClinicalNotes: Bool = false
+
     // MARK: - Callbacks
 
     /// Called when the hotkey is pressed down and recording should start
@@ -24,6 +29,17 @@ class HotkeyManager {
 
     /// Called when voice monitoring should be toggled
     var onVoiceMonitoringToggle: (() async -> Void)?
+
+    /// Called when the clinical-notes recording chord starts a session (#91).
+    /// AppDelegate posts `.showRecordingModal` so the existing observer presents
+    /// `LiquidGlassRecordingModal`, which auto-starts recording on appear.
+    var onClinicalNotesRecordingStart: (() async -> Void)?
+
+    /// Called when the clinical-notes recording chord ends an active session (#91).
+    /// AppDelegate defers to the modal's existing recording lifecycle by invoking
+    /// `RecordingViewModel.stopRecording()` on the active modal — so transcription
+    /// and the Generate Notes flow run identically to the modal's Done button.
+    var onClinicalNotesRecordingStop: (() async -> Void)?
 
     // MARK: - Configuration
 
@@ -46,6 +62,9 @@ class HotkeyManager {
 
     /// Exposes toggle mode state for testing
     var isCurrentlyInToggleMode: Bool { isRecordingToggleMode }
+
+    /// Exposes clinical-notes recording state for testing (#91)
+    var isCurrentlyRecordingClinicalNotes: Bool { isRecordingClinicalNotes }
 
     // MARK: - Lifecycle
 
@@ -77,6 +96,7 @@ class HotkeyManager {
         KeyboardShortcuts.disable(.holdToRecord)
         KeyboardShortcuts.disable(.toggleRecording)
         KeyboardShortcuts.disable(.toggleVoiceMonitoring)
+        KeyboardShortcuts.disable(.clinicalNotesRecord)
         AppLogger.app.debug("HotkeyManager: shutdown() - hotkeys disabled successfully")
     }
 
@@ -131,6 +151,12 @@ class HotkeyManager {
 
         // Set up voice monitoring toggle hotkey
         setupVoiceMonitoringHotkey()
+
+        // Set up clinical-notes recording hotkey (#91).
+        // Listener is registered unconditionally, but the shortcut is unbound by default
+        // and ClinicalNotesSection / AppDelegate enable/disable it based on the
+        // Clinical Notes Mode toggle + Cliniko credential state.
+        setupClinicalNotesHotkey()
     }
 
     private func setupToggleModeHotkey() {
@@ -145,6 +171,20 @@ class HotkeyManager {
         }
 
         AppLogger.app.debug("HotkeyManager: Registered handlers for .toggleRecording")
+    }
+
+    private func setupClinicalNotesHotkey() {
+        KeyboardShortcuts.enable(.clinicalNotesRecord)
+        AppLogger.app.debug("HotkeyManager: Enabled .clinicalNotesRecord shortcut")
+
+        KeyboardShortcuts.onKeyDown(for: .clinicalNotesRecord) { [weak self] in
+            AppLogger.app.debug("HotkeyManager: onKeyDown callback triggered for clinical notes")
+            Task { @MainActor in
+                await self?.handleClinicalNotesKeyPress()
+            }
+        }
+
+        AppLogger.app.debug("HotkeyManager: Registered handlers for .clinicalNotesRecord")
     }
 
     private func setupVoiceMonitoringHotkey() {
@@ -171,13 +211,35 @@ class HotkeyManager {
             return
         }
 
-        // Guard: don't start toggle mode if hold mode is in progress
-        guard !isProcessing else { return }
+        // Guard: don't start toggle mode if hold mode or clinical-notes mode is in progress
+        guard !isProcessing, !isRecordingClinicalNotes else { return }
 
         // Start recording in toggle mode
         isProcessing = true
         isRecordingToggleMode = true
         await onRecordingStart?()
+    }
+
+    /// Handle clinical-notes key press (#91) - alternates between start/stop using a
+    /// dedicated state flag so the chord cannot interleave with hold-to-record /
+    /// toggle-recording sessions.
+    func handleClinicalNotesKeyPress() async {
+        // If a clinical-notes session is active, stop it.
+        if isRecordingClinicalNotes {
+            isRecordingClinicalNotes = false
+            await onClinicalNotesRecordingStop?()
+            return
+        }
+
+        // Guard: don't start a clinical-notes session if hold or toggle mode is in flight.
+        // The general-dictation flow owns the modal/overlay surface in those states.
+        guard !isProcessing else {
+            AppLogger.app.debug("HotkeyManager: Ignoring clinical-notes keyPress - general dictation in flight")
+            return
+        }
+
+        isRecordingClinicalNotes = true
+        await onClinicalNotesRecordingStart?()
     }
 
     // MARK: - Key Event Handlers (internal for testability)
@@ -189,6 +251,12 @@ class HotkeyManager {
         // Guard: already processing
         guard !isProcessing else {
             AppLogger.app.debug("HotkeyManager: Ignoring keyDown - already processing")
+            return
+        }
+
+        // Guard: clinical-notes session in flight owns the modal — don't double-trigger
+        guard !isRecordingClinicalNotes else {
+            AppLogger.app.debug("HotkeyManager: Ignoring keyDown - clinical notes session active")
             return
         }
 
@@ -256,13 +324,15 @@ class HotkeyManager {
     func cancel() {
         let wasProcessing = isProcessing
         let wasToggleMode = isRecordingToggleMode
+        let wasClinicalNotes = isRecordingClinicalNotes
 
         isProcessing = false
         keyPressStartTime = nil
         isRecordingToggleMode = false
+        isRecordingClinicalNotes = false
 
-        if wasProcessing || wasToggleMode {
-            AppLogger.app.debug("HotkeyManager: Recording cancelled (wasProcessing=\(wasProcessing), wasToggleMode=\(wasToggleMode))")
+        if wasProcessing || wasToggleMode || wasClinicalNotes {
+            AppLogger.app.debug("HotkeyManager: Recording cancelled (wasProcessing=\(wasProcessing), wasToggleMode=\(wasToggleMode), wasClinicalNotes=\(wasClinicalNotes))")
         }
     }
 }

@@ -1,3 +1,4 @@
+import KeyboardShortcuts
 import SwiftUI
 import ViewInspector
 import XCTest
@@ -102,6 +103,106 @@ final class ClinicalNotesSectionRenderTests: XCTestCase {
         )
         XCTAssertNoThrow(
             try view.inspect().find(viewWithAccessibilityIdentifier: "clinicalNotesModeToggle")
+        )
+    }
+
+    // MARK: - #91 Recording shortcut row visibility
+
+    /// Default state: no credentials, mode off → row hidden.
+    func test_clinicalNotesShortcutRow_hiddenWhenModeOffAndCredsAbsent() throws {
+        let viewModel = makeViewModel()
+        let view = ClinicalNotesSection(
+            viewModel: viewModel,
+            settingsService: makeSettingsService()
+        )
+        XCTAssertThrowsError(
+            try view.inspect().find(viewWithAccessibilityIdentifier: "clinicalNotesRecordingShortcutRow"),
+            "Row must be hidden when both gates are off"
+        )
+    }
+
+    /// Credentials present but the doctor hasn't enabled the mode yet → row hidden.
+    func test_clinicalNotesShortcutRow_hiddenWhenCredsPresentButModeOff() async throws {
+        let secureStore = InMemorySecureStore()
+        let store = ClinikoCredentialStore(
+            secureStore: secureStore,
+            userDefaults: makeUserDefaults()
+        )
+        try await store.saveCredentials(apiKey: "MS-test-au1", shard: .au1)
+        let probe = ClinikoAuthProbe(session: .shared)
+        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: probe)
+        await viewModel.refreshState()
+        XCTAssertTrue(viewModel.hasStoredCredentials)
+
+        // Settings service holds default state (mode off).
+        let view = ClinicalNotesSection(
+            viewModel: viewModel,
+            settingsService: makeSettingsService()
+        )
+        XCTAssertThrowsError(
+            try view.inspect().find(viewWithAccessibilityIdentifier: "clinicalNotesRecordingShortcutRow"),
+            "Row must be hidden when mode is off, even with creds present"
+        )
+    }
+
+    /// Both gates open: mode on AND credentials present → row visible.
+    func test_clinicalNotesShortcutRow_visibleWhenModeOnAndCredsPresent() async throws {
+        let secureStore = InMemorySecureStore()
+        let store = ClinikoCredentialStore(
+            secureStore: secureStore,
+            userDefaults: makeUserDefaults()
+        )
+        try await store.saveCredentials(apiKey: "MS-test-au1", shard: .au1)
+        let probe = ClinikoAuthProbe(session: .shared)
+        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: probe)
+        await viewModel.refreshState()
+        XCTAssertTrue(viewModel.hasStoredCredentials)
+
+        // Persist mode-on into the settings service this section reads from.
+        let settingsService = makeSettingsService()
+        var settings = settingsService.load()
+        settings.general.applyClinicalNotesMode(true)
+        try settingsService.save(settings)
+
+        let view = ClinicalNotesSection(
+            viewModel: viewModel,
+            settingsService: settingsService
+        )
+        XCTAssertNoThrow(
+            try view.inspect().find(viewWithAccessibilityIdentifier: "clinicalNotesRecordingShortcutRow"),
+            "Row must be visible when mode is on AND creds present"
+        )
+    }
+
+    // MARK: - #91 Conflict-guard validator
+
+    /// The validator is a pure function over an explicit "bound chords" list.
+    /// We exercise it directly so the test does not depend on shared
+    /// `KeyboardShortcuts` UserDefaults state.
+    func test_validateClinicalNotesShortcut_returnsNilWhenNoConflict() {
+        let candidate = KeyboardShortcuts.Shortcut(.f5, modifiers: [.command])
+        let bound: [(KeyboardShortcuts.Shortcut, String)] = [
+            (KeyboardShortcuts.Shortcut(.space, modifiers: [.control, .shift]), "Hold to Record")
+        ]
+        XCTAssertNil(
+            ClinicalNotesSection.validateClinicalNotesShortcut(candidate, against: bound)
+        )
+    }
+
+    /// When the candidate matches an existing chord, the validator returns a
+    /// human-readable rejection that names the conflicting binding.
+    func test_validateClinicalNotesShortcut_returnsErrorWhenChordCollides() throws {
+        let candidate = KeyboardShortcuts.Shortcut(.space, modifiers: [.control, .shift])
+        let bound: [(KeyboardShortcuts.Shortcut, String)] = [
+            (KeyboardShortcuts.Shortcut(.space, modifiers: [.control, .shift]), "Hold to Record"),
+            (KeyboardShortcuts.Shortcut(.f6, modifiers: [.command]), "Toggle Recording")
+        ]
+        let error = try XCTUnwrap(
+            ClinicalNotesSection.validateClinicalNotesShortcut(candidate, against: bound)
+        )
+        XCTAssertTrue(
+            error.contains("Hold to Record"),
+            "Rejection should name the conflicting binding so the doctor knows what to avoid"
         )
     }
 }

@@ -76,9 +76,22 @@ KeyboardShortcuts.onKeyDown(for: .startRecording) { [weak self] in
 - `KeyboardShortcuts` stores the user's rebinding in `UserDefaults`
   automatically; the settings UI uses `KeyboardShortcuts.Recorder`.
 
-For Clinical Notes Mode, `#11`'s toggle does not add a second hotkey
-in v1 — one hotkey starts a recording, and the "Generate Notes" action
-appears on the recording modal when the mode is on.
+For Clinical Notes Mode the `#11` toggle is paired with a **second**
+dedicated hotkey, `clinicalNotesRecord` (#91). The default
+`holdToRecord` / `toggleRecording` chord stays untouched: pure STT,
+glass overlay, text insertion. The clinical chord opens
+`LiquidGlassRecordingModal` directly (auto-starts recording on present
+via the modal's existing `.task(id:)`), so the Generate Notes / Done
+buttons surface automatically when the mode is on.
+
+The clinical chord is **unbound by default** to avoid OS / browser /
+IDE conflicts on install. It is gated by the toggle and Cliniko
+credential presence: when either gate flips off,
+`KeyboardShortcuts.disable(.clinicalNotesRecord)` runs so a stale
+binding never fires. The Settings → Clinical Notes section's
+"Recording shortcut" row uses `ShortcutRecorderView`'s `validate:`
+closure to reject any chord already bound to `.holdToRecord` or
+`.toggleRecording`.
 
 ---
 

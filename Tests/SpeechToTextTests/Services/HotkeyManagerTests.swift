@@ -555,4 +555,154 @@ final class HotkeyManagerTests: XCTestCase {
         XCTAssertFalse(sut.isCurrentlyInToggleMode)
         XCTAssertTrue(sut.isCurrentlyProcessing) // Hold mode still active
     }
+
+    // MARK: - Clinical Notes Mode Tests (#91)
+
+    func test_handleClinicalNotesKeyPress_startsRecordingWhenIdle() async {
+        // Given
+        var startCalled = false
+        sut.onClinicalNotesRecordingStart = { startCalled = true }
+
+        // When
+        await sut.handleClinicalNotesKeyPress()
+
+        // Then
+        XCTAssertTrue(startCalled, "onClinicalNotesRecordingStart should fire on first press")
+        XCTAssertTrue(sut.isCurrentlyRecordingClinicalNotes, "Should be in clinical-notes mode")
+        XCTAssertFalse(sut.isCurrentlyProcessing, "Should not flip generic isProcessing flag")
+        XCTAssertFalse(sut.isCurrentlyInToggleMode, "Should not flip toggle-mode flag")
+    }
+
+    func test_handleClinicalNotesKeyPress_stopsRecordingWhenActive() async {
+        // Given
+        var startCalled = false
+        var stopCalled = false
+        sut.onClinicalNotesRecordingStart = { startCalled = true }
+        sut.onClinicalNotesRecordingStop = { stopCalled = true }
+
+        // First press starts the session
+        await sut.handleClinicalNotesKeyPress()
+        XCTAssertTrue(startCalled)
+        XCTAssertTrue(sut.isCurrentlyRecordingClinicalNotes)
+
+        // When - second press
+        await sut.handleClinicalNotesKeyPress()
+
+        // Then
+        XCTAssertTrue(stopCalled, "onClinicalNotesRecordingStop should fire on second press")
+        XCTAssertFalse(sut.isCurrentlyRecordingClinicalNotes, "State should reset")
+    }
+
+    func test_handleClinicalNotesKeyPress_ignoredWhenHoldModeActive() async {
+        // Given - hold mode in flight
+        await sut.handleKeyDown()
+        XCTAssertTrue(sut.isCurrentlyProcessing)
+        var clinicalStartCalled = false
+        sut.onClinicalNotesRecordingStart = { clinicalStartCalled = true }
+
+        // When
+        await sut.handleClinicalNotesKeyPress()
+
+        // Then - clinical-notes mode is rejected; hold mode untouched
+        XCTAssertFalse(clinicalStartCalled, "Clinical-notes start should not fire while hold mode in flight")
+        XCTAssertFalse(sut.isCurrentlyRecordingClinicalNotes)
+        XCTAssertTrue(sut.isCurrentlyProcessing, "Hold mode still owns the session")
+    }
+
+    func test_handleClinicalNotesKeyPress_ignoredWhenToggleModeActive() async {
+        // Given - toggle mode in flight
+        sut.onRecordingStart = { }
+        await sut.handleToggleKeyPress()
+        XCTAssertTrue(sut.isCurrentlyInToggleMode)
+        var clinicalStartCalled = false
+        sut.onClinicalNotesRecordingStart = { clinicalStartCalled = true }
+
+        // When
+        await sut.handleClinicalNotesKeyPress()
+
+        // Then - clinical-notes mode is rejected; toggle mode untouched
+        XCTAssertFalse(clinicalStartCalled)
+        XCTAssertFalse(sut.isCurrentlyRecordingClinicalNotes)
+        XCTAssertTrue(sut.isCurrentlyInToggleMode)
+    }
+
+    func test_handleKeyDown_ignoredWhenClinicalNotesActive() async {
+        // Given - clinical-notes session active
+        sut.onClinicalNotesRecordingStart = { }
+        await sut.handleClinicalNotesKeyPress()
+        XCTAssertTrue(sut.isCurrentlyRecordingClinicalNotes)
+        var holdStartCalled = false
+        sut.onRecordingStart = { holdStartCalled = true }
+
+        // When
+        await sut.handleKeyDown()
+
+        // Then - hold mode rejected; clinical-notes session still owns the surface
+        XCTAssertFalse(holdStartCalled, "Hold start should not fire while clinical notes active")
+        XCTAssertFalse(sut.isCurrentlyProcessing)
+        XCTAssertTrue(sut.isCurrentlyRecordingClinicalNotes)
+    }
+
+    func test_handleToggleKeyPress_ignoredWhenClinicalNotesActive() async {
+        // Given - clinical-notes session active
+        sut.onClinicalNotesRecordingStart = { }
+        await sut.handleClinicalNotesKeyPress()
+        XCTAssertTrue(sut.isCurrentlyRecordingClinicalNotes)
+        var toggleStartCalled = false
+        sut.onRecordingStart = { toggleStartCalled = true }
+
+        // When
+        await sut.handleToggleKeyPress()
+
+        // Then - toggle mode rejected; clinical-notes session still owns the surface
+        XCTAssertFalse(toggleStartCalled, "Toggle start should not fire while clinical notes active")
+        XCTAssertFalse(sut.isCurrentlyInToggleMode)
+        XCTAssertTrue(sut.isCurrentlyRecordingClinicalNotes)
+    }
+
+    func test_clinicalNotesCycle_startsAndStopsCorrectly() async {
+        // Given
+        var startCount = 0
+        var stopCount = 0
+        sut.onClinicalNotesRecordingStart = { startCount += 1 }
+        sut.onClinicalNotesRecordingStop = { stopCount += 1 }
+
+        // When - three full cycles
+        for _ in 0..<3 {
+            await sut.handleClinicalNotesKeyPress() // start
+            XCTAssertTrue(sut.isCurrentlyRecordingClinicalNotes)
+            await sut.handleClinicalNotesKeyPress() // stop
+            XCTAssertFalse(sut.isCurrentlyRecordingClinicalNotes)
+        }
+
+        // Then
+        XCTAssertEqual(startCount, 3)
+        XCTAssertEqual(stopCount, 3)
+    }
+
+    func test_clinicalNotes_worksWhenCallbacksAreNil() async {
+        // Given - nil callbacks (the chord is bound but the wiring hasn't run yet)
+        sut.onClinicalNotesRecordingStart = nil
+        sut.onClinicalNotesRecordingStop = nil
+
+        // When/Then - should not crash; state still toggles
+        await sut.handleClinicalNotesKeyPress()
+        XCTAssertTrue(sut.isCurrentlyRecordingClinicalNotes)
+
+        await sut.handleClinicalNotesKeyPress()
+        XCTAssertFalse(sut.isCurrentlyRecordingClinicalNotes)
+    }
+
+    func test_cancel_resetsClinicalNotesState() async {
+        // Given - clinical-notes session active
+        sut.onClinicalNotesRecordingStart = { }
+        await sut.handleClinicalNotesKeyPress()
+        XCTAssertTrue(sut.isCurrentlyRecordingClinicalNotes)
+
+        // When
+        sut.cancel()
+
+        // Then
+        XCTAssertFalse(sut.isCurrentlyRecordingClinicalNotes, "Clinical-notes state should be reset")
+    }
 }

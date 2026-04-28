@@ -6,6 +6,7 @@
 // (AC4 of #7). Disabling the toggle is one click; un-storing credentials also
 // implicitly disables the experience.
 
+import KeyboardShortcuts
 import SwiftUI
 
 /// Settings section for Clinical Notes Mode + Cliniko credentials. The doctor
@@ -48,6 +49,10 @@ struct ClinicalNotesSection: View {
 
                 clinicalNotesModeRow
 
+                if showShortcutRow {
+                    clinicalNotesShortcutRow
+                }
+
                 connectionStatusCard
 
                 Divider().padding(.vertical, 4)
@@ -76,6 +81,11 @@ struct ClinicalNotesSection: View {
             // Reload settings on appear so a toggle change made elsewhere is
             // reflected the next time the user lands here.
             settings = settingsService.load()
+            // Sync the clinical-notes shortcut gate (#91) with the just-loaded
+            // state. Belt-and-braces — AppDelegate sets the launch-time gate,
+            // but this catches any drift if the section is presented after a
+            // settings change made elsewhere in the session.
+            applyClinicalNotesShortcutGate()
         }
         .onDisappear {
             errorDismissalTask?.cancel()
@@ -93,10 +103,23 @@ struct ClinicalNotesSection: View {
             // not a re-enable gesture. `applyClinicalNotesMode(false)`
             // would short-circuit the reset anyway, but the direct write
             // makes the intent unambiguous at the call site.
-            guard newValue == .absent, settings.general.clinicalNotesModeEnabled else { return }
-            settings.general.clinicalNotesModeEnabled = false
-            saveSettings()
+            if newValue == .absent, settings.general.clinicalNotesModeEnabled {
+                settings.general.clinicalNotesModeEnabled = false
+                saveSettings()
+            }
+            // Re-evaluate the clinical-notes shortcut gate (#91): a stale
+            // chord binding must not fire when the row is hidden, and a
+            // newly-saved credential should immediately re-arm the chord
+            // when the mode toggle is on.
+            applyClinicalNotesShortcutGate()
         }
+    }
+
+    /// Whether the clinical-notes recording shortcut row should appear (#91).
+    /// Mirrors the toggle's gating: visible only when the mode is on AND
+    /// Cliniko credentials are present.
+    private var showShortcutRow: Bool {
+        settings.general.clinicalNotesModeEnabled && viewModel.hasStoredCredentials
     }
 
     // MARK: - Section Header
@@ -169,8 +192,102 @@ struct ClinicalNotesSection: View {
                 // Mode."
                 settings.general.applyClinicalNotesMode(newValue)
                 saveSettings()
+                // Re-evaluate the clinical-notes shortcut gate (#91) so the
+                // chord cannot fire when the toggle is off, and is rearmed
+                // when the toggle is flipped back on with creds present.
+                applyClinicalNotesShortcutGate()
             }
         )
+    }
+
+    // MARK: - Clinical Notes Recording Shortcut (#91)
+
+    /// "Recording shortcut" row, conditionally rendered under the mode toggle.
+    /// Uses `ShortcutRecorderView` with a validator that rejects the same chord
+    /// already used by `.holdToRecord` or `.toggleRecording`.
+    private var clinicalNotesShortcutRow: some View {
+        HStack {
+            HStack(spacing: 12) {
+                Image(systemName: "keyboard")
+                    .font(.system(size: 18))
+                    .foregroundStyle(Color.warmAmber)
+                    .frame(width: 28)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Recording shortcut")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.primary)
+
+                    Text("Dedicated chord that opens the Clinical Notes recording window")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Spacer()
+
+            VStack(spacing: 4) {
+                ShortcutRecorderView(
+                    for: .clinicalNotesRecord,
+                    placeholder: "Set shortcut",
+                    validate: validateClinicalNotesShortcut(_:)
+                )
+                .accessibilityIdentifier("clinicalNotesRecordingShortcutRecorder")
+
+                Text("Click to change")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.cardBackgroundAdaptive)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color.cardBorderAdaptive, lineWidth: 1)
+                )
+        )
+        .accessibilityIdentifier("clinicalNotesRecordingShortcutRow")
+    }
+
+    /// Apply the gating rule for `.clinicalNotesRecord`: enable when the row
+    /// is showing (mode on + creds present), disable otherwise so a stale chord
+    /// can't fire after the doctor toggles off or removes credentials.
+    private func applyClinicalNotesShortcutGate() {
+        if showShortcutRow {
+            KeyboardShortcuts.enable(.clinicalNotesRecord)
+        } else {
+            KeyboardShortcuts.disable(.clinicalNotesRecord)
+        }
+    }
+
+    /// Validator for `ShortcutRecorderView`. Rejects a candidate chord that
+    /// matches an existing global shortcut so the doctor doesn't accidentally
+    /// override hold-to-record or toggle-recording.
+    private func validateClinicalNotesShortcut(_ candidate: KeyboardShortcuts.Shortcut) -> String? {
+        let bound: [(KeyboardShortcuts.Shortcut, String)] = [
+            (.holdToRecord, "Hold to Record"),
+            (.toggleRecording, "Toggle Recording")
+        ].compactMap { name, label in
+            KeyboardShortcuts.getShortcut(for: name).map { ($0, label) }
+        }
+        return Self.validateClinicalNotesShortcut(candidate, against: bound)
+    }
+
+    /// Pure-function form of the conflict validator (#91). Exposed at module
+    /// scope so unit tests can exercise the rule without seeding the shared
+    /// `KeyboardShortcuts` UserDefaults storage (which would leak across tests).
+    static func validateClinicalNotesShortcut(
+        _ candidate: KeyboardShortcuts.Shortcut,
+        against bound: [(KeyboardShortcuts.Shortcut, String)]
+    ) -> String? {
+        for (other, label) in bound where other == candidate {
+            return "This chord is already used by \(label). Choose a different one."
+        }
+        return nil
     }
 
     // MARK: - Save error banner

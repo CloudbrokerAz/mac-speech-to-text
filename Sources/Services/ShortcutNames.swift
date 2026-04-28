@@ -9,4 +9,10 @@ extension KeyboardShortcuts.Name {
 
     /// Toggle voice monitoring on/off
     static let toggleVoiceMonitoring = Self("toggleVoiceMonitoring")
+
+    /// Clinical Notes recording shortcut (#91). Unbound by default — the doctor
+    /// picks a chord in Settings → Clinical Notes Mode after the toggle is on
+    /// and Cliniko credentials are present. Default-unbound avoids surprise
+    /// OS / browser / IDE conflicts on install.
+    static let clinicalNotesRecord = Self("clinicalNotesRecord")
 }
