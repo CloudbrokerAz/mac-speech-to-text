@@ -35,7 +35,8 @@ struct ReviewViewModelTests {
 
     private func makeSessionWith(
         transcript: String = "Synthetic transcript.",
-        notes: StructuredNotes? = StructuredNotes()
+        notes: StructuredNotes? = StructuredNotes(),
+        status: ClinicalNotesDraftStatus = .ready
     ) -> SessionStore {
         let store = SessionStore()
         var recording = RecordingSession(language: "en", state: .completed)
@@ -44,6 +45,13 @@ struct ReviewViewModelTests {
         if let notes {
             store.setDraftNotes(notes)
         }
+        // `start(from:)` initialises status to `.pending` (the
+        // production default for the brief gap between Generate Notes
+        // and the first processor return). Most existing tests want
+        // the steady-state `.ready` rendering — the fixture flips
+        // explicitly so each `setValue` / re-add / toggle test
+        // exercises the post-LLM surface, not the pending overlay.
+        store.setDraftStatus(status)
         return store
     }
 
@@ -617,5 +625,118 @@ struct ReviewViewModelTests {
         #expect(!viewModel.isExcludedDrawerOpen)
         viewModel.toggleExcludedDrawer()
         #expect(viewModel.isExcludedDrawerOpen)
+    }
+
+    // MARK: - loadState transitions (#100)
+
+    /// Bug #100. The screen must distinguish "LLM still running" from
+    /// "LLM produced an empty draft" — both rendered identically pre-
+    /// fix (four blank `TextEditor`s). `loadState` is the signal the
+    /// view binds to.
+    @Test("loadState reflects SessionStore.draftStatus across pending → ready → fallback transitions")
+    func loadStateTracksDraftStatus() {
+        let store = makeSessionWith(notes: nil, status: .pending)
+        let viewModel = ReviewViewModel(sessionStore: store, manipulations: stubManipulations())
+
+        #expect(viewModel.loadState == .pending)
+        #expect(viewModel.isLoadingDraft)
+        #expect(!viewModel.isFallback)
+        #expect(viewModel.fallbackReasonCode == nil)
+
+        // Production-shaped success path: AppState writes the notes
+        // first, then flips status to .ready (so an observer that
+        // reads status doesn't see ".ready" paired with a still-nil
+        // draft).
+        store.setDraftNotes(StructuredNotes(subjective: "Pt reports neck pain"))
+        store.setDraftStatus(.ready)
+        #expect(viewModel.loadState == .ready)
+        #expect(!viewModel.isLoadingDraft)
+        #expect(!viewModel.isFallback)
+
+        // Fallback path: AppState seeds an empty draft + flips status
+        // to .fallback so the editors stay interactive.
+        store.setDraftNotes(StructuredNotes())
+        store.setDraftStatus(.fallback(reasonCode: "model_unavailable"))
+        #expect(viewModel.loadState == .fallback(reasonCode: "model_unavailable"))
+        #expect(!viewModel.isLoadingDraft)
+        #expect(viewModel.isFallback)
+        #expect(viewModel.fallbackReasonCode == "model_unavailable")
+    }
+
+    /// `loadState` defaults to `.fallback(reasonCode: "session_expired")`
+    /// when there is no active session — covers the
+    /// `SessionStore.checkIdleTimeout()` race where `active` is
+    /// cleared while the Review window is still on screen. Defaulting
+    /// to `.ready` would silently render the cleared session as a
+    /// successful steady state (silent-failure-hunter H3 on bug #100).
+    @Test("loadState defaults to .fallback(session_expired) when no session is active")
+    func loadStateDefaultsToSessionExpiredWithoutSession() {
+        let store = SessionStore()
+        let viewModel = ReviewViewModel(sessionStore: store, manipulations: stubManipulations())
+
+        #expect(viewModel.loadState == .fallback(
+            reasonCode: ClinicalNotesProcessor.reasonSessionExpired
+        ))
+        #expect(!viewModel.isLoadingDraft)
+        #expect(viewModel.isFallback)
+        #expect(viewModel.fallbackReasonCode == ClinicalNotesProcessor.reasonSessionExpired)
+    }
+
+    // MARK: - insertRawTranscriptIntoSubjective (#100)
+
+    @Test("insertRawTranscriptIntoSubjective seeds Subjective from the raw transcript")
+    func insertRawTranscriptIntoEmptySubjective() {
+        let store = makeSessionWith(
+            transcript: "Patient reports lower back pain since Tuesday.",
+            notes: StructuredNotes(),
+            status: .fallback(reasonCode: "model_unavailable")
+        )
+        let viewModel = ReviewViewModel(sessionStore: store, manipulations: stubManipulations())
+
+        viewModel.insertRawTranscriptIntoSubjective()
+
+        #expect(store.active?.draftNotes?.subjective == "Patient reports lower back pain since Tuesday.")
+        #expect(store.active?.draftNotes?.objective == "")
+    }
+
+    @Test("insertRawTranscriptIntoSubjective appends with a blank-line separator when Subjective is non-empty")
+    func insertRawTranscriptAppendsToExistingSubjective() {
+        var notes = StructuredNotes()
+        notes.subjective = "Pre-existing edit."
+        let store = makeSessionWith(
+            transcript: "Patient reports neck pain.",
+            notes: notes,
+            status: .fallback(reasonCode: "invalid_json_after_retry")
+        )
+        let viewModel = ReviewViewModel(sessionStore: store, manipulations: stubManipulations())
+
+        viewModel.insertRawTranscriptIntoSubjective()
+
+        #expect(store.active?.draftNotes?.subjective == "Pre-existing edit.\n\nPatient reports neck pain.")
+    }
+
+    @Test("insertRawTranscriptIntoSubjective is a no-op when the transcript is empty")
+    func insertRawTranscriptNoOpEmptyTranscript() {
+        let store = makeSessionWith(
+            transcript: "",
+            notes: StructuredNotes(),
+            status: .fallback(reasonCode: "model_unavailable")
+        )
+        let viewModel = ReviewViewModel(sessionStore: store, manipulations: stubManipulations())
+
+        viewModel.insertRawTranscriptIntoSubjective()
+
+        #expect(store.active?.draftNotes?.subjective == "")
+    }
+
+    @Test("insertRawTranscriptIntoSubjective without an active session surfaces a banner and does not mutate")
+    func insertRawTranscriptSurfacesBannerWithoutSession() {
+        let store = SessionStore()
+        let viewModel = ReviewViewModel(sessionStore: store, manipulations: stubManipulations())
+
+        viewModel.insertRawTranscriptIntoSubjective()
+
+        #expect(store.active == nil)
+        #expect(viewModel.errorMessage != nil)
     }
 }

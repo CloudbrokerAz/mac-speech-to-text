@@ -575,15 +575,17 @@ struct LiquidGlassRecordingModal: View {
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
-                            .background(
-                                LinearGradient(
-                                    colors: [Color.liquidPrismaticGreen, Color.liquidPrismaticCyan],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
+                            // #100 fix: the previous gradient used
+                            // `liquidPrismaticGreen` / `liquidPrismaticCyan`,
+                            // both deprecated aliases for `liquidGlassPrimary`
+                            // (#E8F4FC, near-white). White-on-near-white
+                            // rendered the button effectively invisible.
+                            // Switching to the Warm Minimalism amber gradient
+                            // matches the export CTA tint and gives the white
+                            // label adequate contrast.
+                            .background(LinearGradient.warmAmberGradient)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            .shadow(color: Color.liquidPrismaticGreen.opacity(0.4), radius: 8, y: 4)
+                            .shadow(color: Color.amberPrimary.opacity(0.4), radius: 8, y: 4)
                     }
                     .buttonStyle(.plain)
                     .keyboardShortcut(.return)

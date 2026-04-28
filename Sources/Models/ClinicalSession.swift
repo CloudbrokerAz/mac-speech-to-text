@@ -23,6 +23,16 @@ struct ClinicalSession: Sendable, Identifiable {
     /// transcript.
     var draftNotes: StructuredNotes?
 
+    /// Tri-state load signal driving the ReviewScreen's UX (#100):
+    /// `.pending` shows a generation overlay so the doctor never sees
+    /// blank editors silently; `.ready` is the existing edit surface;
+    /// `.fallback(reasonCode:)` surfaces a banner + raw-transcript
+    /// affordance so a model-unavailable / empty-SOAP / invalid-JSON
+    /// failure stays visible instead of degrading to "all empty".
+    /// `reasonCode` is a structural sentinel (e.g. `model_unavailable`,
+    /// `invalid_json_after_retry`) — never PHI.
+    var draftStatus: ClinicalNotesDraftStatus
+
     /// Snippets from `draftNotes.excluded` that the practitioner has
     /// re-added to a SOAP section. Tracked here (not in `StructuredNotes`)
     /// so the original LLM output stays immutable for audit-trail
@@ -51,6 +61,7 @@ struct ClinicalSession: Sendable, Identifiable {
         id: UUID = UUID(),
         recordingSession: RecordingSession,
         draftNotes: StructuredNotes? = nil,
+        draftStatus: ClinicalNotesDraftStatus = .pending,
         excludedReAdded: [String] = [],
         selectedPatientID: OpaqueClinikoID? = nil,
         selectedPatientDisplayName: String? = nil,
@@ -59,9 +70,33 @@ struct ClinicalSession: Sendable, Identifiable {
         self.id = id
         self.recordingSession = recordingSession
         self.draftNotes = draftNotes
+        self.draftStatus = draftStatus
         self.excludedReAdded = excludedReAdded
         self.selectedPatientID = selectedPatientID
         self.selectedPatientDisplayName = selectedPatientDisplayName
         self.selectedAppointmentID = selectedAppointmentID
     }
+}
+
+/// Where the SOAP draft is in its lifecycle for a single
+/// `ClinicalSession`. Drives the ReviewScreen's loading overlay
+/// (`.pending`) and raw-transcript fallback banner (`.fallback`).
+///
+/// `reasonCode` on `.fallback` is a structural sentinel matching
+/// `ClinicalNotesProcessor.reasonLLMError` /
+/// `.reasonInvalidJSONAfterRetry` /
+/// `.reasonAllSOAPEmptyAfterRetry`, plus AppState's
+/// `reasonModelUnavailable`. Never PHI — safe to log with
+/// `privacy: .public`.
+enum ClinicalNotesDraftStatus: Sendable, Equatable {
+    /// The processor has not returned yet. ReviewScreen shows a
+    /// "generating clinical note…" overlay over the SOAP editors.
+    case pending
+    /// `draftNotes` carries a valid LLM-produced SOAP draft. The
+    /// existing edit surface renders unchanged.
+    case ready
+    /// The pipeline could not produce a valid draft; the doctor edits
+    /// from scratch (or via "Insert raw transcript"). `reasonCode` is
+    /// a structural sentinel only.
+    case fallback(reasonCode: String)
 }

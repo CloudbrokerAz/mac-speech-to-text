@@ -63,10 +63,14 @@ final class ReviewScreenSnapshotTests: XCTestCase {
 
     /// Build a `ReviewViewModel` backed by a `SessionStore` populated
     /// with `notes` (or no draft if `notes` is `nil`) and `transcript`.
-    /// All synthetic data — no PHI.
+    /// `status` matches the production wiring (#100):
+    /// `.ready` for the post-LLM steady state used by `_typical` /
+    /// `_overflowYLong`, `.fallback` for the LLM-could-not-structure
+    /// surface used by `_empty`. All synthetic data — no PHI.
     private func makeViewModel(
         notes: StructuredNotes?,
-        transcript: String
+        transcript: String,
+        status: ClinicalNotesDraftStatus = .ready
     ) -> ReviewViewModel {
         let store = SessionStore()
         var recording = RecordingSession(language: "en", state: .completed)
@@ -75,6 +79,7 @@ final class ReviewScreenSnapshotTests: XCTestCase {
         if let notes {
             store.setDraftNotes(notes)
         }
+        store.setDraftStatus(status)
         return ReviewViewModel(
             sessionStore: store,
             manipulations: Self.snapshotManipulations
@@ -83,13 +88,18 @@ final class ReviewScreenSnapshotTests: XCTestCase {
 
     // MARK: - Snapshots
 
-    /// Empty draft: no `StructuredNotes`, the screen surfaces the
-    /// "compose from raw transcript" subtitle and disabled Export
-    /// button. Verifies the empty-state header + chip variant.
-    func test_reviewScreen_empty() {
+    /// Fallback render: the LLM could not produce a structured note,
+    /// so the screen surfaces the fallback banner + "Insert raw
+    /// transcript" affordance over empty editors (#100). Verifies the
+    /// post-fallback header + chip variant. Renamed from
+    /// `test_reviewScreen_empty` when the bug #100 fix shifted the
+    /// "no draft" state from "pre-seeded blank editors" to "fallback
+    /// banner over empty editors" (code-reviewer C2).
+    func test_reviewScreen_fallback() {
         let viewModel = makeViewModel(
-            notes: nil,
-            transcript: "Brief synthetic transcript for the empty-state snapshot."
+            notes: StructuredNotes(),
+            transcript: "Brief synthetic transcript for the empty-state snapshot.",
+            status: .fallback(reasonCode: ClinicalNotesProcessor.reasonAllSOAPEmptyAfterRetry)
         )
         let hosting = SnapshotHost.hosting(
             ReviewScreen(viewModel: viewModel),

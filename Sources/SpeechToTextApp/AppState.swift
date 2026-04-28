@@ -267,12 +267,20 @@ class AppState {
 
     /// Handle the Generate-Notes hand-off. Builds a minimal
     /// `RecordingSession` carrying the transcript, hops PHI into
-    /// `SessionStore`, seeds an empty `StructuredNotes` so the editor is
-    /// immediately interactive while the LLM runs, presents the review
-    /// window, then kicks off the LLM pipeline (#3) in a background
-    /// Task. When the processor returns, the draft is replaced with the
-    /// generated SOAP payload (or stays as the empty seed on
-    /// `.rawTranscriptFallback`, mirroring the existing UX contract).
+    /// `SessionStore`, presents the review window in a `.pending` load
+    /// state (so the editors render a "generating…" overlay rather than
+    /// silently-blank text fields), then kicks off the LLM pipeline (#3)
+    /// in a background Task. When the processor returns, the
+    /// `draftStatus` flips to `.ready` (with the generated SOAP draft)
+    /// or `.fallback(reasonCode:)` (with an empty-but-editable draft —
+    /// the practitioner edits manually or via "Insert raw transcript").
+    ///
+    /// Bug #100: previously this method seeded an empty
+    /// `StructuredNotes()` *before* the LLM ran, so any pipeline failure
+    /// (download, warmup, empty SOAP that snuck past validation, …) left
+    /// the Review screen rendering blank `TextEditor`s as if the model
+    /// had succeeded. The pre-seed is gone; the screen reads
+    /// `draftStatus` to render the correct surface.
     ///
     /// PHI: only the transcript length and "session started" structural
     /// markers cross the log boundary. The transcript itself flows into
@@ -290,14 +298,17 @@ class AppState {
         recording.transcribedText = transcript
 
         sessionStore.start(from: recording)
-        sessionStore.setDraftNotes(StructuredNotes())
+        // `start(from:)` initialises `draftStatus` to `.pending` via the
+        // `ClinicalSession` init default; the Review window picks that up
+        // and shows the generation overlay. No `setDraftNotes` here —
+        // pre-seeding an empty draft was the bug #100 root cause.
 
         ReviewWindowController.shared.present()
 
         // Kick off LLM processing without blocking the UI present.
         // `runClinicalNotesPipeline` ensures-download + warms-up + runs
-        // the processor; any failure resolves to the existing empty-draft
-        // fallback so the practitioner can edit manually.
+        // the processor; every terminal branch flips `draftStatus` so
+        // the Review screen never silently lingers in `.pending`.
         Task { @MainActor [weak self] in
             await self?.runClinicalNotesPipeline(transcript: transcript)
         }
@@ -306,9 +317,10 @@ class AppState {
     /// Drive the LLM pipeline end-to-end for a single transcript. Idempotent
     /// across model state — re-entry while a download is in flight returns
     /// fast (the downloader is itself idempotent + actor-serialised).
-    /// Failures are absorbed into structural log entries and leave the
-    /// existing empty `StructuredNotes` draft in place so the practitioner
-    /// keeps a working surface.
+    /// Every terminal branch flips `SessionStore.draftStatus` so the
+    /// Review screen surfaces the correct UX (loading overlay, ready
+    /// editors, or fallback banner). Failures resolve to a fallback with
+    /// a structural reason sentinel — never PHI.
     private func runClinicalNotesPipeline(transcript: String) async {
         guard
             let downloader = modelDownloader,
@@ -318,6 +330,10 @@ class AppState {
             AppLogger.app.warning(
                 "AppState: clinical-notes pipeline unavailable (missing manifest or template)"
             )
+            // The Review window is already on screen in `.pending`; flip
+            // it to fallback so the editors become interactive and the
+            // banner explains why the LLM never ran.
+            applyClinicalNotesFallback(reasonCode: ClinicalNotesProcessor.reasonModelUnavailable)
             return
         }
         do {
@@ -350,12 +366,18 @@ class AppState {
             if llmDownloadState != .cancelled {
                 llmDownloadState = .cancelled
             }
+            // Pipeline cancellation leaves the Review screen alive (the
+            // user may have backgrounded the app, not closed the window);
+            // surface the same fallback so the editors are interactive
+            // rather than stuck in `.pending`.
+            applyClinicalNotesFallback(reasonCode: ClinicalNotesProcessor.reasonModelUnavailable)
             return
         } catch {
             AppLogger.app.error(
                 "AppState: clinical-notes warmup failed kind=\(String(describing: type(of: error)), privacy: .public)"
             )
             llmDownloadState = .failed
+            applyClinicalNotesFallback(reasonCode: ClinicalNotesProcessor.reasonModelUnavailable)
             return
         }
 
@@ -363,12 +385,27 @@ class AppState {
         switch outcome {
         case .success(let notes):
             sessionStore.setDraftNotes(notes)
+            sessionStore.setDraftStatus(.ready)
             AppLogger.app.info("AppState: clinical-notes draft populated")
         case .rawTranscriptFallback(let reason):
             AppLogger.app.info(
                 "AppState: clinical-notes fell back reason=\(reason, privacy: .public)"
             )
+            applyClinicalNotesFallback(reasonCode: reason)
         }
+    }
+
+    /// Flip the Review surface to fallback UX with a structural reason
+    /// code (`reasonModelUnavailable`, `reasonLLMError`,
+    /// `reasonInvalidJSONAfterRetry`, `reasonAllSOAPEmptyAfterRetry`).
+    /// Seeds an empty `StructuredNotes` so the editors are interactive
+    /// — the doctor edits manually or taps "Insert raw transcript" on
+    /// the fallback banner. Idempotent — ordered as draft-then-status
+    /// so observers that read the status don't see `.fallback` paired
+    /// with a still-`nil` draft.
+    private func applyClinicalNotesFallback(reasonCode: String) {
+        sessionStore.setDraftNotes(StructuredNotes())
+        sessionStore.setDraftStatus(.fallback(reasonCode: reasonCode))
     }
 
     /// Translate a `ModelDownloader.DownloadProgress` event into the

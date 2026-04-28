@@ -171,9 +171,14 @@ struct ReviewScreen: View {
     }
 
     private var headerSubtitle: String {
-        viewModel.hasDraft
-            ? "Review and edit the AI-drafted note before exporting."
-            : "No draft yet — compose the note from the raw transcript."
+        switch viewModel.loadState {
+        case .pending:
+            return "Generating clinical note…"
+        case .ready:
+            return "Review and edit the AI-drafted note before exporting."
+        case .fallback:
+            return "Couldn't structure the note — review the raw transcript and edit manually."
+        }
     }
 
     private var draftBadge: some View {
@@ -210,6 +215,10 @@ struct ReviewScreen: View {
     private var soapColumn: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                if viewModel.isFallback {
+                    fallbackBanner
+                }
+
                 ForEach(SOAPField.allCases, id: \.self) { field in
                     SOAPSectionEditor(
                         field: field,
@@ -220,6 +229,13 @@ struct ReviewScreen: View {
                 }
             }
             .padding(16)
+            // `.disabled(...)` covers the race where the doctor tabs
+            // into a `TextEditor` and types while the LLM is still
+            // running — the next `setDraftNotes(notes)` write on
+            // `.ready` would clobber their typing. The pending overlay
+            // is decorative (`.ultraThinMaterial`) and does not block
+            // hit-testing on its own (code-reviewer C1 on bug #100).
+            .disabled(viewModel.isLoadingDraft)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(Color.cardBackgroundAdaptive)
@@ -229,8 +245,97 @@ struct ReviewScreen: View {
                     .stroke(Color.subtleBorderAdaptive, lineWidth: 1)
             )
             .shadow(color: Color.cardShadowAdaptive, radius: 6, x: 0, y: 2)
+            .overlay {
+                if viewModel.isLoadingDraft {
+                    pendingOverlay
+                }
+            }
         }
         .accessibilityIdentifier("reviewScreen.soapColumn")
+    }
+
+    /// Loading overlay shown while `ClinicalNotesProcessor` is running
+    /// (#100). Keeps the SOAP card visible underneath so the layout
+    /// doesn't jump on transition to `.ready` / `.fallback`. Drives the
+    /// doctor's expectation that the editors are not yet authoritative.
+    private var pendingOverlay: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+
+            VStack(spacing: 10) {
+                ProgressView()
+                    .controlSize(.large)
+                    .accessibilityIdentifier("reviewScreen.soapColumn.pending.progress")
+                Text("Generating clinical note…")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.primary)
+                Text("This usually takes a few seconds.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 28)
+            .padding(.horizontal, 32)
+        }
+        .accessibilityIdentifier("reviewScreen.soapColumn.pendingOverlay")
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Generating clinical note")
+    }
+
+    /// Inline banner shown above the SOAP editors when the pipeline
+    /// fell back. Includes an "Insert raw transcript" affordance so
+    /// the doctor never has to copy/paste from the read-only sheet
+    /// just to populate Subjective. The banner copy stays structural —
+    /// no PHI, no quoted error message — so the same surface is safe
+    /// for every fallback `reasonCode`.
+    private var fallbackBanner: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color.amberBright)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Couldn't generate a structured note.")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.primary)
+                Text(fallbackBannerSubtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            Button {
+                viewModel.insertRawTranscriptIntoSubjective()
+            } label: {
+                Label("Insert raw transcript", systemImage: "text.append")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color.amberPrimary)
+            .disabled(!viewModel.hasTranscript)
+            .accessibilityIdentifier("reviewScreen.fallback.insertRawTranscript")
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.amberLight.opacity(0.25))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.amberPrimary.opacity(0.4), lineWidth: 1)
+        )
+        .accessibilityIdentifier("reviewScreen.fallbackBanner")
+    }
+
+    /// Banner copy. Currently a single sentence regardless of
+    /// `fallbackReasonCode` — the codes are diagnostic, not user-
+    /// facing. Future copy could branch on `reasonCode == "model_unavailable"`
+    /// to nudge toward Settings; for now the unified surface keeps
+    /// the doctor's attention on editing.
+    private var fallbackBannerSubtitle: String {
+        "Edit the SOAP sections manually, or insert the raw transcript into Subjective as a starting point."
     }
 
     // MARK: Sidebar column

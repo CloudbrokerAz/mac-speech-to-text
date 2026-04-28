@@ -8,7 +8,7 @@ Output rules:
 - Strip small talk, social pleasantries, unrelated tangents, and any content that does not belong in a clinical note. Return those excluded snippets verbatim in "excluded_content" so the reviewing practitioner can re-add anything worth keeping.
 - "manipulations" must reference techniques from AVAILABLE MANIPULATIONS by their "name" exactly as listed. Include a confidence score in the closed interval [0.0, 1.0]. Do not invent techniques that are not on the list.
 - If the transcript does not describe any manipulation, return "manipulations": [].
-- Empty SOAP sections are acceptable when the transcript genuinely does not contain that information — return "" (not null) for the section.
+- Some SOAP sections may legitimately be empty if the transcript does not cover that topic — return "" (not null) for the section. However, AT LEAST ONE of subjective / objective / assessment / plan MUST contain content. Returning all four sections empty is invalid output. If the transcript appears to contain no clinical material, populate the "subjective" section with a one-line summary of what the patient actually said (e.g. "Patient reported lower back pain.") so the reviewing practitioner has a starting point to edit from.
 
 JSON schema:
 {
