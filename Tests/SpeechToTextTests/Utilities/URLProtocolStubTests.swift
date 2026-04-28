@@ -25,7 +25,7 @@ final class URLProtocolStubTests: XCTestCase {
         }
         let session = URLSession(configuration: config)
 
-        let url = URL(string: "https://api.au1.cliniko.com/v1/user")!
+        let url = try XCTUnwrap(URL(string: "https://api.au1.cliniko.com/v1/user"))
         let (data, response) = try await session.data(from: url)
 
         let http = try XCTUnwrap(response as? HTTPURLResponse)
