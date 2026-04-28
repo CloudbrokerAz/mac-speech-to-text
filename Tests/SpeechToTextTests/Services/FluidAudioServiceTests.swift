@@ -263,4 +263,13 @@ final class FluidAudioServiceTests: XCTestCase {
         let finalLanguage = await service.getCurrentLanguage()
         XCTAssertTrue(languages.contains(finalLanguage))
     }
+
+    // MARK: - Reentrancy Guard Tests (#40d)
+    //
+    // The reentrancy / single-flight tests for #40d live in the
+    // sibling Swift Testing suite
+    // `FluidAudioServiceReentrancyTests.swift` (per the styleguide:
+    // new pure-logic / async tests use `@Test` / `#expect`, tagged
+    // `.fast` / `.slow`). This XCTestCase remains for the pre-existing
+    // init / language / shutdown / error-description coverage.
 }
