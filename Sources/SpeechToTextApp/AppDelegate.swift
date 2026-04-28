@@ -342,13 +342,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
-            print("[DEBUG] voiceTriggerEnabledDidChange notification received")
-            fflush(stdout)
+            AppLogger.debug(AppLogger.app, "voiceTriggerEnabledDidChange notification received (enabled=\(enabled))")
             Task { @MainActor in
                 guard let self else { return }
-                print("[DEBUG] Voice trigger enabled = \(enabled)")
-                fflush(stdout)
-
                 if enabled {
                     AppLogger.app.info("Voice triggers enabled via settings - starting monitoring")
                     await self.startVoiceMonitoring()
