@@ -20,12 +20,12 @@ final class URLProtocolStubTests: XCTestCase {
                 httpVersion: "HTTP/1.1",
                 headerFields: ["Content-Type": "application/json"]
             )!
-            let body = try HTTPStubFixture.load("cliniko/responses/users_me.json")
+            let body = try HTTPStubFixture.load("cliniko/responses/user.json")
             return (response, body)
         }
         let session = URLSession(configuration: config)
 
-        let url = URL(string: "https://api.au1.cliniko.com/v1/users/me")!
+        let url = URL(string: "https://api.au1.cliniko.com/v1/user")!
         let (data, response) = try await session.data(from: url)
 
         let http = try XCTUnwrap(response as? HTTPURLResponse)
@@ -143,7 +143,7 @@ final class URLProtocolStubTests: XCTestCase {
             }
         }
 
-        let decoded = try HTTPStubFixture.loadJSON(UserMe.self, "cliniko/responses/users_me.json")
+        let decoded = try HTTPStubFixture.loadJSON(UserMe.self, "cliniko/responses/user.json")
         XCTAssertEqual(decoded, UserMe(
             id: 12345,
             firstName: "Sample",
@@ -160,7 +160,7 @@ final class URLProtocolStubTests: XCTestCase {
         }
 
         XCTAssertThrowsError(
-            try HTTPStubFixture.loadJSON(WrongShape.self, "cliniko/responses/users_me.json")
+            try HTTPStubFixture.loadJSON(WrongShape.self, "cliniko/responses/user.json")
         ) { error in
             XCTAssertTrue(error is DecodingError,
                           "expected DecodingError, got \(type(of: error)): \(error)")
@@ -208,18 +208,18 @@ final class URLProtocolStubTests: XCTestCase {
     /// request.url?.path { … }` inside a single closure. Uses the
     /// `Route.path(_:method:respond:)` convenience builder.
     func test_routes_dispatchToFirstMatchingEndpoint() async throws {
-        let usersMeURL = try XCTUnwrap(URL(string: "https://api.au1.cliniko.com/v1/users/me"))
+        let usersMeURL = try XCTUnwrap(URL(string: "https://api.au1.cliniko.com/v1/user"))
         let patientsURL = try XCTUnwrap(URL(string: "https://api.au1.cliniko.com/v1/patients?q=sample"))
 
         let config = URLProtocolStub.install(routes: [
-            .path("/v1/users/me", respond: { request in
+            .path("/v1/user", respond: { request in
                 let response = try XCTUnwrap(HTTPURLResponse(
                     url: request.url ?? usersMeURL,
                     statusCode: 200,
                     httpVersion: "HTTP/1.1",
                     headerFields: ["Content-Type": "application/json"]
                 ))
-                let body = try HTTPStubFixture.load("cliniko/responses/users_me.json")
+                let body = try HTTPStubFixture.load("cliniko/responses/user.json")
                 return (response, body)
             }),
             .path("/v1/patients", respond: { request in
@@ -251,7 +251,7 @@ final class URLProtocolStubTests: XCTestCase {
         // `Route.path` defaults to GET — a POST to the same path must miss.
         let fallback = try XCTUnwrap(URL(string: "https://example.test"))
         let config = URLProtocolStub.install(routes: [
-            .path("/v1/users/me", respond: { request in
+            .path("/v1/user", respond: { request in
                 let response = try XCTUnwrap(HTTPURLResponse(
                     url: request.url ?? fallback,
                     statusCode: 200,
@@ -263,7 +263,7 @@ final class URLProtocolStubTests: XCTestCase {
         ])
         let session = URLSession(configuration: config)
 
-        let postURL = try XCTUnwrap(URL(string: "https://example.test/v1/users/me"))
+        let postURL = try XCTUnwrap(URL(string: "https://example.test/v1/user"))
         var post = URLRequest(url: postURL)
         post.httpMethod = "POST"
 
@@ -282,7 +282,7 @@ final class URLProtocolStubTests: XCTestCase {
     func test_routes_unmatchedRequest_throwsDescriptiveURLError() async throws {
         let fallback = try XCTUnwrap(URL(string: "https://example.test"))
         let config = URLProtocolStub.install(routes: [
-            .path("/v1/users/me", respond: { request in
+            .path("/v1/user", respond: { request in
                 let response = try XCTUnwrap(HTTPURLResponse(
                     url: request.url ?? fallback,
                     statusCode: 200,

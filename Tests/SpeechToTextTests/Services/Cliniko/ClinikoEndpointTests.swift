@@ -11,9 +11,12 @@ struct ClinikoEndpointTests {
 
     @Test("usersMe is a GET with the right template")
     func usersMeShape() {
+        // Cliniko's authenticated-user endpoint is `/v1/user` (singular, no
+        // id). The earlier `/users/me` wiring 404'd because Cliniko routes
+        // `/users/{id}` numerically — see #88.
         let endpoint = ClinikoEndpoint.usersMe
         #expect(endpoint.method == .get)
-        #expect(endpoint.pathTemplate == "/users/me")
+        #expect(endpoint.pathTemplate == "/user")
         #expect(endpoint.body == nil)
         #expect(endpoint.contentType == nil)
         #expect(endpoint.isIdempotent)
@@ -60,10 +63,10 @@ struct ClinikoEndpointTests {
 
     // MARK: - URL building
 
-    @Test("usersMe URL is /v1/users/me")
+    @Test("usersMe URL is /v1/user")
     func usersMeURL() {
         let url = ClinikoEndpoint.usersMe.buildURL(against: baseURL)
-        #expect(url?.absoluteString == "https://api.au1.cliniko.com/v1/users/me")
+        #expect(url?.absoluteString == "https://api.au1.cliniko.com/v1/user")
     }
 
     @Test("patientSearch URL encodes the query")

@@ -20,7 +20,7 @@ Fixtures/
 
 ## Naming
 
-Use `snake_case` that matches the endpoint, e.g. `users_me.json`,
+Use `snake_case` that matches the endpoint, e.g. `user.json`,
 `patients_search.json`. For variants of the same endpoint, add a suffix:
 `patients_search_empty.json`, `patients_search_paginated.json`.
 

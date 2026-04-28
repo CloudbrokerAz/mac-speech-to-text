@@ -49,7 +49,7 @@ final class ClinikoClientTests: XCTestCase {
         let captured = CapturedRequest()
         let session = makeSession { request in
             captured.set(request)
-            let body = try HTTPStubFixture.load("cliniko/responses/users_me.json")
+            let body = try HTTPStubFixture.load("cliniko/responses/user.json")
             let response = HTTPURLResponse(
                 url: request.url!,
                 statusCode: 200,
@@ -70,7 +70,7 @@ final class ClinikoClientTests: XCTestCase {
         ))
         let request = try XCTUnwrap(captured.value)
         XCTAssertEqual(request.httpMethod, "GET")
-        XCTAssertEqual(request.url?.absoluteString, "https://api.au1.cliniko.com/v1/users/me")
+        XCTAssertEqual(request.url?.absoluteString, "https://api.au1.cliniko.com/v1/user")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "application/json")
         XCTAssertEqual(request.value(forHTTPHeaderField: "User-Agent"), "client-tests/1.0")
         let auth = try XCTUnwrap(request.value(forHTTPHeaderField: "Authorization"))
@@ -113,8 +113,8 @@ final class ClinikoClientTests: XCTestCase {
     /// `URLProtocolStubGate` lands.
     func test_sendWithStatus_returnsActualStatusFromResponse() async throws {
         let session = makeSession { request in
-            let body = try HTTPStubFixture.load("cliniko/responses/users_me.json")
-            // 200 — the documented status for /users/me.
+            let body = try HTTPStubFixture.load("cliniko/responses/user.json")
+            // 200 — the documented status for /user.
             let response = HTTPURLResponse(
                 url: request.url!,
                 statusCode: 200,
@@ -160,7 +160,7 @@ final class ClinikoClientTests: XCTestCase {
     /// the tuple shouldn't get a different value than they did before.
     func test_send_stillDecodesBody_whenCallerIgnoresStatus() async throws {
         let session = makeSession { request in
-            let body = try HTTPStubFixture.load("cliniko/responses/users_me.json")
+            let body = try HTTPStubFixture.load("cliniko/responses/user.json")
             let response = HTTPURLResponse(
                 url: request.url!,
                 statusCode: 200,
@@ -276,7 +276,7 @@ final class ClinikoClientTests: XCTestCase {
                 let response = HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil, headerFields: nil)!
                 return (response, Data())
             }
-            let body = try HTTPStubFixture.load("cliniko/responses/users_me.json")
+            let body = try HTTPStubFixture.load("cliniko/responses/user.json")
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, body)
         }
@@ -342,7 +342,7 @@ final class ClinikoClientTests: XCTestCase {
                 )!
                 return (response, Data())
             }
-            let body = try HTTPStubFixture.load("cliniko/responses/users_me.json")
+            let body = try HTTPStubFixture.load("cliniko/responses/user.json")
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, body)
         }
@@ -483,7 +483,7 @@ final class ClinikoClientTests: XCTestCase {
                 )!
                 return (response, Data())
             }
-            let body = try HTTPStubFixture.load("cliniko/responses/users_me.json")
+            let body = try HTTPStubFixture.load("cliniko/responses/user.json")
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, body)
         }
@@ -521,7 +521,7 @@ final class ClinikoClientTests: XCTestCase {
                 )!
                 return (response, Data())
             }
-            let body = try HTTPStubFixture.load("cliniko/responses/users_me.json")
+            let body = try HTTPStubFixture.load("cliniko/responses/user.json")
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, body)
         }

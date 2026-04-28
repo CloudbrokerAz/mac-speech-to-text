@@ -27,7 +27,7 @@ For the PHI rules every file here enforces, see
 | `ClinikoError.swift` | Typed error set: `.unauthenticated`, `.forbidden`, `.notFound(resource:)`, `.validation(fields:)`, `.rateLimited(retryAfter:)`, `.server(status:)`, `.transport(URLError.Code)`, `.cancelled`, `.decoding(typeName:)`, `.nonHTTPResponse`. All payloads are structural — the whole enum is safe to interpolate at `OSLog` `.public`. |
 | `ClinikoCredentialStore.swift` | `actor` adapter over a `SecureStore` for the API key (Keychain) plus a `nonisolated` `UserDefaults` accessor for the shard. Owns the `serviceName`, account, and shard-key constants. Note: `KeychainSecureStore` (the generic Keychain wrapper) lives at `../KeychainSecureStore.swift` because it is not Cliniko-specific. |
 | `ClinikoShard.swift` | Regional-shard enum (`au1` … `eu1`) with `apiHost` + `displayName`. The single source of truth for the subdomain — no hostname strings live elsewhere in the codebase. |
-| `ClinikoAuthProbe.swift` | Standalone `actor` issuing `GET /users/me` for the Settings "Test connection" button (#7). Predates `ClinikoClient`; will likely fold into `client.send(.usersMe)` in a follow-up. |
+| `ClinikoAuthProbe.swift` | Standalone `actor` issuing `GET /user` (Cliniko's authenticated-user endpoint) for the Settings "Test connection" button (#7). Predates `ClinikoClient`; will likely fold into `client.send(.usersMe)` in a follow-up. The `usersMe` case name is preserved for source-compat — only the wire path is `/user`. The earlier `/users/me` wiring 404'd; see #88. |
 | `ClinikoPatientService.swift` | `actor` conforming to the actor-constrained protocol `ClinikoPatientSearching`. Thin wrapper around `client.send(.patientSearch(query:))`. The picker debounces; this layer is stateless. |
 | `ClinikoAppointmentService.swift` | `actor` conforming to `ClinikoAppointmentLoading`. Computes a UTC-pinned `[reference − 7 days, reference + 1 day)` window and delegates to `client.send(.patientAppointments(...))`. |
 | `TreatmentNoteExporter.swift` | `actor` orchestrating the `POST /treatment_notes` flow: composes the wire payload from `StructuredNotes` + selected manipulations, calls `client.send(.createTreatmentNote(body:))`, and on a successful 201 writes a metadata-only `AuditRecord`. Audit-write failure is non-fatal (returns `ExportOutcome(auditPersisted: false)`) so a ledger error never tempts a duplicate POST. |
@@ -98,7 +98,7 @@ route — auto-detection is a possible follow-up.
 `ClinikoClient` exposes two public entry points:
 
 - `send<T>(_:) async throws -> T` — the common path; most call sites
-  (patient search, appointment list, `/users/me`) don't care about the
+  (patient search, appointment list, `/user`) don't care about the
   status and use this.
 - `sendWithStatus<T>(_:) async throws -> (T, Int)` — additive overload
   that surfaces the actual 2xx status the server returned. Use this

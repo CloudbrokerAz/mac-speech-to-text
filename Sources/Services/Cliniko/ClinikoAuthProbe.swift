@@ -26,16 +26,21 @@ public enum ClinikoAuthProbeError: Error, Sendable, Equatable, CustomStringConve
     }
 }
 
-/// Minimal `GET /users/me` probe used by the Cliniko settings UI to verify
-/// that a freshly entered API key works. This is intentionally narrower than
-/// the full `ClinikoClient` planned for #8 — once that lands, the probe will
-/// be expressed as `clinikoClient.send(.usersMe)`. Until then, a small
+/// Minimal `GET /user` probe used by the Cliniko settings UI to verify that
+/// a freshly entered API key works. This is intentionally narrower than the
+/// full `ClinikoClient` planned for #8 — once that lands, the probe will be
+/// expressed as `clinikoClient.send(.usersMe)`. Until then, a small
 /// dependency-free actor here keeps #7 self-contained without pre-empting #8's
 /// design.
 ///
-/// PHI: `/users/me` returns the practitioner's account, **not** patient data,
-/// so the response body is non-PHI. Logs still avoid the response body and
-/// any URL details — only the structural status / error case is emitted.
+/// The path is `/user` (singular, no id) — Cliniko's actual authenticated-user
+/// endpoint per https://docs.api.cliniko.com/openapi/user. The earlier
+/// `/users/me` wiring 404'd because Cliniko routes `/users/{id}` numerically
+/// and `me` is not a numeric id; see #88 for the bug + fix history.
+///
+/// PHI: `/user` returns the practitioner's account, **not** patient data, so
+/// the response body is non-PHI. Logs still avoid the response body and any
+/// URL details — only the structural status / error case is emitted.
 public actor ClinikoAuthProbe {
     /// Default `User-Agent` exposed for tests. Cliniko requires the header to
     /// be non-empty and to embed a contact reference per their docs (see
@@ -55,12 +60,12 @@ public actor ClinikoAuthProbe {
         self.userAgent = userAgent ?? Self.defaultUserAgent
     }
 
-    /// Issue `GET /users/me` against Cliniko using `credentials`. Returns
+    /// Issue `GET /user` against Cliniko using `credentials`. Returns
     /// successfully on any 2xx response, throws a typed `ClinikoAuthProbeError`
     /// otherwise. The response body is discarded — we only care that the key
     /// authenticates.
     public func ping(credentials: ClinikoCredentials) async throws {
-        var request = URLRequest(url: credentials.baseURL.appendingPathComponent("users/me"))
+        var request = URLRequest(url: credentials.baseURL.appendingPathComponent("user"))
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
