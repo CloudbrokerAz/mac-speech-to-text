@@ -111,8 +111,18 @@ final class MenuBarViewModel {
     /// `.showRecordingModal` notification the dedicated hotkey (#91) uses, so
     /// the existing AppDelegate observer presents `LiquidGlassRecordingModal`
     /// (which auto-starts recording on present via its `.task(id:)`).
+    ///
+    /// `userInfo["clinicalMode"] = true` (#98) is the seam by which the
+    /// observer constructs the view model with the PHI invariant active.
+    /// Without it, the modal would route through the general-dictation
+    /// paste path and leak the transcript into the focused app /
+    /// `NSPasteboard.general` — same gap that motivated #98.
     func startClinicalNote() {
-        NotificationCenter.default.post(name: .showRecordingModal, object: nil)
+        NotificationCenter.default.post(
+            name: .showRecordingModal,
+            object: nil,
+            userInfo: ["clinicalMode": true]
+        )
     }
 
     /// Quit the application

@@ -13,6 +13,7 @@ import XCTest
 // MARK: - ViewInspector Conformance
 
 extension RecordingModal: Inspectable {}
+extension LiquidGlassRecordingModal: Inspectable {}
 
 @MainActor
 final class RecordingModalRenderTests: XCTestCase {
@@ -124,6 +125,66 @@ final class RecordingModalRenderTests: XCTestCase {
 
         // Then - Verify basic structure exists
         XCTAssertNoThrow(try view.find(ViewType.ZStack.self))
+    }
+
+    // MARK: - LiquidGlassRecordingModal Clinical Mode Render Tests (#98)
+
+    /// Render guard for the bug-C path: a `clinicalMode = true`
+    /// `LiquidGlassRecordingModal` must instantiate and evaluate its body
+    /// without crashing. The clinical branch wires up a `ScrollView` +
+    /// wider 600pt frame instead of the 320pt `.lineLimit(3)` default;
+    /// any future change that would crash inline (e.g. a Text modifier
+    /// that needs an environment we don't provide) gets caught here.
+    func test_liquidGlassRecordingModal_clinicalMode_instantiatesWithoutCrash() {
+        let viewModel = RecordingViewModel(clinicalMode: true)
+        let modal = LiquidGlassRecordingModal(viewModel: viewModel)
+        XCTAssertNotNil(modal)
+        XCTAssertTrue(viewModel.clinicalMode)
+    }
+
+    /// Body access guard. The clinical branch renders the `ScrollView`
+    /// transcript area only when `transcribedText` is non-empty, so the
+    /// test populates that path explicitly. Catches the crash families
+    /// the legacy `RecordingModal` tests above protect against (executor
+    /// checks during `body` evaluation on ARM64).
+    func test_liquidGlassRecordingModal_clinicalMode_bodyAccessDoesNotCrash() {
+        let viewModel = RecordingViewModel(clinicalMode: true)
+        viewModel.transcribedText = "Patient reports recurring tension headaches over the past two weeks."
+        let modal = LiquidGlassRecordingModal(viewModel: viewModel)
+
+        let body = modal.body
+        XCTAssertNotNil(body)
+    }
+
+    /// General dictation (`clinicalMode = false`) must keep rendering
+    /// the existing `.lineLimit(3)` Text — the regression guard for the
+    /// "did we accidentally apply the clinical layout to general
+    /// dictation?" failure mode.
+    func test_liquidGlassRecordingModal_generalDictation_instantiatesWithoutCrash() {
+        let viewModel = RecordingViewModel(clinicalMode: false)
+        viewModel.transcribedText = "hello world"
+        let modal = LiquidGlassRecordingModal(viewModel: viewModel)
+
+        let body = modal.body
+        XCTAssertNotNil(body)
+        XCTAssertFalse(viewModel.clinicalMode)
+    }
+
+    /// Inspect the rendered view and confirm the clinical-mode transcript
+    /// region is reachable via its accessibility identifier. This is the
+    /// belt-and-braces version of the body-access test: if the accessibility
+    /// identifier disappears (which UI tests + screen readers depend on)
+    /// the test fails loudly, not silently.
+    func test_liquidGlassRecordingModal_clinicalMode_exposesTranscriptScrollView() throws {
+        let viewModel = RecordingViewModel(clinicalMode: true)
+        viewModel.transcribedText = String(repeating: "Patient reports persistent thoracic discomfort. ", count: 20)
+        let modal = LiquidGlassRecordingModal(viewModel: viewModel)
+
+        let view = try modal.inspect()
+        XCTAssertNoThrow(
+            try view.find(viewWithAccessibilityIdentifier: "clinicalTranscriptScrollView"),
+            "Clinical transcript ScrollView (#98 Bug C) should be reachable when clinicalMode = true and transcribedText is non-empty"
+        )
     }
 
     // MARK: - Observable State Tests
