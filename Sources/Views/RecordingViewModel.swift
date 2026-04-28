@@ -721,32 +721,42 @@ final class RecordingViewModel {
             try await insertText(result.text)
 
         } catch {
-            AppLogger.error(AppLogger.viewModel, "[\(viewModelId)] Transcription failed: \(error.localizedDescription)")
-            isTranscribing = false
-            isInserting = false  // Reset insertion flag in case error occurred during insertion phase
-            // #98: in clinical mode, suppress `error.localizedDescription`
-            // from the user-visible / persisted error message AND from the
-            // re-thrown error's payload. FluidAudio errors may pack
-            // decode-derived strings into their description (model-load
-            // failures, partial-decode dumps). `errorMessage` both renders
-            // on screen *and* — once `stopRecording`'s outer catch reads
-            // `error.localizedDescription` from the rethrow — gets
-            // overwritten with that propagated string, so sanitising both
-            // sides keeps the inert text wins. The session's `errorMessage`
-            // also feeds `StatisticsService.extractErrorType`; we sanitise
-            // it for the same reason. The structural error type is already
-            // logged above at `.error` level.
-            let inertClinicalMessage = "Please try recording again."
-            let surfacedMessage = clinicalMode ? inertClinicalMessage : error.localizedDescription
-            errorMessage = "Transcription failed: \(surfacedMessage)"
-            // Re-fetch session to avoid overwriting concurrent changes (bug fix)
-            if var updatedSession = currentSession, currentSessionId == startSessionId {
-                updatedSession.errorMessage = surfacedMessage
-                updatedSession.state = .cancelled
-                self.currentSession = updatedSession
-            }
-            throw RecordingError.transcriptionFailed(surfacedMessage)
+            throw handleTranscriptionError(error, startSessionId: startSessionId)
         }
+    }
+
+    /// Shared catch handler for `transcribe(samples:sampleRate:)` and
+    /// `transcribeWithFallback(samples:sampleRate:)`. Both pipelines need
+    /// the same state reset + #98 PHI sanitisation; extracted per Gemini
+    /// review on PR #99 to keep the invariant in one place.
+    ///
+    /// In clinical mode, suppresses `error.localizedDescription` from the
+    /// user-visible / persisted error message *and* from the re-thrown
+    /// error's payload — FluidAudio errors may pack decode-derived strings
+    /// into their description. `errorMessage` renders on screen *and* —
+    /// once the outer `stopRecording` / `onHotkeyReleased` catch reads
+    /// `error.localizedDescription` from the rethrow — gets overwritten
+    /// with that propagated string, so sanitising both sides keeps the
+    /// inert text. The session's `errorMessage` also feeds
+    /// `StatisticsService.extractErrorType`, which we sanitise for the
+    /// same reason. Structural error class is already logged at `.error`
+    /// level by the caller before invoking this helper.
+    private func handleTranscriptionError(_ error: Error, startSessionId: UUID?) -> Error {
+        AppLogger.error(AppLogger.viewModel, "[\(viewModelId)] Transcription failed: \(error.localizedDescription)")
+        isTranscribing = false
+        isInserting = false  // Reset insertion flag in case error occurred during insertion phase
+
+        let inertClinicalMessage = "Please try recording again."
+        let surfacedMessage = clinicalMode ? inertClinicalMessage : error.localizedDescription
+        errorMessage = "Transcription failed: \(surfacedMessage)"
+
+        // Re-fetch session to avoid overwriting concurrent changes (bug fix)
+        if var updatedSession = currentSession, currentSessionId == startSessionId {
+            updatedSession.errorMessage = surfacedMessage
+            updatedSession.state = .cancelled
+            self.currentSession = updatedSession
+        }
+        return RecordingError.transcriptionFailed(surfacedMessage)
     }
 
     /// Insert transcribed text into active application
@@ -897,23 +907,7 @@ final class RecordingViewModel {
             try await insertTextWithFallback(result.text)
 
         } catch {
-            AppLogger.error(AppLogger.viewModel, "[\(viewModelId)] Transcription failed: \(error.localizedDescription)")
-            isTranscribing = false
-            isInserting = false  // Reset insertion flag in case error occurred during insertion phase
-            // #98: see `transcribe(...)` catch above for the rationale.
-            // Both pipelines use the same inert clinical message so the
-            // outer `onHotkeyReleased` catch at line 486 propagates a
-            // sanitised error.
-            let inertClinicalMessage = "Please try recording again."
-            let surfacedMessage = clinicalMode ? inertClinicalMessage : error.localizedDescription
-            errorMessage = "Transcription failed: \(surfacedMessage)"
-            // Re-fetch session to avoid overwriting concurrent changes (bug fix)
-            if var updatedSession = currentSession, currentSessionId == startSessionId {
-                updatedSession.errorMessage = surfacedMessage
-                updatedSession.state = .cancelled
-                self.currentSession = updatedSession
-            }
-            throw RecordingError.transcriptionFailed(surfacedMessage)
+            throw handleTranscriptionError(error, startSessionId: startSessionId)
         }
     }
 
