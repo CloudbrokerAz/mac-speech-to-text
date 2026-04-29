@@ -116,9 +116,12 @@ struct ClinicalNotesPromptBuilderTests {
 
     @Test("validate accepts an empty manipulations array")
     func validate_emptyManipulations() {
+        // Subjective is populated so the all-empty-SOAP guard (#100)
+        // doesn't fire — this test is about the empty manipulations
+        // array, not the all-empty SOAP shape.
         let json = #"""
         {
-          "subjective": "",
+          "subjective": "neck pain",
           "objective": "",
           "assessment": "",
           "plan": "",
@@ -368,9 +371,12 @@ struct ClinicalNotesPromptBuilderTests {
 
     @Test("validate accepts confidence at the inclusive bounds 0.0 and 1.0")
     func validate_confidenceBounds_inclusive() {
+        // Subjective is populated so the all-empty-SOAP guard (#100)
+        // doesn't fire — this test is about the inclusive [0, 1]
+        // confidence bounds, not the all-empty SOAP shape.
         let json = #"""
         {
-          "subjective": "",
+          "subjective": "neck pain",
           "objective": "",
           "assessment": "",
           "plan": "",
@@ -385,6 +391,78 @@ struct ClinicalNotesPromptBuilderTests {
             Issue.record("expected success for bounds 0.0 and 1.0")
             return
         }
+    }
+
+    // MARK: - All-empty SOAP guard (#100)
+
+    @Test("validate rejects an all-empty SOAP draft as .allSOAPSectionsEmpty")
+    func validate_allEmptySOAP_rejected() {
+        let json = #"""
+        {
+          "subjective": "",
+          "objective": "",
+          "assessment": "",
+          "plan": "",
+          "manipulations": [],
+          "excluded_content": []
+        }
+        """#
+        #expect(Self.builder().validate(json: json) == .failure(.allSOAPSectionsEmpty))
+    }
+
+    @Test("validate rejects whitespace-only SOAP sections as .allSOAPSectionsEmpty")
+    func validate_whitespaceOnlySOAP_rejected() {
+        let json = #"""
+        {
+          "subjective": "   ",
+          "objective": "\t\t",
+          "assessment": "\n\n",
+          "plan": " \t\n ",
+          "manipulations": [],
+          "excluded_content": []
+        }
+        """#
+        #expect(Self.builder().validate(json: json) == .failure(.allSOAPSectionsEmpty))
+    }
+
+    @Test("validate accepts a draft with at least one populated SOAP section")
+    func validate_oneSectionPopulated_accepted() {
+        let json = #"""
+        {
+          "subjective": "neck pain",
+          "objective": "",
+          "assessment": "",
+          "plan": "",
+          "manipulations": [],
+          "excluded_content": []
+        }
+        """#
+        guard case .success = Self.builder().validate(json: json) else {
+            Issue.record("expected success when at least one SOAP section is populated")
+            return
+        }
+    }
+
+    @Test("confidence-out-of-range fires before the all-SOAP-empty guard when both apply")
+    func validate_confidenceOutOfRange_winsOverAllSOAPEmpty() {
+        // Pin the guard order: a draft that's both all-SOAP-empty AND
+        // has a confidence-out-of-range manipulation reports the
+        // confidence error. The ordering preserves the more specific
+        // diagnostic and keeps the existing 4 confidence tests passing.
+        let json = #"""
+        {
+          "subjective": "",
+          "objective": "",
+          "assessment": "",
+          "plan": "",
+          "manipulations": [{ "name": "Activator", "confidence": 1.25 }],
+          "excluded_content": []
+        }
+        """#
+        #expect(
+            Self.builder().validate(json: json)
+            == .failure(.confidenceOutOfRange(keyPath: "manipulations.0.confidence", value: 1.25))
+        )
     }
 
     // MARK: - Edge cases pinned by pre-PR review

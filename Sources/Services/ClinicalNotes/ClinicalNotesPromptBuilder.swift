@@ -83,6 +83,15 @@ struct ClinicalNotesPromptBuilder: Sendable {
     /// - JSON that doesn't decode to `RawLLMDraft` → `.decodingFailed`
     /// - any `manipulations[].confidence` outside `[0, 1]`
     ///   → `.confidenceOutOfRange(name:value:)`
+    /// - all four SOAP sections empty (whitespace-only counts as empty)
+    ///   → `.allSOAPSectionsEmpty` — bug #100. The prompt template
+    ///   permits *some* empty sections (a transcript that only covers
+    ///   subjective complaints legitimately leaves objective/plan empty)
+    ///   but accepting an all-empty draft means the Review screen
+    ///   surfaces blank editors as if the LLM had succeeded.
+    ///   Surfacing this as a schema error feeds the
+    ///   `ClinicalNotesProcessor` retry-once path so the model gets a
+    ///   second swing before we drop to the raw-transcript fallback.
     func validate(json: String) -> Result<RawLLMDraft, SchemaError> {
         let trimmed = json.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -108,9 +117,23 @@ struct ClinicalNotesPromptBuilder: Sendable {
                     value: offender.element.confidence
                 ))
             }
+            if Self.allSOAPSectionsEmpty(in: draft) {
+                return .failure(.allSOAPSectionsEmpty)
+            }
             return .success(draft)
         } catch {
             return .failure(.decodingFailed(Self.redact(error)))
+        }
+    }
+
+    /// True when every SOAP section is empty after trimming whitespace.
+    /// Whitespace-only counts as empty so `"   \n\t"` reads the same as
+    /// `""` — a model that emits filler whitespace must not slip past
+    /// the guard.
+    private static func allSOAPSectionsEmpty(in draft: RawLLMDraft) -> Bool {
+        let sections = [draft.subjective, draft.objective, draft.assessment, draft.plan]
+        return sections.allSatisfy { section in
+            section.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 
@@ -260,6 +283,13 @@ enum SchemaError: Error, Equatable {
     /// model-returned `name`, which could contain hallucinated or
     /// prompt-injected transcript content.
     case confidenceOutOfRange(keyPath: String, value: Double)
+    /// All four SOAP sections (`subjective`, `objective`, `assessment`,
+    /// `plan`) decoded to empty / whitespace-only strings. The prompt
+    /// template permits *some* empty sections, but an all-empty draft
+    /// is treated as a generation failure (bug #100) so the
+    /// retry-once path fires. Carries no payload — the rejection is
+    /// shape-only, never PHI.
+    case allSOAPSectionsEmpty
 }
 
 /// PHI-safe structural description of a `DecodingError`.

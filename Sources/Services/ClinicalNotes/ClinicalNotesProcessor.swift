@@ -56,8 +56,34 @@ actor ClinicalNotesProcessor {
     static let reasonLLMError = "llm_error"
 
     /// Structural sentinel emitted when both the first and the retry
-    /// responses fail schema validation.
+    /// responses fail schema validation (excluding the all-SOAP-empty
+    /// shape — that emits the more specific
+    /// `reasonAllSOAPEmptyAfterRetry` so audit logs can distinguish
+    /// "model produced JSON we couldn't parse" from "model produced
+    /// JSON whose SOAP sections were all empty").
     static let reasonInvalidJSONAfterRetry = "invalid_json_after_retry"
+
+    /// Structural sentinel emitted when both attempts produced JSON
+    /// whose four SOAP sections were all empty / whitespace-only —
+    /// the failure mode bug #100 fixes. Treated as a `.fallback` UX so
+    /// the doctor sees a banner + raw-transcript affordance instead
+    /// of staring at silently-empty editors.
+    static let reasonAllSOAPEmptyAfterRetry = "all_soap_empty_after_retry"
+
+    /// Structural sentinel emitted by `AppState` (NOT by the processor
+    /// itself) when the LLM model failed to download or warm up before
+    /// inference could start. Co-located here so every fallback reason
+    /// the ReviewScreen surfaces lives in a single namespace.
+    static let reasonModelUnavailable = "model_unavailable"
+
+    /// Structural sentinel emitted by `ReviewViewModel.loadState` (NOT
+    /// by the processor) when the active `ClinicalSession` was cleared
+    /// while the Review window was still on screen — typically the
+    /// `SessionStore.checkIdleTimeout()` race. Surfacing this as
+    /// `.fallback` rather than defaulting to `.ready` is what stops
+    /// idle-timeout from masquerading as a successful steady state
+    /// (silent-failure-hunter H3 on the bug #100 PR).
+    static let reasonSessionExpired = "session_expired"
 
     // MARK: - Dependencies
 
@@ -129,9 +155,15 @@ actor ClinicalNotesProcessor {
             return .success(map(draft))
         case .failure(let schemaError):
             logSchemaError(schemaError, attempt: 2)
-            return .rawTranscriptFallback(
-                reason: Self.reasonInvalidJSONAfterRetry
-            )
+            // Differentiate the all-empty-SOAP failure mode (bug #100)
+            // from generic schema rejection so the audit log + future
+            // analytics can attribute "model produced empty JSON twice"
+            // separately from "model produced unparseable JSON twice".
+            // The user-visible UX is the same fallback banner either way.
+            let reason: String = (schemaError == .allSOAPSectionsEmpty)
+                ? Self.reasonAllSOAPEmptyAfterRetry
+                : Self.reasonInvalidJSONAfterRetry
+            return .rawTranscriptFallback(reason: reason)
         }
     }
 

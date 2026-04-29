@@ -96,6 +96,36 @@ final class SessionStore {
         touch()
     }
 
+    /// Record the load-state of the SOAP draft (#100). Drives
+    /// `ReviewScreen`'s pending overlay and raw-transcript fallback
+    /// banner so the doctor never sees blank editors silently. The
+    /// `reasonCode` carried by `.fallback` is a structural sentinel —
+    /// never PHI — sourced from `ClinicalNotesProcessor.reason*`
+    /// (or from AppState for the model-unavailable path). Mirrors
+    /// `setDraftNotes`'s no-active-session guard.
+    ///
+    /// The no-active-session no-op is logged at `.warning` because it
+    /// represents an idle-timeout race (the `SessionStore.checkIdleTimeout()`
+    /// arm cleared `active` between the LLM finishing and the
+    /// MainActor-hopped status write). `ReviewViewModel.loadState`
+    /// already defaults `nil`-active to `.fallback(reasonCode: "session_expired")`
+    /// so the screen surfaces the issue — the log line is the
+    /// diagnostic counterpart for ops (silent-failure-hunter M3 on
+    /// bug #100).
+    func setDraftStatus(_ status: ClinicalNotesDraftStatus) {
+        guard active != nil else {
+            // Structural-only: case name on the sentinel-only enum.
+            // `String(describing:)` of a `.fallback(reasonCode: "...")`
+            // includes the opaque sentinel string we own — no PHI.
+            AppLogger.service.warning(
+                "SessionStore: setDraftStatus dropped — no active session status=\(String(describing: status), privacy: .public)"
+            )
+            return
+        }
+        active?.draftStatus = status
+        touch()
+    }
+
     /// Record that the practitioner re-added a previously-excluded
     /// snippet. Duplicates are ignored.
     func markExcludedReAdded(_ snippet: String) {

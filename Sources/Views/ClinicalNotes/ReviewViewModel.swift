@@ -276,6 +276,54 @@ final class ReviewViewModel {
         sessionStore.active?.draftNotes != nil
     }
 
+    /// Pipeline load-state for the SOAP draft (#100). Drives:
+    /// - `.pending` → `ReviewScreen` overlays a "generating clinical
+    ///   note…" `ProgressView` over the SOAP column so the doctor never
+    ///   sees blank `TextEditor`s as if the LLM had silently succeeded.
+    /// - `.ready` → existing edit surface; bindings render the draft.
+    /// - `.fallback(reasonCode:)` → banner above the editors with an
+    ///   "Insert raw transcript" affordance so the doctor can compose
+    ///   manually instead of staring at empty fields.
+    ///
+    /// A `nil` active session is treated as
+    /// `.fallback(reasonCode: reasonSessionExpired)` rather than
+    /// `.ready` so the idle-timeout race
+    /// (`SessionStore.checkIdleTimeout()` clears `active` while the
+    /// Review window is still on screen) doesn't silently render as a
+    /// successful steady state. The doctor sees the same fallback
+    /// banner; their next typed edit also surfaces the existing
+    /// "Session expired — please cancel and re-record." banner via
+    /// `setValue`'s `errorMessage` write.
+    var loadState: ClinicalNotesDraftStatus {
+        sessionStore.active?.draftStatus
+            ?? .fallback(reasonCode: ClinicalNotesProcessor.reasonSessionExpired)
+    }
+
+    /// Convenience: true when `loadState == .pending`. Prefer this
+    /// over a direct `case .pending` switch in views — keeps the
+    /// switch in one place if the enum gains cases later.
+    var isLoadingDraft: Bool {
+        loadState == .pending
+    }
+
+    /// Convenience: true when `loadState` is any `.fallback` case.
+    /// Drives the raw-transcript banner on `ReviewScreen`.
+    var isFallback: Bool {
+        if case .fallback = loadState { return true }
+        return false
+    }
+
+    /// Structural reason code for a fallback state (e.g.
+    /// `model_unavailable`), or `nil` when the screen is in
+    /// `.pending` / `.ready`. Read by analytics / future banner copy
+    /// branching. Never PHI.
+    var fallbackReasonCode: String? {
+        if case .fallback(let reasonCode) = loadState {
+            return reasonCode
+        }
+        return nil
+    }
+
     // MARK: - SOAP field accessors
 
     /// Current value for `field`. Empty string when no draft exists yet
@@ -434,6 +482,52 @@ final class ReviewViewModel {
             }
         }
         return String(text[text.startIndex..<end])
+    }
+
+    // MARK: - Raw-transcript fallback (#100)
+
+    /// Seed the Subjective field with the raw transcript so the
+    /// practitioner has something to edit when the LLM produced no
+    /// valid draft (`loadState == .fallback`). Trims trailing
+    /// whitespace from any existing Subjective content so a re-tap
+    /// doesn't pile up triple-newlines, and the appended transcript
+    /// follows the same blank-line separator convention as
+    /// `reAddExcludedEntry`.
+    ///
+    /// Re-entrant taps are safe — appending the same transcript twice
+    /// is the doctor's call to make; we don't dedup. The button copy
+    /// makes "Insert" intent clear vs. "Replace".
+    ///
+    /// PHI: structural log only — count of transcript chars + target
+    /// field id. The transcript itself is already in `SessionStore`.
+    func insertRawTranscriptIntoSubjective() {
+        guard sessionStore.active != nil else {
+            logger.error(
+                "ReviewViewModel.insertRawTranscriptIntoSubjective dropped — no active session"
+            )
+            errorMessage = "Session expired — please cancel and re-record."
+            return
+        }
+        let transcriptValue = transcript
+        guard !transcriptValue.isEmpty else {
+            logger.info(
+                "ReviewViewModel.insertRawTranscriptIntoSubjective ignored — empty transcript"
+            )
+            return
+        }
+        let trimmedExisting = trimmedTrailingWhitespace(value(for: .subjective))
+        let combined: String
+        if trimmedExisting.isEmpty {
+            combined = transcriptValue
+        } else {
+            combined = "\(trimmedExisting)\n\n\(transcriptValue)"
+        }
+        setValue(combined, for: .subjective)
+        logger.info(
+            // PHI-safe: char count + target field id. Transcript content
+            // never crosses the log boundary.
+            "ReviewViewModel: inserted raw transcript chars=\(transcriptValue.count, privacy: .public) target=\(SOAPField.subjective.accessibilityID, privacy: .public)"
+        )
     }
 
     // MARK: - Drawer / sheet toggles

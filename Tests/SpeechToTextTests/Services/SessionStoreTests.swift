@@ -122,6 +122,13 @@ struct SessionStoreTests {
         #expect(store.active == nil)
     }
 
+    @Test("setDraftStatus is a no-op when active is nil")
+    func setDraftStatus_noopWhenInactive() {
+        let store = SessionStore()
+        store.setDraftStatus(.ready)
+        #expect(store.active == nil)
+    }
+
     @Test("markExcludedReAdded is a no-op when active is nil")
     func markExcludedReAdded_noopWhenInactive() {
         let store = SessionStore()
@@ -154,6 +161,37 @@ struct SessionStoreTests {
         store.setDraftNotes(notes)
 
         #expect(store.active?.draftNotes == notes)
+    }
+
+    // MARK: - setDraftStatus (#100)
+
+    @Test("setDraftStatus round-trips across pending → ready → fallback")
+    func setDraftStatus_roundTrips() throws {
+        let store = SessionStore()
+        store.start(from: RecordingSession())
+
+        // start(from:) initialises status to the .pending default.
+        try #require(store.active?.draftStatus == .pending)
+
+        store.setDraftStatus(.ready)
+        #expect(store.active?.draftStatus == .ready)
+
+        store.setDraftStatus(.fallback(reasonCode: "model_unavailable"))
+        #expect(store.active?.draftStatus == .fallback(reasonCode: "model_unavailable"))
+    }
+
+    @Test("setDraftStatus bumps lastActivity")
+    func setDraftStatus_bumpsLastActivity() {
+        let (clock, now) = makeClock()
+        let store = SessionStore(now: now)
+        store.start(from: RecordingSession())
+        let stampAfterStart = store.lastActivity
+
+        clock.current = clock.current.addingTimeInterval(7)
+        store.setDraftStatus(.ready)
+
+        #expect(store.lastActivity == clock.current)
+        #expect(store.lastActivity != stampAfterStart)
     }
 
     // MARK: - markExcludedReAdded

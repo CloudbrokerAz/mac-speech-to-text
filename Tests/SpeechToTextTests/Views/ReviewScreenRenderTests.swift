@@ -45,6 +45,37 @@ final class ReviewScreenRenderTests: XCTestCase {
             notes.subjective = "Pt reports R-neck pain x 3/52."
             notes.excluded = ["Weather chat at start.", "Brief parking discussion."]
             store.setDraftNotes(notes)
+            // `start(from:)` defaults `draftStatus` to `.pending`; the
+            // populated fixture represents the post-LLM steady state, so
+            // flip to `.ready` so the SOAP column renders the edit
+            // surface rather than the pending overlay.
+            store.setDraftStatus(.ready)
+        }
+        return ReviewViewModel(
+            sessionStore: store,
+            manipulations: makeStubManipulations()
+        )
+    }
+
+    /// Build a view model in `.pending` or `.fallback` load state for
+    /// the #100 render-no-crash coverage. Mirrors the production
+    /// shape: pending = no draft yet; fallback = empty seed draft so
+    /// the editors are interactive.
+    private func makeViewModel(loadState: ClinicalNotesDraftStatus) -> ReviewViewModel {
+        let store = SessionStore()
+        var recording = RecordingSession(language: "en", state: .completed)
+        recording.transcribedText = "Patient reports lower back pain."
+        store.start(from: recording)
+        switch loadState {
+        case .pending:
+            // No draft, status stays at the start(from:) default.
+            break
+        case .ready:
+            store.setDraftNotes(StructuredNotes(subjective: "Pt reports lower back pain."))
+            store.setDraftStatus(.ready)
+        case .fallback(let reasonCode):
+            store.setDraftNotes(StructuredNotes())
+            store.setDraftStatus(.fallback(reasonCode: reasonCode))
         }
         return ReviewViewModel(
             sessionStore: store,
@@ -92,6 +123,46 @@ final class ReviewScreenRenderTests: XCTestCase {
         let screen = ReviewScreen(viewModel: viewModel)
         let inspected = try screen.inspect()
         XCTAssertNoThrow(try inspected.find(viewWithAccessibilityIdentifier: "reviewScreen"))
+    }
+
+    // MARK: - #100 load-state render coverage
+
+    /// Pending state renders without crashing — the SOAP column gets
+    /// a `.ultraThinMaterial` overlay with a `ProgressView` while the
+    /// LLM is still running.
+    func test_reviewScreen_pendingLoadState_bodyAccessDoesNotCrash() {
+        let viewModel = makeViewModel(loadState: .pending)
+        let screen = ReviewScreen(viewModel: viewModel)
+        let body = screen.body
+        XCTAssertNotNil(body)
+        XCTAssertTrue(viewModel.isLoadingDraft)
+    }
+
+    func test_reviewScreen_pendingLoadState_exposesPendingOverlayIdentifier() throws {
+        let viewModel = makeViewModel(loadState: .pending)
+        let screen = ReviewScreen(viewModel: viewModel)
+        let inspected = try screen.inspect()
+        XCTAssertNoThrow(try inspected.find(viewWithAccessibilityIdentifier: "reviewScreen.soapColumn.pendingOverlay"))
+    }
+
+    /// Fallback state renders without crashing and exposes the
+    /// "Insert raw transcript" affordance — the load-bearing UX for
+    /// bug #100's "doctor stares at blank fields" scenario.
+    func test_reviewScreen_fallbackLoadState_bodyAccessDoesNotCrash() {
+        let viewModel = makeViewModel(loadState: .fallback(reasonCode: "model_unavailable"))
+        let screen = ReviewScreen(viewModel: viewModel)
+        let body = screen.body
+        XCTAssertNotNil(body)
+        XCTAssertTrue(viewModel.isFallback)
+        XCTAssertEqual(viewModel.fallbackReasonCode, "model_unavailable")
+    }
+
+    func test_reviewScreen_fallbackLoadState_exposesInsertTranscriptIdentifier() throws {
+        let viewModel = makeViewModel(loadState: .fallback(reasonCode: "all_soap_empty_after_retry"))
+        let screen = ReviewScreen(viewModel: viewModel)
+        let inspected = try screen.inspect()
+        XCTAssertNoThrow(try inspected.find(viewWithAccessibilityIdentifier: "reviewScreen.fallbackBanner"))
+        XCTAssertNoThrow(try inspected.find(viewWithAccessibilityIdentifier: "reviewScreen.fallback.insertRawTranscript"))
     }
 
     // MARK: - SOAPSectionEditor

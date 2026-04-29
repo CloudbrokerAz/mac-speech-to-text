@@ -65,6 +65,48 @@ struct ClinicalNotesProcessorTests {
     // A response that will fail validate(json:) — no JSON object at all.
     private static let invalidJSON = "sorry, I can't produce JSON right now."
 
+    /// Schema-shape-correct JSON whose four SOAP sections are all
+    /// empty strings. Pre-#100 this passed validation as `.success`;
+    /// post-fix it's a `SchemaError.allSOAPSectionsEmpty` rejection.
+    private static let allEmptySOAPJSON = #"""
+    {
+      "subjective": "",
+      "objective": "",
+      "assessment": "",
+      "plan": "",
+      "manipulations": [],
+      "excluded_content": []
+    }
+    """#
+
+    /// Schema-shape-correct JSON whose SOAP sections are whitespace-
+    /// only (mix of spaces, tabs, newlines). Verifies the trim guard
+    /// in `allSOAPSectionsEmpty(in:)` rejects filler whitespace too.
+    private static let whitespaceOnlySOAPJSON = #"""
+    {
+      "subjective": "   ",
+      "objective": "\t\t",
+      "assessment": "\n\n",
+      "plan": " \t\n ",
+      "manipulations": [],
+      "excluded_content": []
+    }
+    """#
+
+    /// Schema-shape-correct JSON with only Subjective populated. A
+    /// partially-populated draft is a valid generation result — the
+    /// guard only fires when *all four* sections are empty.
+    private static let subjectiveOnlySOAPJSON = #"""
+    {
+      "subjective": "neck pain",
+      "objective": "",
+      "assessment": "",
+      "plan": "",
+      "manipulations": [],
+      "excluded_content": []
+    }
+    """#
+
     // MARK: - Happy path
 
     @Test("Valid JSON on first attempt returns .success with mapped fields")
@@ -144,6 +186,93 @@ struct ClinicalNotesProcessorTests {
             reason: ClinicalNotesProcessor.reasonInvalidJSONAfterRetry
         ))
         #expect(await provider.callCount() == 2)
+    }
+
+    // MARK: - Empty-SOAP-fields retry (#100)
+
+    /// Bug #100. The model emitted JSON whose four SOAP sections were
+    /// all empty strings. Previously this validated as `.success` and
+    /// the Review screen rendered four blank `TextEditor`s with no
+    /// failure signal. After the fix, the all-empty shape is a schema
+    /// rejection that triggers the existing retry-once path.
+    @Test("All-empty SOAP fields on first attempt triggers retry; valid response on retry returns .success")
+    func emptySOAP_allFields_retriesAndReturnsSuccess() async {
+        let provider = MockLLMProvider(
+            responses: [Self.allEmptySOAPJSON, Self.validJSON]
+        )
+        let proc = Self.processor(provider: provider)
+
+        let outcome = await proc.process(transcript: "t")
+
+        guard case .success = outcome else {
+            Issue.record("Expected .success after empty-then-valid retry, got \(outcome)")
+            return
+        }
+        // Retry must have fired — provider observed exactly two calls.
+        #expect(await provider.callCount() == 2)
+    }
+
+    /// Whitespace-only SOAP sections count as empty. A model that
+    /// emits filler whitespace ("   ", "\n\t", …) must not slip past
+    /// the guard.
+    @Test("Whitespace-only SOAP fields are treated as empty and trigger retry")
+    func emptySOAP_whitespaceOnly_retriesAndReturnsSuccess() async {
+        let provider = MockLLMProvider(
+            responses: [Self.whitespaceOnlySOAPJSON, Self.validJSON]
+        )
+        let proc = Self.processor(provider: provider)
+
+        let outcome = await proc.process(transcript: "t")
+
+        guard case .success = outcome else {
+            Issue.record("Expected .success after whitespace-then-valid retry, got \(outcome)")
+            return
+        }
+        #expect(await provider.callCount() == 2)
+    }
+
+    /// All-empty SOAP on both attempts emits the
+    /// `reasonAllSOAPEmptyAfterRetry` sentinel — distinct from
+    /// `reasonInvalidJSONAfterRetry` so audit logs can attribute "model
+    /// produced empty content twice" separately from "model produced
+    /// unparseable JSON twice." The user-visible UX is the same
+    /// fallback banner either way.
+    @Test("All-empty SOAP on both attempts returns .rawTranscriptFallback(all_soap_empty_after_retry)")
+    func emptySOAP_bothAttempts_fallbackWithSpecificReason() async {
+        let provider = MockLLMProvider(
+            responses: [Self.allEmptySOAPJSON, Self.allEmptySOAPJSON]
+        )
+        let proc = Self.processor(provider: provider)
+
+        let outcome = await proc.process(transcript: "t")
+
+        #expect(outcome == .rawTranscriptFallback(
+            reason: ClinicalNotesProcessor.reasonAllSOAPEmptyAfterRetry
+        ))
+        #expect(await provider.callCount() == 2)
+    }
+
+    /// One populated SOAP section is enough — the guard only fires on
+    /// "all four empty," not on "any one empty." A transcript that
+    /// only carries subjective complaints legitimately leaves
+    /// objective / assessment / plan empty.
+    @Test("A single populated SOAP section is accepted as .success without retry")
+    func emptySOAP_oneSectionPopulated_returnsSuccess() async {
+        let provider = MockLLMProvider(response: Self.subjectiveOnlySOAPJSON)
+        let proc = Self.processor(provider: provider)
+
+        let outcome = await proc.process(transcript: "t")
+
+        guard case .success(let notes) = outcome else {
+            Issue.record("Expected .success for subjective-only draft, got \(outcome)")
+            return
+        }
+        #expect(notes.subjective == "neck pain")
+        #expect(notes.objective.isEmpty)
+        #expect(notes.assessment.isEmpty)
+        #expect(notes.plan.isEmpty)
+        // No retry — a partially-populated draft is a valid result.
+        #expect(await provider.callCount() == 1)
     }
 
     // MARK: - LLM failure
