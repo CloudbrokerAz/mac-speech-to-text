@@ -81,23 +81,55 @@ public actor MLXGemmaProvider: LLMProvider {
     /// call is a no-op once `container` is set. Wired from the Clinical
     /// Notes Mode toggle in `AppState` so the practitioner pays the
     /// load cost up-front rather than on the first "Generate Notes" tap.
+    ///
+    /// **#106 — autorelease-pool defence (under verification).**
+    /// Hypothesis: `LLMModelFactory.shared.loadContainer` brings a
+    /// Metal/Obj-C bridge into the picture (command buffers, textures,
+    /// `MTLBuffer`s). On M1 Pro / macOS 26 with `mlx-swift-lm` 3.31.3 +
+    /// Gemma 4 E4B, the app crashes with `EXC_BAD_ACCESS` on
+    /// `objc_autoreleasePoolPop` after `warmup()` completes (no MLX or
+    /// Metal frames on the faulting thread — only `NSApplication.run`'s
+    /// outer pool drain). The wrap below is **defensive**, not a
+    /// confirmed root-cause repair: it forces a synchronous pool drain
+    /// over the post-resume tail (state mutation + log formatting,
+    /// which itself does Obj-C bridging). The mechanical lever is
+    /// limited — `autoreleasepool` is sync-only, so we can't wrap
+    /// `try await loadContainer(...)` itself. The stronger lever is the
+    /// per-chunk wrap inside `runGeneration` below. If a crash report
+    /// with this wrap in place still shows the same signature,
+    /// **escalate to NSZombies / Address Sanitizer** rather than
+    /// trusting this comment — see the recommended-next-steps section
+    /// of issue #106.
+    /// (`AppState.runClinicalNotesPipeline` carries the matching
+    /// post-resume `autoreleasepool` on the @MainActor side.) The "starting"
+    /// signpost is intentional — if a future regression is *not* fixed by
+    /// this wrap, the next crash report shows whether we got past
+    /// `loadContainer` or died inside it.
     public func warmup() async throws {
         if container != nil { return }
         let started = ContinuousClock.now
+        logger.info("MLX warmup starting")
         do {
             let loaded = try await LLMModelFactory.shared.loadContainer(
                 from: modelDirectory,
                 using: tokenizerLoader
             )
-            container = loaded
-            let elapsed = ContinuousClock.now - started
-            // Log millisecond-precision so sub-second warmups (the
-            // common warm-cache case) don't truncate to "0s".
-            let ms = (elapsed.components.seconds * 1_000)
-                + Int64(elapsed.components.attoseconds / 1_000_000_000_000_000)
-            logger.info(
-                "MLX warmup completed in \(ms, privacy: .public)ms"
-            )
+            // Wrap the entire post-resume synchronous tail (state mutation
+            // + the OSLog interpolation, which goes through `os_log_create`
+            // and brings Obj-C in) so anything autoreleased on this
+            // executor's thread between resume and return drains here
+            // rather than riding the @MainActor continuation.
+            autoreleasepool {
+                container = loaded
+                let elapsed = ContinuousClock.now - started
+                // Log millisecond-precision so sub-second warmups (the
+                // common warm-cache case) don't truncate to "0s".
+                let ms = (elapsed.components.seconds * 1_000)
+                    + Int64(elapsed.components.attoseconds / 1_000_000_000_000_000)
+                logger.info(
+                    "MLX warmup completed in \(ms, privacy: .public)ms"
+                )
+            }
         } catch {
             let kind = String(describing: type(of: error))
             logger.error("MLX warmup failed kind=\(kind, privacy: .public)")
@@ -184,31 +216,56 @@ public actor MLXGemmaProvider: LLMProvider {
             parameters: parameters
         )
 
+        // #106 — per-chunk autorelease drain. This is the wrap with the
+        // strongest mechanical justification of the three sites: chunk
+        // processing is fully synchronous, so any Obj-C bridge temporaries
+        // produced inside the closure (string slicing, `mlx-swift-lm`
+        // chunk decoding, OSLog formatting) are released to the pool we
+        // create here and drained at every iteration boundary — they
+        // can't accumulate across the run.
+        //
+        // Closure-body conventions:
+        //   - `try Task.checkCancellation()` lives **outside** the
+        //     `autoreleasepool` because Swift's `autoreleasepool` is
+        //     non-throwing; cancellation must propagate as a thrown
+        //     `CancellationError`, not be swallowed by the closure.
+        //   - The closure body is intentionally non-throwing — `yield`
+        //     and the string operations don't throw — so we can use the
+        //     non-`try` form and avoid wrapping a throwing closure that
+        //     would change error semantics.
+        //   - `break` is hoisted to the `shouldBreak` flag so the
+        //     post-stop-match emit ordering (yield prefix → break)
+        //     survives the closure boundary.
         var pendingTail = ""
+        var shouldBreak = false
         for await item in stream {
             try Task.checkCancellation()
-            guard case let .chunk(text) = item else { continue }
-            if stops.isEmpty {
-                yield(text)
-                continue
-            }
-            pendingTail += text
-            if let stopRange = Self.firstStopRange(in: pendingTail, stops: stops) {
-                let prefix = String(pendingTail[..<stopRange.lowerBound])
-                if !prefix.isEmpty {
-                    yield(prefix)
+            autoreleasepool {
+                guard case let .chunk(text) = item else { return }
+                if stops.isEmpty {
+                    yield(text)
+                    return
                 }
-                break
+                pendingTail += text
+                if let stopRange = Self.firstStopRange(in: pendingTail, stops: stops) {
+                    let prefix = String(pendingTail[..<stopRange.lowerBound])
+                    if !prefix.isEmpty {
+                        yield(prefix)
+                    }
+                    shouldBreak = true
+                    return
+                }
+                let safeBoundary = Self.safeFlushBoundary(
+                    in: pendingTail,
+                    stops: stops
+                )
+                if safeBoundary > pendingTail.startIndex {
+                    let flushable = String(pendingTail[..<safeBoundary])
+                    yield(flushable)
+                    pendingTail = String(pendingTail[safeBoundary...])
+                }
             }
-            let safeBoundary = Self.safeFlushBoundary(
-                in: pendingTail,
-                stops: stops
-            )
-            if safeBoundary > pendingTail.startIndex {
-                let flushable = String(pendingTail[..<safeBoundary])
-                yield(flushable)
-                pendingTail = String(pendingTail[safeBoundary...])
-            }
+            if shouldBreak { break }
         }
     }
 

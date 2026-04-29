@@ -356,7 +356,19 @@ class AppState {
             }
             llmDownloadState = .verified(directory: modelDir)
             try await provider.warmup()
-            llmDownloadState = .ready
+            // #106 — main-thread side of the autorelease defence
+            // (under verification, not a confirmed root-cause repair).
+            // The warmup resume crosses MLXGemmaProvider's actor →
+            // @MainActor here. The wrap drains any Obj-C bridge
+            // temporaries autoreleased synchronously between resume and
+            // the next await, so they don't accumulate on
+            // `NSApplication.run`'s outer runloop pool (the site of the
+            // observed EXC_BAD_ACCESS). Mechanically narrow — won't
+            // catch temporaries autoreleased *during* the await — but
+            // free + paired with `MLXGemmaProvider.warmup`'s wrap.
+            autoreleasepool {
+                llmDownloadState = .ready
+            }
         } catch is CancellationError {
             // User-initiated cancel is a clean state transition, not a
             // failure. Don't overwrite to `.failed` — `applyDownloadProgress`
