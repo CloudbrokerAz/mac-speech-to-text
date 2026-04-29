@@ -82,6 +82,16 @@ final class MainWindow: NSObject, NSWindowDelegate {
             defer: false
         )
 
+        // #106 / #102 — disable AppKit's auto-release-on-close. With the
+        // default `true`, `close()` autoreleases the NSWindow in addition
+        // to whatever Swift ARC does via our strong `window` property.
+        // Any second `close()` (from a re-entrant notification observer,
+        // SwiftUI `.onDisappear`, or termination cleanup) then sends
+        // `release` to a deallocated `NSKVONotifying_NSWindow` — the
+        // exact zombie NSZombies caught for #106. Setting `false` puts
+        // lifetime entirely under Swift ARC and makes `close()` idempotent.
+        newWindow.isReleasedWhenClosed = false
+
         // Configure window
         configureWindow(newWindow)
 

@@ -877,13 +877,27 @@ elif [ -f "${PROJECT_ROOT}/app_logov2.png" ]; then
     print_success "Copied app logo to Resources"
 fi
 
-# Copy SPM resource bundle (contains Models for voice trigger, etc.)
-SPM_BUNDLE="${PROJECT_ROOT}/.build/${BUILD_CONFIG}/SpeechToText_SpeechToText.bundle"
-if [ -d "${SPM_BUNDLE}" ]; then
-    cp -R "${SPM_BUNDLE}" "${APP_BUNDLE}/Contents/Resources/"
-    print_success "Copied SPM resource bundle (voice trigger models)"
-else
-    print_warning "SPM resource bundle not found at ${SPM_BUNDLE}"
+# Copy ALL SPM resource bundles from xcodebuild's Products dir.
+# Issue #108 — previously only `SpeechToText_SpeechToText.bundle` was
+# copied, which left `mlx-swift_Cmlx.bundle` (the carrier for
+# `default.metallib`) out of the .app. Cmlx then hard-fails at startup
+# with `Failed to load the default metallib`, blocking #106 repro on
+# any clean build. Other transitive package bundles (KeyboardShortcuts,
+# swift-crypto, swift-transformers Hub) are likely also load-bearing
+# for some feature and were silently missing too.
+PRODUCTS_DIR="${DERIVED_DATA}/Build/Products/${XCODE_CONFIG}"
+COPIED_BUNDLE_COUNT=0
+shopt -s nullglob
+for BUNDLE in "${PRODUCTS_DIR}"/*.bundle; do
+    BUNDLE_NAME="$(basename "${BUNDLE}")"
+    cp -R "${BUNDLE}" "${APP_BUNDLE}/Contents/Resources/"
+    print_success "Copied resource bundle: ${BUNDLE_NAME}"
+    COPIED_BUNDLE_COUNT=$((COPIED_BUNDLE_COUNT + 1))
+done
+shopt -u nullglob
+
+if [ "${COPIED_BUNDLE_COUNT}" -eq 0 ]; then
+    print_warning "No resource bundles found at ${PRODUCTS_DIR}"
 fi
 
 # Set permissions

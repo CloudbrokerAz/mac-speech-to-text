@@ -1033,6 +1033,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
 
+        // #106 — disable AppKit's auto-release-on-close. This is the
+        // load-bearing mitigation for the EXC_BAD_ACCESS surfaced by
+        // NSZombies as `*** -[NSKVONotifying_NSWindow release]:` on the
+        // outer runloop pool drain. The recording modal has three close
+        // paths converging on the same NSWindow: SwiftUI's
+        // `dismissAction()`, the SwiftUI `.onDisappear` below
+        // (`self?.recordingWindow?.close()`), and `applicationWillTerminate`
+        // line 229. With the default `isReleasedWhenClosed = true`, the
+        // first close autoreleases the window; the second close on a
+        // freed object is the zombie. With `false`, the strong
+        // `recordingWindow` property is the sole ARC owner and `nil`
+        // assignment cleanly drops the last reference.
+        window.isReleasedWhenClosed = false
+
         window.contentView = NSHostingView(rootView: contentView)
         window.isOpaque = false
         window.backgroundColor = .clear

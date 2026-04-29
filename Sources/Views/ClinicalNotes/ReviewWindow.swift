@@ -99,6 +99,20 @@ final class ReviewWindow: NSObject, NSWindowDelegate {
             defer: false
         )
 
+        // #106 / #102 — disable AppKit's auto-release-on-close. Cancel
+        // posts `.reviewScreenDidDismiss`, the controller observer hops
+        // to MainActor and calls `window?.close()`, which fires
+        // `windowWillClose` here, which posts `.reviewScreenDidDismiss`
+        // a second time. The two MainActor Tasks queued from those two
+        // posts can both observe `controller.window` non-nil and both
+        // call `close()`. With the default `isReleasedWhenClosed = true`
+        // that's an over-release; with `false`, lifetime is purely Swift
+        // ARC and `close()` is just `orderOut:` — re-entry becomes safe.
+        // (#102's "Cancel terminates the entire app" symptom is the same
+        // over-release stomping `NSApplication`'s state on the next
+        // runloop pool drain.)
+        newWindow.isReleasedWhenClosed = false
+
         newWindow.delegate = self
         newWindow.title = Self.windowTitle
         newWindow.identifier = NSUserInterfaceItemIdentifier("reviewWindow")

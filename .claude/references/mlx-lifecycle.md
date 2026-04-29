@@ -115,33 +115,16 @@ retry on schema failure.
   try to hop threads manually.
 - Stored on an `@Observable` class (e.g. `AppState`): requires
   `@ObservationIgnored`, per [`concurrency.md`](concurrency.md) rule 1.
-- **Autorelease-pool defence around MLX boundaries (issue #106 — under
-  verification, not a confirmed root-cause repair).**
-  Pre-fix, M1 Pro / mlx-swift-lm 3.31.3 / Gemma 4 E4B reproduces an
-  `EXC_BAD_ACCESS` on `objc_autoreleasePoolPop` after warmup completes
-  (no MLX/Metal frames on the faulting thread — only `NSApplication.run`'s
-  outer pool drain). The hypothesis is that a Metal/Obj-C bridge
-  temporary from `LLMModelFactory.shared.loadContainer(…)` outlives the
-  resume frame and is double-released. The defensive countermeasure is
-  to wrap any **synchronous post-resume code** that follows an MLX
-  `await` in `autoreleasepool { … }`, on either side of the actor hop,
-  so Obj-C bridge temporaries drain on the resume thread rather than
-  riding the continuation. **Mechanical scope is narrow:**
-  `autoreleasepool` is sync-only, so temporaries autoreleased **during**
-  the `await` itself can't be wrapped from outside. The wrap with the
-  strongest mechanical justification is the **per-chunk drain inside
-  `MLXGemmaProvider.runGeneration`**'s for-await loop, where chunk
-  processing is fully synchronous. Apply at three sites today:
-  `MLXGemmaProvider.warmup()` (post-resume state mutation + log
-  formatting), `MLXGemmaProvider.runGeneration()` (per-chunk drain
-  inside the for-await loop), and `AppState.runClinicalNotesPipeline()`
-  (post-warmup `@MainActor` state transition). When wrapping a for-await
-  loop, hoist `break`/`continue` to a flag set inside the closure and
-  consumed after; keep `try Task.checkCancellation()` *outside* the
-  closure (autoreleasepool is non-throwing).
-  **If a future crash report shows the same signature with these wraps
-  in place, escalate to NSZombies + Address Sanitizer — don't trust
-  this comment.**
+- **Per-chunk autorelease drain in `runGeneration`.** Long async
+  streams plus Obj-C bridge work accumulate temporaries on the actor's
+  executor between suspension points. The canonical Cocoa pattern is
+  to wrap each iteration body in `autoreleasepool { … }` so per-chunk
+  bridge temporaries (mlx-swift-lm chunk decoding, OSLog formatting,
+  the `yield` continuation) drain independently. When wrapping a
+  for-await loop, hoist `break` / `continue` to a flag set inside the
+  closure and consumed after, and keep `try Task.checkCancellation()`
+  *outside* the closure (autoreleasepool is non-throwing — cancellation
+  must propagate as a thrown `CancellationError`).
 
 ---
 
