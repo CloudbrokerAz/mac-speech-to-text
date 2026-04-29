@@ -128,16 +128,26 @@ struct MainView: View {
         .accessibilityIdentifier("mainView")
         .onAppear {
             initializeViewModels()
-            // Defer the @FocusState write so it runs after the NSHostingView
-            // is fully attached to its window. A synchronous set here races
+            // Defer the @FocusState write to the next runloop pass so it
+            // runs after the NSHostingView and the inner sidebar buttons
+            // are attached to their window. A synchronous set here races
             // with the attachment and AppKit logs the "first responder for
-            // window X, but it is in a different window ((null))" warning
-            // when SwiftUI's FocusBridge tries to apply the pending focus
-            // before the view has a window. Same root cause as
-            // `ReviewScreen.swift`'s `.onAppear` hop.
-            Task { @MainActor in
+            // window X, but it is in a different window ((null))" warning.
+            // `DispatchQueue.main.async` is stricter than `Task { @MainActor }`
+            // (which can interleave with the same layout transaction). Same
+            // root cause as `ReviewScreen.swift`'s `.onAppear` hop and
+            // `HomeSection.swift`'s.
+            AppLogger.app.info("[#109-probe] MainView.onAppear: scheduling deferred focus")
+            DispatchQueue.main.async {
                 focusedSection = viewModel.selectedSection
+                AppLogger.app.info("[#109-probe] MainView.onAppear: applied focus")
             }
+        }
+        .onDisappear {
+            // Clear focus before NSHostingView teardown so SwiftUI's
+            // FocusBridge has no pending responder to flush onto a detached
+            // sidebar button during the close transaction.
+            focusedSection = nil
         }
         .onChange(of: focusedSection) { _, newValue in
             if let newValue = newValue {

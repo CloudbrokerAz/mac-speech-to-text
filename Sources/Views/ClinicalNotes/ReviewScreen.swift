@@ -74,15 +74,19 @@ struct ReviewScreen: View {
             // Ensure the practitioner can immediately start editing the
             // most-used field without an extra click.
             //
-            // Defer via `Task { @MainActor }` so the focus assignment runs
-            // after the NSHostingView is fully attached to its window. A
-            // synchronous set here races with the attachment and AppKit logs
-            // "Setting <view> as the first responder for window X, but it is
-            // in a different window ((null))!" when SwiftUI's FocusBridge
-            // tries to apply the pending focus before the view has a window.
-            Task { @MainActor in
+            // Defer via `DispatchQueue.main.async` so the focus assignment
+            // runs on the NEXT runloop pass — after the NSHostingView and
+            // its inner SOAP editor TextEditors are fully attached to their
+            // window. A synchronous set (or even `Task { @MainActor }`) here
+            // can race with attachment and AppKit logs "Setting <view> as
+            // the first responder for window X, but it is in a different
+            // window ((null))!" when SwiftUI's FocusBridge tries to apply
+            // the pending focus before the target editor view has a window.
+            AppLogger.app.info("[#109-probe] ReviewScreen.onAppear: scheduling deferred focus")
+            DispatchQueue.main.async {
                 focusedField = .subjective
                 viewModel.noteFieldFocused(.subjective)
+                AppLogger.app.info("[#109-probe] ReviewScreen.onAppear: applied focus=.subjective")
             }
         }
         .onDisappear {
