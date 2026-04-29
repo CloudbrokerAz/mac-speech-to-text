@@ -20,7 +20,10 @@ public enum ClinikoEndpoint: Sendable, Equatable {
     /// (`/users/me` does not exist — it 404s, see #88).
     case usersMe
 
-    /// `GET /patients?q={query}` — debounced patient search for #9.
+    /// `GET /patients?q[]=field:~term` — debounced patient search for #9.
+    /// Cliniko's `/patients` filter takes Ransack-style array filters;
+    /// a bare `q=value` 5xx'd in production. See #101 +
+    /// `patientSearchQueryItems` for the splitting strategy.
     case patientSearch(query: String)
 
     /// `GET /patients/{id}/appointments?from={ISO8601}&to={ISO8601}` —
