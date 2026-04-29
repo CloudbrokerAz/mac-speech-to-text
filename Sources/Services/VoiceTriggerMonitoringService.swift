@@ -178,12 +178,50 @@ final class VoiceTriggerMonitoringService {
 
             // Start audio capture for wake word processing
             // Pass both level callback (for visualization) and buffer callback (for wake word detection)
+            //
+            // Capture `serviceId` into a local so the audio-thread closure can interpolate it into
+            // the unsupported-format warning without reaching back across the @MainActor boundary
+            // for `self.serviceId`. Mirrors the `processorId` capture in AudioBufferProcessor.
+            let capturedServiceId = serviceId
             try await audioService.startCapture(
                 levelCallback: { @Sendable [weak self] level in
                     Task { @MainActor in self?.handleAudioLevel(level) }
                 },
                 bufferCallback: { @Sendable [weak self] buffer in
-                    Task { @MainActor in self?.handleAudioBuffer(buffer) }
+                    // Extract Sendable values on the audio thread before crossing into MainActor.
+                    // AVAudioPCMBuffer is non-Sendable; mirrors AudioBufferProcessor.process
+                    // (see AudioCaptureService.swift) and .claude/references/concurrency.md §3.
+                    //
+                    // Precision note: when the buffer arrives in floatChannelData form, the
+                    // wake-word path used to consume raw Float samples directly; it now goes
+                    // Float→Int16→Float (clamp ±1.0, ×Int16.max, ÷32768). Sherpa-onnx quantises
+                    // internally so the ~16-bit fidelity loss is benign in practice, and the
+                    // capture path was already Int16-quantising. Issue #83 explicitly required
+                    // reusing the AudioBufferProcessor pattern rather than inventing a new one.
+                    let frameLength = Int(buffer.frameLength)
+                    let sampleRate = buffer.format.sampleRate
+                    let samples: [Int16]
+                    if let floatData = buffer.floatChannelData {
+                        let floatSamples = UnsafeBufferPointer(start: floatData[0], count: frameLength)
+                        samples = floatSamples.map { sample in
+                            let clamped = max(-1.0, min(1.0, sample))
+                            return Int16(clamped * Float(Int16.max))
+                        }
+                    } else if let int16Data = buffer.int16ChannelData {
+                        samples = Array(UnsafeBufferPointer(start: int16Data[0], count: frameLength))
+                    } else {
+                        // Surface the dropped frame the same way AudioBufferProcessor.process does
+                        // (see AudioCaptureService.swift:71). Format value is structural metadata,
+                        // not PHI, so logging is safe; OSLog is thread-safe so we don't need a hop.
+                        AppLogger.warning(
+                            AppLogger.service,
+                            "[\(capturedServiceId)] Unsupported audio format in buffer — frame dropped"
+                        )
+                        return
+                    }
+                    Task { @MainActor in
+                        self?.handleAudioBuffer(samples: samples, sampleRate: sampleRate)
+                    }
                 }
             )
 
@@ -242,18 +280,22 @@ final class VoiceTriggerMonitoringService {
         AppLogger.debug(AppLogger.service, "[\(serviceId)] Voice trigger monitoring stopped")
     }
 
-    /// Handle incoming audio buffer
+    /// Handle incoming audio samples
     ///
     /// Routes audio data to the appropriate handler based on current state:
     /// - In monitoring mode: Sends to wake word service for keyword detection
     /// - In capturing mode: Accumulates samples for transcription
     ///
     /// Note: This method is already called from a MainActor Task dispatch in the audio callback.
-    /// We only use Task for the async wake word processing, not for the outer dispatch.
+    /// The non-Sendable `AVAudioPCMBuffer` is converted to `[Int16]` on the audio thread before
+    /// hopping into MainActor — see the `bufferCallback` closure in `startMonitoring()` and
+    /// `.claude/references/concurrency.md` §3.
     ///
-    /// - Parameter buffer: Audio buffer from capture service
+    /// - Parameters:
+    ///   - samples: Audio samples already extracted from the buffer on the audio thread
+    ///   - sampleRate: Native sample rate the buffer arrived at, in Hz
     private var audioBufferCount = 0
-    func handleAudioBuffer(_ buffer: AVAudioPCMBuffer) {
+    func handleAudioBuffer(samples: [Int16], sampleRate: Double) {
         audioBufferCount += 1
         if audioBufferCount % 100 == 1 {
             AppLogger.trace(AppLogger.service, "[\(serviceId)] handleAudioBuffer called \(audioBufferCount) times, state=\(state.description)")
@@ -261,8 +303,8 @@ final class VoiceTriggerMonitoringService {
         // Already on MainActor via caller's Task dispatch - no need for another Task wrapper
         switch self.state {
         case .monitoring:
-            // Convert buffer to Float samples for wake word detection
-            let floatSamples = self.convertBufferToFloatSamples(buffer)
+            // Convert Int16 samples to Float (resampled to 16 kHz) for wake-word detection
+            let floatSamples = self.convertInt16SamplesToFloat(samples, sourceRate: sampleRate)
             guard !floatSamples.isEmpty else { return }
 
             if audioBufferCount % 100 == 1 {
@@ -280,7 +322,7 @@ final class VoiceTriggerMonitoringService {
 
         case .capturing:
             // Accumulate samples for transcription
-            self.accumulateSamples(from: buffer)
+            self.accumulateSamples(samples, sampleRate: sampleRate)
 
         default:
             // Ignore audio in other states
@@ -288,35 +330,22 @@ final class VoiceTriggerMonitoringService {
         }
     }
 
-    /// Convert AVAudioPCMBuffer to Float samples normalized to [-1.0, 1.0] at 16kHz
+    /// Convert Int16 audio samples to Float samples normalized to [-1.0, 1.0] at 16kHz
     ///
-    /// This method converts audio from native hardware sample rate to the 16kHz rate
-    /// expected by sherpa-onnx keyword spotting.
+    /// Wake-word detection (sherpa-onnx keyword spotting) requires Float samples at exactly
+    /// 16 kHz. Resampling uses simple linear interpolation via `resampleToTarget`.
     ///
-    /// - Parameter buffer: Audio buffer to convert (at native sample rate)
+    /// - Parameters:
+    ///   - samples: Int16 samples extracted from the audio buffer on the audio thread
+    ///   - sourceRate: Native sample rate of the samples in Hz (e.g. 48000)
     /// - Returns: Float samples at 16kHz suitable for wake word processing
-    private func convertBufferToFloatSamples(_ buffer: AVAudioPCMBuffer) -> [Float] {
-        let frameLength = Int(buffer.frameLength)
-        let nativeSampleRate = buffer.format.sampleRate
+    private func convertInt16SamplesToFloat(_ samples: [Int16], sourceRate: Double) -> [Float] {
         let targetSampleRate = Double(Constants.VoiceTrigger.sampleRate)
-
-        // First convert to float samples at native rate
-        var floatSamples: [Float]
-        if let floatData = buffer.floatChannelData {
-            // Already float format
-            floatSamples = Array(UnsafeBufferPointer(start: floatData[0], count: frameLength))
-        } else if let int16Data = buffer.int16ChannelData {
-            // Convert Int16 to Float [-1.0, 1.0]
-            let int16Samples = UnsafeBufferPointer(start: int16Data[0], count: frameLength)
-            floatSamples = int16Samples.map { Float($0) / 32768.0 }
-        } else {
-            return []
-        }
+        var floatSamples = samples.map { Float($0) / 32768.0 }
 
         // Resample to 16kHz if native rate differs
-        // sherpa-onnx keyword spotting requires exactly 16kHz audio
-        if abs(nativeSampleRate - targetSampleRate) > 1.0 {
-            floatSamples = resampleToTarget(floatSamples, from: nativeSampleRate, to: targetSampleRate)
+        if abs(sourceRate - targetSampleRate) > 1.0 {
+            floatSamples = resampleToTarget(floatSamples, from: sourceRate, to: targetSampleRate)
         }
 
         return floatSamples
@@ -409,28 +438,12 @@ final class VoiceTriggerMonitoringService {
     }
 
     /// Accumulate audio samples during capture phase
-    private func accumulateSamples(from buffer: AVAudioPCMBuffer) {
-        let frameLength = Int(buffer.frameLength)
-
-        // Convert buffer to Int16 samples
-        let samples: [Int16]
-        if let floatData = buffer.floatChannelData {
-            let floatSamples = UnsafeBufferPointer(start: floatData[0], count: frameLength)
-            samples = floatSamples.map { sample in
-                let clamped = max(-1.0, min(1.0, sample))
-                return Int16(clamped * Float(Int16.max))
-            }
-        } else if let int16Data = buffer.int16ChannelData {
-            samples = Array(UnsafeBufferPointer(start: int16Data[0], count: frameLength))
-        } else {
-            AppLogger.warning(AppLogger.service, "[\(serviceId)] Unsupported audio format in buffer")
-            return
-        }
-
+    ///
+    /// Samples are already in Int16 form (extracted from `AVAudioPCMBuffer` on the audio thread
+    /// — see the `bufferCallback` closure in `startMonitoring()`).
+    private func accumulateSamples(_ samples: [Int16], sampleRate: Double) {
         capturedSamples.append(contentsOf: samples)
-
-        // Store sample rate from buffer format
-        capturedSampleRate = buffer.format.sampleRate
+        capturedSampleRate = sampleRate
 
         AppLogger.trace(
             AppLogger.service,

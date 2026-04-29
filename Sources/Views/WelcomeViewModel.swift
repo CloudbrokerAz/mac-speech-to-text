@@ -319,18 +319,34 @@ final class WelcomeViewModel {
         let currentPhrase = samplePhrases[currentPhraseIndex]
         let totalChars = currentPhrase.count
 
-        // Type one character every 30ms for a natural typing feel
+        // Type one character every 30ms for a natural typing feel.
+        //
+        // The block is pinned to RunLoop.main because this method is
+        // @MainActor-isolated and Timer.scheduledTimer schedules on the current
+        // run loop. Two-step pattern:
+        //   1. Invalidate the captured non-Sendable `timer` parameter directly
+        //      from the @Sendable closure body when self has gone away — no
+        //      isolation crossed. Mirrors the early-return guard in
+        //      `RecordingViewModel.startInactivityTimer`.
+        //   2. For the "typing finished" branch, invalidate via the stored
+        //      MainActor property `self.typingTimer` (identity-equal to the
+        //      captured `timer`) so the parameter never crosses into the
+        //      MainActor.assumeIsolated block. Using `assumeIsolated` here
+        //      rather than a Task hop keeps the synchronous tick semantics —
+        //      a 30ms typing animation can't afford run-loop reorderings.
+        //      See `.claude/references/concurrency.md` §2.
         let timer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] timer in
-            Task { @MainActor [weak self] in
-                guard let self = self else {
-                    timer.invalidate()
-                    return
-                }
-
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+            MainActor.assumeIsolated {
                 if self.displayedCharacterCount < totalChars {
                     self.displayedCharacterCount += 1
                 } else {
-                    timer.invalidate()
+                    self.typingTimer?.invalidate()
+                    self.typingTimer = nil
+                    self.deinitTypingTimer = nil
                 }
             }
         }
