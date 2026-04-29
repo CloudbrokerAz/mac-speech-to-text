@@ -303,8 +303,7 @@ final class ReviewViewModel {
     /// over a direct `case .pending` switch in views — keeps the
     /// switch in one place if the enum gains cases later.
     var isLoadingDraft: Bool {
-        if case .pending = loadState { return true }
-        return false
+        loadState == .pending
     }
 
     /// Convenience: true when `loadState` is any `.fallback` case.
