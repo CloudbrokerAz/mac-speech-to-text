@@ -281,6 +281,14 @@ jobs:
     name: Build Release
     runs-on: macos-15
     needs: test
+    # Skip on PRs — `test` already runs `swift build -c release` (line 151),
+    # so `Build Release` only adds value when we actually want to publish a
+    # downloadable release-build artifact. That use case is a `push: main` /
+    # `workflow_dispatch` operation, not a per-PR gate. Saves ~4 min per PR
+    # run (~33% of total CI wall-clock) and stops generating ~140
+    # release-build artifacts a month that nobody downloads. PR runs still
+    # get full lint + pre-commit + Build and Test gates.
+    if: github.event_name != 'pull_request'
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
