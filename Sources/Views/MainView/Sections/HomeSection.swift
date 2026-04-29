@@ -127,12 +127,26 @@ struct HomeSection: View {
         .onAppear {
             // Reload settings on appear to ensure fresh state
             settings = settingsService.load()
-            // Set initial focus to microphone card if no permissions granted
-            if !microphoneGranted {
-                focusedCard = .microphone
-            } else if !accessibilityGranted {
-                focusedCard = .accessibility
+            // Set initial focus to microphone card if no permissions granted.
+            // Defer through the runloop so SwiftUI's FocusBridge applies the
+            // focus AFTER the inner card views are attached to their window.
+            // A synchronous set here races with attachment and triggers
+            // AppKit's "first responder for window X, but it is in a
+            // different window ((null))" warning. Mirrors the same hop
+            // applied in `ReviewScreen.swift` and `MainView.swift`.
+            DispatchQueue.main.async {
+                if !microphoneGranted {
+                    focusedCard = .microphone
+                } else if !accessibilityGranted {
+                    focusedCard = .accessibility
+                }
             }
+        }
+        .onDisappear {
+            // Clear focus before the section's NSHostingView teardown so
+            // SwiftUI's FocusBridge has no pending responder to flush onto a
+            // detached card view during the close transaction.
+            focusedCard = nil
         }
         .onReceive(NotificationCenter.default.publisher(for: .settingsDidReset)) { _ in
             // Reload settings when they change

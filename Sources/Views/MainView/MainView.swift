@@ -128,7 +128,24 @@ struct MainView: View {
         .accessibilityIdentifier("mainView")
         .onAppear {
             initializeViewModels()
-            focusedSection = viewModel.selectedSection
+            // Defer the @FocusState write to the next runloop pass so it
+            // runs after the NSHostingView and the inner sidebar buttons
+            // are attached to their window. A synchronous set here races
+            // with the attachment and AppKit logs the "first responder for
+            // window X, but it is in a different window ((null))" warning.
+            // `DispatchQueue.main.async` is stricter than `Task { @MainActor }`
+            // (which can interleave with the same layout transaction). Same
+            // root cause as `ReviewScreen.swift`'s `.onAppear` hop and
+            // `HomeSection.swift`'s.
+            DispatchQueue.main.async {
+                focusedSection = viewModel.selectedSection
+            }
+        }
+        .onDisappear {
+            // Clear focus before NSHostingView teardown so SwiftUI's
+            // FocusBridge has no pending responder to flush onto a detached
+            // sidebar button during the close transaction.
+            focusedSection = nil
         }
         .onChange(of: focusedSection) { _, newValue in
             if let newValue = newValue {
