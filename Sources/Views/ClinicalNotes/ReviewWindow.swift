@@ -14,6 +14,7 @@
 
 import AppKit
 import Foundation
+import KeyboardShortcuts
 import OSLog
 import SwiftUI
 
@@ -65,6 +66,8 @@ final class ReviewWindow: NSObject, NSWindowDelegate {
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
+        AppLogger.app.info("[#109-probe] ReviewWindow.windowWillClose entered: isEnabled(.clinicalNotesRecord)=\(KeyboardShortcuts.isEnabled(for: .clinicalNotesRecord), privacy: .public)")
+
         // PHI chokepoint. Whatever path closed the window (Cancel, ⎋,
         // title-bar X, or a future export-flow auto-close), the session
         // does not survive the visible surface. `SessionStore.clear()`
@@ -82,6 +85,8 @@ final class ReviewWindow: NSObject, NSWindowDelegate {
         window?.delegate = nil
         window = nil
         NotificationCenter.default.post(name: .reviewScreenDidDismiss, object: nil)
+
+        AppLogger.app.info("[#109-probe] ReviewWindow.windowWillClose exited: isEnabled(.clinicalNotesRecord)=\(KeyboardShortcuts.isEnabled(for: .clinicalNotesRecord), privacy: .public)")
     }
 
     // MARK: - Private
@@ -282,6 +287,8 @@ final class ReviewWindowController {
     // MARK: - Private
 
     private func handleDismissNotification() {
+        AppLogger.app.info("[#109-probe] ReviewWindowController.handleDismissNotification: window=\(self.window == nil ? "nil" : "non-nil", privacy: .public) isEnabled(.clinicalNotesRecord)=\(KeyboardShortcuts.isEnabled(for: .clinicalNotesRecord), privacy: .public)")
+
         // Two paths converge here:
         //   1. User-driven cancel via `ReviewViewModel.cancelReview` —
         //      window is still alive, we must close it. `close()` fires

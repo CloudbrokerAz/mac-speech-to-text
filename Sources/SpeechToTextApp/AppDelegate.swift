@@ -1013,6 +1013,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let contentView = LiquidGlassRecordingModal(viewModel: viewModel)
             .onDisappear { [weak self] in
                 AppLogger.app.debug("showRecordingModal: LiquidGlassRecordingModal disappeared")
+                AppLogger.app.info("[#109-probe] modal.onDisappear: isEnabled(.clinicalNotesRecord)=\(KeyboardShortcuts.isEnabled(for: .clinicalNotesRecord), privacy: .public) clinicalMode=\(clinicalMode, privacy: .public)")
                 self?.recordingWindow?.close()
                 self?.recordingWindow = nil
                 // Reset the clinical-notes chord state so the next chord
