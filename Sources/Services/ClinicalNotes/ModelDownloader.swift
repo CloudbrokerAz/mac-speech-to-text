@@ -507,21 +507,30 @@ public actor ModelDownloader {
         expectedBytes: Int64,
         timeoutSeconds: Double = 2.0
     ) async throws -> Int64 {
-        let pollInterval: UInt64 = 5_000_000 // 5 ms
-        let deadline = Date().addingTimeInterval(timeoutSeconds)
-        var lastSize: Int64 = 0
-        while Date() < deadline {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(timeoutSeconds))
+        let pollInterval = Duration.milliseconds(5)
+        // Stat-then-check ensures the size returned at deadline is the
+        // freshly-observed value, not a stale pre-sleep one — so a file
+        // that reaches `expectedBytes` during the final `Task.sleep`
+        // still resolves as a success rather than getting clipped to
+        // the previous iteration's read (Gemini Code Assist, PR #111).
+        // `attributesOfItem` is intentional here: `URL.resourceValues`
+        // caches per-URL and we re-stat the same path every iteration,
+        // so the cache makes the loop see a stale size after the writer
+        // has already grown the file.
+        while true {
             try Task.checkCancellation()
             let size: Int64 = {
                 guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
                       let value = attrs[.size] as? Int64 else { return 0 }
                 return value
             }()
-            lastSize = size
-            if size >= expectedBytes { return size }
-            try await Task.sleep(nanoseconds: pollInterval)
+            if size >= expectedBytes || clock.now >= deadline {
+                return size
+            }
+            try await Task.sleep(for: pollInterval, clock: clock)
         }
-        return lastSize
     }
 
     /// Streamed sha256 over a file on disk. Reads in 4 MB chunks so a

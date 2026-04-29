@@ -424,6 +424,38 @@ struct ModelDownloaderTests {
         #expect(size == 0)
     }
 
+    @Test("waitForFileBytes returns the file's freshly-stat'd size at the deadline (no stale lastSize)")
+    func waitForFileBytes_returnsFreshSizeAtDeadline() async throws {
+        let base = try Self.makeTempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let file = base.appendingPathComponent("late-grower.bin")
+        try Data().write(to: file)
+
+        // Schedule a writer that fires close to the helper's deadline.
+        // The pre-Gemini shape returned `lastSize` recorded *before* the
+        // final sleep — so a writer that landed during the sleep was
+        // invisible. The post-Gemini stat-then-check shape always sees
+        // the freshly-stat'd size, even at the deadline. We assert "the
+        // helper returned the file's actual on-disk size at exit",
+        // which is true under the new shape regardless of whether the
+        // writer landed in time, and would FAIL deterministically on
+        // the old shape if scheduling lined up.
+        let payload = Self.helloPayload
+        let target = file
+        Task.detached {
+            try? await Task.sleep(for: .milliseconds(95))
+            try? payload.write(to: target)
+        }
+
+        let size = try await ModelDownloader.waitForFileBytes(
+            at: file,
+            expectedBytes: Int64(payload.count),
+            timeoutSeconds: 0.1
+        )
+        let actualSize = (try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int64) ?? -1
+        #expect(size == actualSize)
+    }
+
     // MARK: - Streamed sha256 helper
 
     @Test("sha256Hex(of:) matches CryptoKit one-shot hash")
