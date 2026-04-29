@@ -162,6 +162,40 @@ final class ClinikoPatientServiceTests: XCTestCase {
         try await assertSearchError(status: 503, expected: .server(status: 503))
     }
 
+    // MARK: - Empty / whitespace queries (PHI list-all guard)
+
+    /// Without the service-layer empty-query guard, a bare `searchPatients(query: "")`
+    /// would issue `GET /v1/patients` with no filter and Cliniko would
+    /// return EVERY patient in the tenant — a silent PHI exfiltration if
+    /// any future caller bypasses the picker VM's empty-check. The guard
+    /// short-circuits to `[]` and never touches the network.
+    func test_searchPatients_emptyQuery_returnsEmptyArray_withoutNetworkCall() async throws {
+        let invocationCount = CallCounter()
+        let service = try makeService { _ in
+            _ = invocationCount.increment()
+            // Still return a well-formed response so a regression in the
+            // guard fails the count assertion below rather than crashing
+            // somewhere downstream — the test is about whether the request
+            // happens, not what comes back.
+            let body = try HTTPStubFixture.load("cliniko/responses/patients_search_empty.json")
+            let response = HTTPURLResponse(
+                url: URL(string: "https://example.test")!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (response, body)
+        }
+
+        let empty = try await service.searchPatients(query: "")
+        let whitespace = try await service.searchPatients(query: "   \t\n  ")
+
+        XCTAssertTrue(empty.isEmpty)
+        XCTAssertTrue(whitespace.isEmpty)
+        XCTAssertEqual(invocationCount.value, 0,
+                       "empty / whitespace queries must not hit the network")
+    }
+
     /// 429 with `Retry-After: 0` exhausts the immediate-retry policy budget
     /// and surfaces as `.rateLimited(retryAfter: 0)`. The picker UI maps
     /// this to "Cliniko is throttling requests. Try again shortly." — a
@@ -258,6 +292,26 @@ final class ClinikoPatientServiceTests: XCTestCase {
         } catch {
             XCTFail("expected ClinikoError, got \(error)", file: file, line: line)
         }
+    }
+}
+
+/// Counts how many times a URLProtocolStub responder is invoked. Mirrors
+/// the helper of the same name in `ClinikoClientTests` (kept private per
+/// file to dodge `URLProtocolStub` cross-suite races — see #30).
+private final class CallCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    @discardableResult
+    func increment() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        count += 1
+        return count
+    }
+
+    var value: Int {
+        lock.lock(); defer { lock.unlock() }
+        return count
     }
 }
 

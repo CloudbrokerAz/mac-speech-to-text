@@ -117,26 +117,22 @@ struct ClinikoEndpointTests {
                 "expected encoded `&` and `=`, got: \(absolute)")
     }
 
-    @Test("patientSearch with empty / whitespace-only query emits no filter items")
-    func patientSearchURL_emptyQuery_emitsNoQueryItems() {
-        // Defence-in-depth: PatientPickerViewModel already short-circuits
-        // empty input, but the endpoint shouldn't send a malformed filter
-        // if a different caller passes whitespace-only.
-        let emptyURL = ClinikoEndpoint.patientSearch(query: "").buildURL(against: baseURL)
-        let emptyComponents = emptyURL.flatMap {
-            URLComponents(url: $0, resolvingAgainstBaseURL: false)
+    @Test("patientSearch with empty / whitespace-only query emits a clean URL with no trailing `?`")
+    func patientSearchURL_emptyQuery_hasNoTrailingQuestionMark() {
+        // URL hygiene only — `URLComponents.queryItems = []` would still
+        // emit `…/patients?` (trailing `?`). Returning `nil` from the
+        // endpoint's `queryItems` accessor keeps the URL clean. Note this
+        // is NOT the PHI guard against an unfiltered list-all of every
+        // patient — that lives in `ClinikoPatientService.searchPatients`.
+        for input in ["", "   \t\n  "] {
+            let url = ClinikoEndpoint.patientSearch(query: input).buildURL(against: baseURL)
+            let absolute = url?.absoluteString ?? ""
+            #expect(absolute == "https://api.au1.cliniko.com/v1/patients",
+                    "expected clean URL for query \"\(input)\", got: \(absolute)")
+            #expect(!absolute.hasSuffix("?"), "trailing `?` for query \"\(input)\"")
+            let components = url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+            #expect(components?.queryItems == nil)
         }
-        #expect(emptyComponents?.queryItems == nil || emptyComponents?.queryItems?.isEmpty == true)
-
-        let whitespaceURL = ClinikoEndpoint.patientSearch(query: "   \t\n  ")
-            .buildURL(against: baseURL)
-        let whitespaceComponents = whitespaceURL.flatMap {
-            URLComponents(url: $0, resolvingAgainstBaseURL: false)
-        }
-        #expect(
-            whitespaceComponents?.queryItems == nil
-            || whitespaceComponents?.queryItems?.isEmpty == true
-        )
     }
 
     @Test("patientAppointments URL embeds id + ISO8601 dates")

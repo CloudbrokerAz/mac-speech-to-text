@@ -152,7 +152,13 @@ public enum ClinikoEndpoint: Sendable, Equatable {
         case .usersMe, .createTreatmentNote:
             return nil
         case .patientSearch(let query):
-            return ClinikoEndpoint.patientSearchQueryItems(query: query)
+            // Collapse `[]` to `nil` so `buildURL` doesn't emit a stray
+            // trailing `?` for empty/whitespace input. The actual
+            // PHI-exposure guard against an unfiltered list-all is in
+            // `ClinikoPatientService.searchPatients` — this is just URL
+            // hygiene.
+            let items = ClinikoEndpoint.patientSearchQueryItems(query: query)
+            return items.isEmpty ? nil : items
         case .patientAppointments(_, let from, let to):
             return [
                 URLQueryItem(name: "from", value: ClinikoEndpoint.iso8601(from)),
@@ -172,8 +178,12 @@ public enum ClinikoEndpoint: Sendable, Equatable {
     /// in `CloudbrokerAz/epc-letter-generation/Sources/Services/Cliniko/`.
     ///
     /// Splitting strategy (mirrors the reference exactly):
-    /// - Empty / whitespace-only → no query items. The picker VM already
-    ///   trims and short-circuits on empty, so this is defence-in-depth.
+    /// - Empty / whitespace-only → no query items. **This is URL-shape
+    ///   hygiene only** — it does NOT defend against a list-all of every
+    ///   patient (Cliniko serves the unfiltered list in either case). The
+    ///   PHI-exposure guard for that lives in
+    ///   `ClinikoPatientService.searchPatients`, which short-circuits to
+    ///   an empty array before issuing the request.
     /// - 1 token → `q[]=last_name:~<token>`. Single-term searches in
     ///   clinical UI are usually a surname.
     /// - ≥2 tokens → `q[]=first_name:~<head>` + `q[]=last_name:~<tail>`,

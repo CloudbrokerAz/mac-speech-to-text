@@ -38,7 +38,16 @@ public actor ClinikoPatientService: ClinikoPatientSearching {
     }
 
     public func searchPatients(query: String) async throws -> [Patient] {
-        let response: PatientSearchResponse = try await client.send(.patientSearch(query: query))
+        // Guard against empty / whitespace-only queries: without this, a
+        // bare `GET /v1/patients` lists EVERY patient in the tenant —
+        // unfiltered PHI exfiltration if a future caller bypasses the
+        // picker VM's empty-check (today only `PatientPickerViewModel`
+        // calls this, and it short-circuits empty input, but the
+        // service-layer contract should be safe in isolation). Matches
+        // the reference impl in `epc-letter-generation`.
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        let response: PatientSearchResponse = try await client.send(.patientSearch(query: trimmed))
         return response.patients
     }
 }
