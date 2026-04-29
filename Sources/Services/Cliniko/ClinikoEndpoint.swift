@@ -197,8 +197,12 @@ public enum ClinikoEndpoint: Sendable, Equatable {
     private static func patientSearchQueryItems(query: String) -> [URLQueryItem] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
+        // Use `.whitespacesAndNewlines` (vs the reference impl's `.whitespaces`)
+        // so a pasted multi-line clipboard like "John\nDoe" still tokenises
+        // into first/last name pair rather than landing as one weird value
+        // with an embedded `%0A` on the wire (Gemini Code Assist review on #112).
         let parts = trimmed
-            .components(separatedBy: .whitespaces)
+            .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
         if parts.count >= 2 {
             let first = parts[0]

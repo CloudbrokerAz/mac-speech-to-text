@@ -86,6 +86,22 @@ struct ClinikoEndpointTests {
         #expect(components?.path == "/v1/patients")
     }
 
+    @Test("patientSearch URL splits on embedded newlines as well as spaces")
+    func patientSearchURL_multiToken_splitsOnEmbeddedNewlines() {
+        // A pasted multi-line clipboard ("John\nDoe") used to tokenise as a
+        // single value (because `.whitespaces` excludes line terminators),
+        // landing on the wire as `last_name:~John%0ADoe`. The split now uses
+        // `.whitespacesAndNewlines` so it splits on `\n` / `\r` too — Gemini
+        // Code Assist review on PR #112.
+        let url = ClinikoEndpoint.patientSearch(query: "John\nDoe")
+            .buildURL(against: baseURL)
+        let components = url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+        let items = components?.queryItems ?? []
+        #expect(items.count == 2, "got \(items)")
+        #expect(items[0].value == "first_name:~John")
+        #expect(items[1].value == "last_name:~Doe")
+    }
+
     @Test("patientSearch URL emits q[]=first_name + q[]=last_name for multi-token query")
     func patientSearchURL_multiToken_emitsFirstAndLastNameFilters() {
         let url = ClinikoEndpoint.patientSearch(query: "Mary Jane Smith")
