@@ -133,6 +133,17 @@ final class GlassOverlayWindow {
             defer: false
         )
 
+        // #106 — disable AppKit's auto-release-on-close. Same family as
+        // the recording-modal / Review / Main fixes: with the AppKit
+        // default `true`, `close()` autoreleases in addition to whatever
+        // Swift ARC does, and any second close (or strong-ref-drop racing
+        // the autorelease pool drain) hits the zombie. The overlay
+        // window is reused across show/hide via `orderOut:`, but
+        // `closeOverlay()` still calls `close()` and the singleton
+        // controller can be torn down on app termination — keep
+        // lifetime under Swift ARC alone.
+        window.isReleasedWhenClosed = false
+
         configureWindow(window)
         positionWindow(window)
 

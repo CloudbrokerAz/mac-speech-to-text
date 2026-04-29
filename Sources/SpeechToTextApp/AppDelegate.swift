@@ -1015,6 +1015,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 AppLogger.app.debug("showRecordingModal: LiquidGlassRecordingModal disappeared")
                 self?.recordingWindow?.close()
                 self?.recordingWindow = nil
+                // Reset the clinical-notes chord state so the next chord
+                // press starts a fresh session. Without this, Done in the
+                // modal closes the window but leaves
+                // `HotkeyManager.isRecordingClinicalNotes == true`, and
+                // the next chord press is wasted on the "stop" branch
+                // (no active modal → no-op). Idempotent — also fires for
+                // chord-initiated stop and Cancel paths.
+                self?.hotkeyManager?.clinicalNotesSessionEnded()
                 // weak `activeRecordingViewModel` auto-nils once the SwiftUI host releases the strong ref
             }
 
@@ -1032,6 +1040,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
+
+        // #106 — disable AppKit's auto-release-on-close. This is the
+        // load-bearing mitigation for the EXC_BAD_ACCESS surfaced by
+        // NSZombies as `*** -[NSKVONotifying_NSWindow release]:` on the
+        // outer runloop pool drain. The recording modal has three close
+        // paths converging on the same NSWindow: SwiftUI's
+        // `dismissAction()`, the SwiftUI `.onDisappear` below
+        // (`self?.recordingWindow?.close()`), and `applicationWillTerminate`
+        // line 229. With the default `isReleasedWhenClosed = true`, the
+        // first close autoreleases the window; the second close on a
+        // freed object is the zombie. With `false`, the strong
+        // `recordingWindow` property is the sole ARC owner and `nil`
+        // assignment cleanly drops the last reference.
+        window.isReleasedWhenClosed = false
 
         window.contentView = NSHostingView(rootView: contentView)
         window.isOpaque = false

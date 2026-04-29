@@ -211,6 +211,44 @@ reference pattern.
 
 ---
 
+## 8. `NSWindow.isReleasedWhenClosed` (over-release UAF)
+
+**Issue #106 / #102.** Every `NSWindow()` you create in Swift code must
+set `isReleasedWhenClosed = false` immediately after construction. The
+AppKit default is `true` — when `close()` runs, AppKit autoreleases the
+window. If you also hold a strong Swift reference and any close path
+runs more than once (a re-entrant notification observer; SwiftUI's
+`.onDisappear` after `dismiss()`; `applicationWillTerminate` cleanup),
+the second `release` lands on a freed `NSKVONotifying_NSWindow`. The
+crash signature is `EXC_BAD_ACCESS` on `objc_autoreleasePoolPop` from
+`NSApplication.run`'s outer pool drain — sometimes minutes after the
+actual over-release, with no symbolicated frames pointing back at the
+caller because the offender is long off-stack.
+
+```swift
+// WRONG — default `isReleasedWhenClosed = true` + Swift strong ref
+let window = NSWindow(...)
+self.recordingWindow = window
+// Two close paths converging here = zombie release on the second.
+
+// CORRECT — Swift ARC owns the lifetime, close() is idempotent
+let window = NSWindow(...)
+window.isReleasedWhenClosed = false
+self.recordingWindow = window
+```
+
+This applies to `NSWindow` subclasses too (`ClickThroughWindow` in
+`Sources/Views/GlassOverlay/`). Set `isReleasedWhenClosed = false` on
+the instance — not via subclass override — so the behaviour is visible
+at the call site.
+
+The render-crash test recipe (§7) catches `@Observable`+actor crashes
+but NOT this one. NSZombies (`NSZombieEnabled=YES` env var, launch the
+binary directly, not via `open`) is the diagnostic — the
+`*** -[NSKVONotifying_NSWindow release]:` line names the offender.
+
+---
+
 ## Checklist: adding an actor-backed service
 
 - [ ] Conform to an `Actor`-constrained protocol (not the concrete type).
@@ -222,6 +260,18 @@ reference pattern.
 - [ ] Run `swift test --parallel` plus a local smoke test on real hardware
       before merging — `@Observable`+actor crashes don't always reproduce
       in unit tests.
+
+## Checklist: introducing a new NSWindow
+
+- [ ] Set `newWindow.isReleasedWhenClosed = false` immediately after
+      construction (rule §8). All four existing windows do this — match.
+- [ ] Hold the strong reference on a single owner (a window-controller
+      class, not also on AppDelegate).
+- [ ] If the window has a delegate that posts a "did-close" notification
+      observed by the controller, make sure the close handler's second
+      pass is a verified no-op (`window?.close()` is fine if
+      `isReleasedWhenClosed = false` is set, since it becomes
+      `orderOut:`).
 
 ---
 

@@ -90,6 +90,46 @@ struct MLXGemmaProviderUnitTests {
         // maxStopLen=0 → keepBack=0 → boundary at endIndex (full flush OK).
         #expect(boundary == text.endIndex)
     }
+
+    /// **#106 — warmup error mapping (shape, not specific error type).**
+    /// Verifies that `warmup()` catches *any* underlying error from
+    /// `LLMModelFactory.shared.loadContainer` and re-raises it as
+    /// `ProviderError.modelLoadFailed(kind:)` with a non-empty kind
+    /// string. The kind string carries only the type name — never
+    /// `localizedDescription` — so PHI in upstream error chains can't
+    /// leak. The test asserts the **mapping shape**: empty-dir input is
+    /// just a convenient way to provoke any throw from `loadContainer`
+    /// (it might be `URLError`, `POSIXError`, an `LLMError` variant,
+    /// etc. — we don't care which).
+    ///
+    /// Stays in the default CI path because no real model load happens —
+    /// `loadContainer` fails fast on an empty directory.
+    @Test("warmup re-raises load failure as ProviderError.modelLoadFailed")
+    func warmupMapsLoadFailure() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mlx-gemma-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: tempDir,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let provider = MLXGemmaProvider(modelDirectory: tempDir)
+
+        do {
+            try await provider.warmup()
+            Issue.record("warmup() should have thrown on missing weights")
+            return
+        } catch let error as MLXGemmaProvider.ProviderError {
+            guard case .modelLoadFailed(let kind) = error else {
+                Issue.record("expected .modelLoadFailed, got \(error)")
+                return
+            }
+            #expect(!kind.isEmpty, "kind must carry the upstream error type name")
+        } catch {
+            Issue.record("expected ProviderError.modelLoadFailed, got \(type(of: error))")
+        }
+    }
 }
 
 /// Real-inference tests against a downloaded `MLXGemmaProvider`.

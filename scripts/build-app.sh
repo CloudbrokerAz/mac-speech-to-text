@@ -10,6 +10,11 @@
 #   --release       Build in release mode (default: debug)
 #   --dmg           Also create a DMG installer
 #   --open          Open the app after building
+#   --install       Replace /Applications/<APP_NAME>.app with the built bundle
+#                   (kills any running instance first, then rm -rf + cp -R).
+#                   Pairs naturally with --open: opens the installed copy
+#                   so macOS TCC tracks a stable signed identity instead of
+#                   re-prompting permissions on every build/.
 #   --clean         Clean build directory before building
 #   --sign NAME     Sign with specified identity (use "ad-hoc" for ad-hoc)
 #   --sync          Pull latest code from git before building
@@ -68,6 +73,8 @@ SIGN_IDENTITY=""
 SYNC_CODE=false
 CHECK_SIGNING_ONLY=false
 REQUIRE_SIGNING=false  # Set to true to mandate signing (no ad-hoc allowed)
+INSTALL_APP=false      # --install: replace /Applications/<APP_NAME>.app with the built bundle
+INSTALL_DIR="/Applications"
 
 # Check for .signing-identity file
 SIGNING_IDENTITY_FILE="${PROJECT_ROOT}/.signing-identity"
@@ -120,6 +127,7 @@ show_help() {
     echo "  --release       Build in release mode (default: debug)"
     echo "  --dmg           Also create a DMG installer"
     echo "  --open          Open the app after building"
+    echo "  --install       Replace /Applications/${APP_NAME}.app with the built bundle"
     echo "  --clean         Clean build directory before building"
     echo "  --sign NAME     Sign with specified identity (use 'ad-hoc' for ad-hoc)"
     echo "  --sync          Pull latest code from git before building"
@@ -127,10 +135,11 @@ show_help() {
     echo "  --help          Show this help message"
     echo ""
     echo "Examples:"
-    echo "  ./scripts/build-app.sh                # Debug build with configured signing"
-    echo "  ./scripts/build-app.sh --release      # Release build"
-    echo "  ./scripts/build-app.sh --release --dmg # Release + DMG"
-    echo "  ./scripts/build-app.sh --check-signing # Validate signing setup"
+    echo "  ./scripts/build-app.sh                  # Debug build with configured signing"
+    echo "  ./scripts/build-app.sh --install --open # Build, replace /Applications copy, launch it"
+    echo "  ./scripts/build-app.sh --release        # Release build"
+    echo "  ./scripts/build-app.sh --release --dmg  # Release + DMG"
+    echo "  ./scripts/build-app.sh --check-signing  # Validate signing setup"
     echo ""
     exit 0
 }
@@ -501,6 +510,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --open)
             OPEN_APP=true
+            shift
+            ;;
+        --install)
+            INSTALL_APP=true
             shift
             ;;
         --clean)
@@ -877,13 +890,27 @@ elif [ -f "${PROJECT_ROOT}/app_logov2.png" ]; then
     print_success "Copied app logo to Resources"
 fi
 
-# Copy SPM resource bundle (contains Models for voice trigger, etc.)
-SPM_BUNDLE="${PROJECT_ROOT}/.build/${BUILD_CONFIG}/SpeechToText_SpeechToText.bundle"
-if [ -d "${SPM_BUNDLE}" ]; then
-    cp -R "${SPM_BUNDLE}" "${APP_BUNDLE}/Contents/Resources/"
-    print_success "Copied SPM resource bundle (voice trigger models)"
-else
-    print_warning "SPM resource bundle not found at ${SPM_BUNDLE}"
+# Copy ALL SPM resource bundles from xcodebuild's Products dir.
+# Issue #108 — previously only `SpeechToText_SpeechToText.bundle` was
+# copied, which left `mlx-swift_Cmlx.bundle` (the carrier for
+# `default.metallib`) out of the .app. Cmlx then hard-fails at startup
+# with `Failed to load the default metallib`, blocking #106 repro on
+# any clean build. Other transitive package bundles (KeyboardShortcuts,
+# swift-crypto, swift-transformers Hub) are likely also load-bearing
+# for some feature and were silently missing too.
+PRODUCTS_DIR="${DERIVED_DATA}/Build/Products/${XCODE_CONFIG}"
+COPIED_BUNDLE_COUNT=0
+shopt -s nullglob
+for BUNDLE in "${PRODUCTS_DIR}"/*.bundle; do
+    BUNDLE_NAME="$(basename "${BUNDLE}")"
+    cp -R "${BUNDLE}" "${APP_BUNDLE}/Contents/Resources/"
+    print_success "Copied resource bundle: ${BUNDLE_NAME}"
+    COPIED_BUNDLE_COUNT=$((COPIED_BUNDLE_COUNT + 1))
+done
+shopt -u nullglob
+
+if [ "${COPIED_BUNDLE_COUNT}" -eq 0 ]; then
+    print_warning "No resource bundles found at ${PRODUCTS_DIR}"
 fi
 
 # Set permissions
@@ -964,6 +991,67 @@ xattr -rd com.apple.quarantine "${APP_BUNDLE}" 2>/dev/null || true
 print_success "Gatekeeper bypass applied (local development only)"
 
 # =============================================================================
+# Install to /Applications (if requested)
+# =============================================================================
+# `--install` replaces the existing /Applications/<APP_NAME>.app with the
+# freshly built bundle. The earlier pre-build step already pkilled any
+# running instance (whether launched from build/ or /Applications/), so
+# the rm -rf below should not race with a live process. The install also
+# clears the Gatekeeper quarantine attribute that `cp -R` may copy across.
+
+INSTALLED_APP_PATH="${INSTALL_DIR}/${APP_NAME}.app"
+
+if [ "$INSTALL_APP" = true ]; then
+    print_header "Installing to ${INSTALL_DIR}"
+
+    if [ ! -d "${INSTALL_DIR}" ]; then
+        print_error "Install directory does not exist: ${INSTALL_DIR}"
+        exit 1
+    fi
+
+    if [ ! -w "${INSTALL_DIR}" ]; then
+        print_error "Install directory is not writable: ${INSTALL_DIR}"
+        echo ""
+        echo "  ${INSTALL_DIR} usually allows writes by the current user, but a"
+        echo "  recent macOS update or organisation MDM profile may have"
+        echo "  restricted it. Either install elsewhere or grant write access."
+        echo ""
+        exit 1
+    fi
+
+    if [ -d "${INSTALLED_APP_PATH}" ]; then
+        print_info "Removing existing ${INSTALLED_APP_PATH}..."
+        rm -rf "${INSTALLED_APP_PATH}" || {
+            print_error "Could not remove existing app at ${INSTALLED_APP_PATH}"
+            echo ""
+            echo "  Common causes:"
+            echo "    - The app is still running (pkill check before build was insufficient)"
+            echo "    - Finder has the bundle open in a Get-Info or Quick-Look window"
+            echo "    - Spotlight is mid-index of the bundle"
+            echo ""
+            echo "  Retry after closing Finder windows referencing the app, or run:"
+            echo "    pkill -f '${APP_NAME}.app/Contents/MacOS/${APP_NAME}'"
+            echo "    rm -rf ${INSTALLED_APP_PATH}"
+            echo ""
+            exit 1
+        }
+        print_success "Removed previous installed copy"
+    fi
+
+    print_info "Copying ${APP_BUNDLE} → ${INSTALLED_APP_PATH}..."
+    cp -R "${APP_BUNDLE}" "${INSTALLED_APP_PATH}" || {
+        print_error "Copy failed"
+        exit 1
+    }
+
+    # Re-clear quarantine on the installed copy. `cp -R` may carry the
+    # attribute across even though we cleared it on the build/ copy.
+    xattr -rd com.apple.quarantine "${INSTALLED_APP_PATH}" 2>/dev/null || true
+
+    print_success "Installed to ${INSTALLED_APP_PATH}"
+fi
+
+# =============================================================================
 # Create DMG (if requested)
 # =============================================================================
 
@@ -1006,12 +1094,19 @@ fi
 print_header "Build Complete"
 
 echo -e "${GREEN}[SUCCESS]${NC} App Bundle: ${APP_BUNDLE}"
+if [ "$INSTALL_APP" = true ]; then
+    echo -e "${GREEN}[SUCCESS]${NC} Installed:  ${INSTALLED_APP_PATH}"
+fi
 if [ "$CREATE_DMG" = true ]; then
     echo -e "${GREEN}[SUCCESS]${NC} DMG File:   ${BUILD_DIR}/${APP_NAME}.dmg"
 fi
 echo ""
 echo -e "${CYAN}To run the app:${NC}"
-echo "  open ${APP_BUNDLE}"
+if [ "$INSTALL_APP" = true ]; then
+    echo "  open ${INSTALLED_APP_PATH}"
+else
+    echo "  open ${APP_BUNDLE}"
+fi
 echo ""
 
 # Show appropriate note based on signing
@@ -1031,8 +1126,17 @@ else
     echo ""
 fi
 
-# Open app if requested
+# Open app if requested. Prefer the installed copy when --install was used
+# so macOS TCC tracks one stable signed identity and permission grants
+# survive across rebuilds (the build/ copy may be ad-hoc-signed and the
+# /Applications copy correctly signed, or vice versa — opening the
+# installed copy guarantees we exercise the path real users will hit).
 if [ "$OPEN_APP" = true ]; then
-    print_info "Opening app..."
-    open "${APP_BUNDLE}"
+    if [ "$INSTALL_APP" = true ]; then
+        print_info "Opening installed app..."
+        open "${INSTALLED_APP_PATH}"
+    else
+        print_info "Opening app..."
+        open "${APP_BUNDLE}"
+    fi
 fi

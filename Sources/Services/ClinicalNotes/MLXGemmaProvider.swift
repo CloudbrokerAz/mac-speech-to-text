@@ -81,9 +81,15 @@ public actor MLXGemmaProvider: LLMProvider {
     /// call is a no-op once `container` is set. Wired from the Clinical
     /// Notes Mode toggle in `AppState` so the practitioner pays the
     /// load cost up-front rather than on the first "Generate Notes" tap.
+    ///
+    /// The "starting" / "completed" OSLog signposts are diagnostic
+    /// instrumentation introduced for #106: when the next MLX-related
+    /// crash report lands, the surrounding signposts localise whether
+    /// we crashed pre- or post-load. Cheap to leave in.
     public func warmup() async throws {
         if container != nil { return }
         let started = ContinuousClock.now
+        logger.info("MLX warmup starting")
         do {
             let loaded = try await LLMModelFactory.shared.loadContainer(
                 from: modelDirectory,
@@ -184,31 +190,56 @@ public actor MLXGemmaProvider: LLMProvider {
             parameters: parameters
         )
 
+        // Per-chunk autorelease drain. Long async streams + Obj-C bridge
+        // work (mlx-swift-lm chunk decoding, OSLog formatting, the
+        // `yield` continuation) accumulate temporaries on the actor's
+        // executor between suspension points. The canonical Cocoa
+        // pattern for any long sync loop containing bridged work is to
+        // wrap the body in `autoreleasepool` so each iteration drains
+        // independently — see `NSAutoreleasePool` "long-running loop"
+        // guidance.
+        //
+        // Closure-body conventions:
+        //   - `try Task.checkCancellation()` stays **outside** the
+        //     `autoreleasepool` because Swift's `autoreleasepool` is
+        //     non-throwing; cancellation must propagate as a thrown
+        //     `CancellationError`, not be swallowed by the closure.
+        //   - The closure body is intentionally non-throwing — `yield`
+        //     and the string operations don't throw — so we use the
+        //     non-`try` form.
+        //   - `break` is hoisted to the `shouldBreak` flag so the
+        //     post-stop-match emit ordering (yield prefix → break)
+        //     survives the closure boundary.
         var pendingTail = ""
+        var shouldBreak = false
         for await item in stream {
             try Task.checkCancellation()
-            guard case let .chunk(text) = item else { continue }
-            if stops.isEmpty {
-                yield(text)
-                continue
-            }
-            pendingTail += text
-            if let stopRange = Self.firstStopRange(in: pendingTail, stops: stops) {
-                let prefix = String(pendingTail[..<stopRange.lowerBound])
-                if !prefix.isEmpty {
-                    yield(prefix)
+            autoreleasepool {
+                guard case let .chunk(text) = item else { return }
+                if stops.isEmpty {
+                    yield(text)
+                    return
                 }
-                break
+                pendingTail += text
+                if let stopRange = Self.firstStopRange(in: pendingTail, stops: stops) {
+                    let prefix = String(pendingTail[..<stopRange.lowerBound])
+                    if !prefix.isEmpty {
+                        yield(prefix)
+                    }
+                    shouldBreak = true
+                    return
+                }
+                let safeBoundary = Self.safeFlushBoundary(
+                    in: pendingTail,
+                    stops: stops
+                )
+                if safeBoundary > pendingTail.startIndex {
+                    let flushable = String(pendingTail[..<safeBoundary])
+                    yield(flushable)
+                    pendingTail = String(pendingTail[safeBoundary...])
+                }
             }
-            let safeBoundary = Self.safeFlushBoundary(
-                in: pendingTail,
-                stops: stops
-            )
-            if safeBoundary > pendingTail.startIndex {
-                let flushable = String(pendingTail[..<safeBoundary])
-                yield(flushable)
-                pendingTail = String(pendingTail[safeBoundary...])
-            }
+            if shouldBreak { break }
         }
     }
 

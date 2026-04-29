@@ -115,6 +115,16 @@ retry on schema failure.
   try to hop threads manually.
 - Stored on an `@Observable` class (e.g. `AppState`): requires
   `@ObservationIgnored`, per [`concurrency.md`](concurrency.md) rule 1.
+- **Per-chunk autorelease drain in `runGeneration`.** Long async
+  streams plus Obj-C bridge work accumulate temporaries on the actor's
+  executor between suspension points. The canonical Cocoa pattern is
+  to wrap each iteration body in `autoreleasepool { … }` so per-chunk
+  bridge temporaries (mlx-swift-lm chunk decoding, OSLog formatting,
+  the `yield` continuation) drain independently. When wrapping a
+  for-await loop, hoist `break` / `continue` to a flag set inside the
+  closure and consumed after, and keep `try Task.checkCancellation()`
+  *outside* the closure (autoreleasepool is non-throwing — cancellation
+  must propagate as a thrown `CancellationError`).
 
 ---
 
