@@ -1106,11 +1106,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             object: window,
             queue: .main
         ) { [weak self] _ in
-            // willCloseNotification is posted on .main queue but observers are
-            // not MainActor-isolated by default; hop explicitly per
-            // `.claude/references/concurrency.md` §2 to safely touch
-            // MainActor-isolated state.
-            Task { @MainActor [weak self] in
+            // Intentionally *not* wrapped in `Task { @MainActor ... }`:
+            //   - We pass `queue: .main`, so the callback runs on the main
+            //     queue synchronously. A Task hop would defer cleanup to the
+            //     next runloop pass, opening a race window where a fresh
+            //     `showRecordingModal` invocation could observe a non-nil
+            //     `recordingWindow` and short-circuit.
+            //   - `MainActor.assumeIsolated` is the Swift 6 tool for
+            //     "compiler, trust me, I know this runs on MainActor". It's
+            //     a zero-cost runtime-checked assertion, not a dispatch, so
+            //     the synchronous semantics survive. If our precondition
+            //     (queue: .main) ever breaks, the assertion crashes loudly
+            //     in DEBUG instead of silently corrupting MainActor state.
+            //   - Mirrors the `themeDidChange` observer pattern below and
+            //     `.gemini/styleguide.md`'s guidance on AppKit notifications.
+            //     The `.claude/references/concurrency.md` §2 "Task hop"
+            //     guidance applies to Core Audio / Carbon / DispatchSource
+            //     callbacks where the dispatch queue is unknown — not to
+            //     NotificationCenter with an explicit `.main` queue.
+            MainActor.assumeIsolated {
                 self?.cleanupAfterRecordingModalClose(reason: "willCloseNotification")
             }
         }
