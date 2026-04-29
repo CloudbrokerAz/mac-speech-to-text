@@ -54,7 +54,7 @@ public enum ClinikoEndpoint: Sendable, Equatable {
     public var pathTemplate: String {
         switch self {
         case .usersMe: return "/user"
-        case .patientSearch: return "/patients?q={query}"
+        case .patientSearch: return "/patients?q[]={filter}"
         case .patientAppointments: return "/patients/:id/appointments"
         case .createTreatmentNote: return "/treatment_notes"
         }
@@ -149,13 +149,53 @@ public enum ClinikoEndpoint: Sendable, Equatable {
         case .usersMe, .createTreatmentNote:
             return nil
         case .patientSearch(let query):
-            return [URLQueryItem(name: "q", value: query)]
+            return ClinikoEndpoint.patientSearchQueryItems(query: query)
         case .patientAppointments(_, let from, let to):
             return [
                 URLQueryItem(name: "from", value: ClinikoEndpoint.iso8601(from)),
                 URLQueryItem(name: "to", value: ClinikoEndpoint.iso8601(to))
             ]
         }
+    }
+
+    /// Build Cliniko's filter syntax for `GET /patients?q[]=field:~term`.
+    ///
+    /// Cliniko's `/patients` endpoint expects array-shaped `q[]` filters
+    /// with the form `field:~value` (the `~` being Cliniko's contains
+    /// operator). Sending a bare `q=value` triggered issue #101 — Cliniko
+    /// 5xx'd on the malformed filter, which the client mapped to
+    /// `.server(status:)`, surfacing as "Cliniko had a server error" in
+    /// the patient picker. Verified against the working reference impl
+    /// in `CloudbrokerAz/epc-letter-generation/Sources/Services/Cliniko/`.
+    ///
+    /// Splitting strategy (mirrors the reference exactly):
+    /// - Empty / whitespace-only → no query items. The picker VM already
+    ///   trims and short-circuits on empty, so this is defence-in-depth.
+    /// - 1 token → `q[]=last_name:~<token>`. Single-term searches in
+    ///   clinical UI are usually a surname.
+    /// - ≥2 tokens → `q[]=first_name:~<head>` + `q[]=last_name:~<tail>`,
+    ///   tail = remaining tokens joined by space (handles "Mary Jane Smith"
+    ///   as first="Mary", last="Jane Smith").
+    ///
+    /// `URLQueryItem` value-half percent-encoding is handled by
+    /// `URLComponents`; `:` and `~` pass through unencoded as URL-safe
+    /// characters in the query component, and any user-supplied bytes
+    /// (including `&`, `=`, spaces) are escaped automatically.
+    private static func patientSearchQueryItems(query: String) -> [URLQueryItem] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        let parts = trimmed
+            .components(separatedBy: .whitespaces)
+            .filter { !$0.isEmpty }
+        if parts.count >= 2 {
+            let first = parts[0]
+            let last = parts.dropFirst().joined(separator: " ")
+            return [
+                URLQueryItem(name: "q[]", value: "first_name:~\(first)"),
+                URLQueryItem(name: "q[]", value: "last_name:~\(last)")
+            ]
+        }
+        return [URLQueryItem(name: "q[]", value: "last_name:~\(trimmed)")]
     }
 
     /// ISO8601 with seconds + UTC. Cliniko accepts this canonical shape for
