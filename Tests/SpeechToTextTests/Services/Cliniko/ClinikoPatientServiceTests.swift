@@ -63,7 +63,13 @@ final class ClinikoPatientServiceTests: XCTestCase {
         XCTAssertNil(patients.last?.email)
     }
 
-    func test_searchPatients_emitsQueryItem() async throws {
+    /// End-to-end pin (#101): a single-word query produces Cliniko's
+    /// array-shaped `q[]=last_name:~term` filter on the wire. The
+    /// duplication with `ClinikoEndpointTests.patientSearchURL_…` is
+    /// intentional — this asserts the *whole* call path from
+    /// `searchPatients(query:)` through `ClinikoClient.send(_:)` lands
+    /// the right bytes in the URL, not just the endpoint enum in isolation.
+    func test_searchPatients_singleToken_emitsLastNameFilter() async throws {
         let captured = CapturedRequestBox()
         let service = try makeService { request in
             captured.set(request)
@@ -77,12 +83,45 @@ final class ClinikoPatientServiceTests: XCTestCase {
             return (response, body)
         }
 
-        _ = try await service.searchPatients(query: "doe smith")
+        _ = try await service.searchPatients(query: "smith")
 
         let url = try XCTUnwrap(captured.value?.url)
         let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
-        let queryValue = components.queryItems?.first { $0.name == "q" }?.value
-        XCTAssertEqual(queryValue, "doe smith")
+        let items = components.queryItems ?? []
+        XCTAssertEqual(items.count, 1, "got \(items)")
+        XCTAssertEqual(items.first?.name, "q[]")
+        XCTAssertEqual(items.first?.value, "last_name:~smith")
+        XCTAssertEqual(components.path, "/v1/patients")
+    }
+
+    /// Multi-token queries split on whitespace: first token → first_name
+    /// filter, remainder joined back together → last_name filter. Mirrors
+    /// the reference impl in `epc-letter-generation`.
+    func test_searchPatients_multiToken_emitsFirstAndLastNameFilters() async throws {
+        let captured = CapturedRequestBox()
+        let service = try makeService { request in
+            captured.set(request)
+            let body = try HTTPStubFixture.load("cliniko/responses/patients_search_empty.json")
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "https://example.test")!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (response, body)
+        }
+
+        // Compound surname: "Mary Jane Smith" → first_name=Mary, last_name="Jane Smith".
+        _ = try await service.searchPatients(query: "Mary Jane Smith")
+
+        let url = try XCTUnwrap(captured.value?.url)
+        let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        let items = components.queryItems ?? []
+        XCTAssertEqual(items.count, 2, "got \(items)")
+        XCTAssertEqual(items[0].name, "q[]")
+        XCTAssertEqual(items[0].value, "first_name:~Mary")
+        XCTAssertEqual(items[1].name, "q[]")
+        XCTAssertEqual(items[1].value, "last_name:~Jane Smith")
         XCTAssertEqual(components.path, "/v1/patients")
     }
 
@@ -121,6 +160,95 @@ final class ClinikoPatientServiceTests: XCTestCase {
 
     func test_searchPatients_503_afterRetriesExhausted_mapsToServer() async throws {
         try await assertSearchError(status: 503, expected: .server(status: 503))
+    }
+
+    // MARK: - Empty / whitespace queries (PHI list-all guard)
+
+    /// Without the service-layer empty-query guard, a bare `searchPatients(query: "")`
+    /// would issue `GET /v1/patients` with no filter and Cliniko would
+    /// return EVERY patient in the tenant — a silent PHI exfiltration if
+    /// any future caller bypasses the picker VM's empty-check. The guard
+    /// short-circuits to `[]` and never touches the network.
+    func test_searchPatients_emptyQuery_returnsEmptyArray_withoutNetworkCall() async throws {
+        let invocationCount = CallCounter()
+        let service = try makeService { _ in
+            _ = invocationCount.increment()
+            // Still return a well-formed response so a regression in the
+            // guard fails the count assertion below rather than crashing
+            // somewhere downstream — the test is about whether the request
+            // happens, not what comes back.
+            let body = try HTTPStubFixture.load("cliniko/responses/patients_search_empty.json")
+            let response = HTTPURLResponse(
+                url: URL(string: "https://example.test")!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (response, body)
+        }
+
+        let empty = try await service.searchPatients(query: "")
+        let whitespace = try await service.searchPatients(query: "   \t\n  ")
+
+        XCTAssertTrue(empty.isEmpty)
+        XCTAssertTrue(whitespace.isEmpty)
+        XCTAssertEqual(invocationCount.value, 0,
+                       "empty / whitespace queries must not hit the network")
+    }
+
+    /// 429 with `Retry-After: 0` exhausts the immediate-retry policy budget
+    /// and surfaces as `.rateLimited(retryAfter: 0)`. The picker UI maps
+    /// this to "Cliniko is throttling requests. Try again shortly." — a
+    /// distinct error path from the generic `.server` we used to fall into.
+    func test_searchPatients_429_exhaustsBudget_mapsToRateLimited() async throws {
+        let service = try makeService { request in
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "https://example.test")!,
+                statusCode: 429,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Retry-After": "0"]
+            )!
+            return (response, Data())
+        }
+        do {
+            _ = try await service.searchPatients(query: "anything")
+            XCTFail("expected ClinikoError.rateLimited")
+        } catch ClinikoError.rateLimited(let retryAfter) {
+            XCTAssertEqual(retryAfter, 0)
+        } catch {
+            XCTFail("expected .rateLimited, got \(error)")
+        }
+    }
+
+    /// 200 with a body that does not decode into `PatientSearchResponse`
+    /// surfaces as `.decoding(typeName:)`. Cliniko has occasionally shipped
+    /// envelope changes (e.g. renaming `total_entries`) and we want the
+    /// picker to render an unambiguous "report this" path rather than a
+    /// generic "server error" fallthrough.
+    func test_searchPatients_malformedJSON_mapsToDecoding() async throws {
+        // Body parses as JSON but lacks the required `patients` array, so
+        // PatientSearchResponse cannot decode. PHI: synthetic, no patient data.
+        let body = Data(#"{"unexpected_envelope": true}"#.utf8)
+        let service = try makeService { request in
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "https://example.test")!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (response, body)
+        }
+        do {
+            _ = try await service.searchPatients(query: "anything")
+            XCTFail("expected ClinikoError.decoding")
+        } catch ClinikoError.decoding(let typeName) {
+            XCTAssertTrue(
+                typeName.contains("PatientSearchResponse"),
+                "typeName should identify the decoding target; got \(typeName)"
+            )
+        } catch {
+            XCTFail("expected .decoding, got \(error)")
+        }
     }
 
     // MARK: - Cancellation
@@ -164,6 +292,26 @@ final class ClinikoPatientServiceTests: XCTestCase {
         } catch {
             XCTFail("expected ClinikoError, got \(error)", file: file, line: line)
         }
+    }
+}
+
+/// Counts how many times a URLProtocolStub responder is invoked. Mirrors
+/// the helper of the same name in `ClinikoClientTests` (kept private per
+/// file to dodge `URLProtocolStub` cross-suite races — see #30).
+private final class CallCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    @discardableResult
+    func increment() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        count += 1
+        return count
+    }
+
+    var value: Int {
+        lock.lock(); defer { lock.unlock() }
+        return count
     }
 }
 

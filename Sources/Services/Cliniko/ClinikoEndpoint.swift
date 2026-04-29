@@ -20,7 +20,10 @@ public enum ClinikoEndpoint: Sendable, Equatable {
     /// (`/users/me` does not exist — it 404s, see #88).
     case usersMe
 
-    /// `GET /patients?q={query}` — debounced patient search for #9.
+    /// `GET /patients?q[]=field:~term` — debounced patient search for #9.
+    /// Cliniko's `/patients` filter takes Ransack-style array filters;
+    /// a bare `q=value` 5xx'd in production. See #101 +
+    /// `patientSearchQueryItems` for the splitting strategy.
     case patientSearch(query: String)
 
     /// `GET /patients/{id}/appointments?from={ISO8601}&to={ISO8601}` —
@@ -54,7 +57,7 @@ public enum ClinikoEndpoint: Sendable, Equatable {
     public var pathTemplate: String {
         switch self {
         case .usersMe: return "/user"
-        case .patientSearch: return "/patients?q={query}"
+        case .patientSearch: return "/patients?q[]={filter}"
         case .patientAppointments: return "/patients/:id/appointments"
         case .createTreatmentNote: return "/treatment_notes"
         }
@@ -149,13 +152,67 @@ public enum ClinikoEndpoint: Sendable, Equatable {
         case .usersMe, .createTreatmentNote:
             return nil
         case .patientSearch(let query):
-            return [URLQueryItem(name: "q", value: query)]
+            // Collapse `[]` to `nil` so `buildURL` doesn't emit a stray
+            // trailing `?` for empty/whitespace input. The actual
+            // PHI-exposure guard against an unfiltered list-all is in
+            // `ClinikoPatientService.searchPatients` — this is just URL
+            // hygiene.
+            let items = ClinikoEndpoint.patientSearchQueryItems(query: query)
+            return items.isEmpty ? nil : items
         case .patientAppointments(_, let from, let to):
             return [
                 URLQueryItem(name: "from", value: ClinikoEndpoint.iso8601(from)),
                 URLQueryItem(name: "to", value: ClinikoEndpoint.iso8601(to))
             ]
         }
+    }
+
+    /// Build Cliniko's filter syntax for `GET /patients?q[]=field:~term`.
+    ///
+    /// Cliniko's `/patients` endpoint expects array-shaped `q[]` filters
+    /// with the form `field:~value` (the `~` being Cliniko's contains
+    /// operator). Sending a bare `q=value` triggered issue #101 — Cliniko
+    /// 5xx'd on the malformed filter, which the client mapped to
+    /// `.server(status:)`, surfacing as "Cliniko had a server error" in
+    /// the patient picker. Verified against the working reference impl
+    /// in `CloudbrokerAz/epc-letter-generation/Sources/Services/Cliniko/`.
+    ///
+    /// Splitting strategy (mirrors the reference exactly):
+    /// - Empty / whitespace-only → no query items. **This is URL-shape
+    ///   hygiene only** — it does NOT defend against a list-all of every
+    ///   patient (Cliniko serves the unfiltered list in either case). The
+    ///   PHI-exposure guard for that lives in
+    ///   `ClinikoPatientService.searchPatients`, which short-circuits to
+    ///   an empty array before issuing the request.
+    /// - 1 token → `q[]=last_name:~<token>`. Single-term searches in
+    ///   clinical UI are usually a surname.
+    /// - ≥2 tokens → `q[]=first_name:~<head>` + `q[]=last_name:~<tail>`,
+    ///   tail = remaining tokens joined by space (handles "Mary Jane Smith"
+    ///   as first="Mary", last="Jane Smith").
+    ///
+    /// `URLQueryItem` value-half percent-encoding is handled by
+    /// `URLComponents`; `:` and `~` pass through unencoded as URL-safe
+    /// characters in the query component, and any user-supplied bytes
+    /// (including `&`, `=`, spaces) are escaped automatically.
+    private static func patientSearchQueryItems(query: String) -> [URLQueryItem] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        // Use `.whitespacesAndNewlines` (vs the reference impl's `.whitespaces`)
+        // so a pasted multi-line clipboard like "John\nDoe" still tokenises
+        // into first/last name pair rather than landing as one weird value
+        // with an embedded `%0A` on the wire (Gemini Code Assist review on #112).
+        let parts = trimmed
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+        if parts.count >= 2 {
+            let first = parts[0]
+            let last = parts.dropFirst().joined(separator: " ")
+            return [
+                URLQueryItem(name: "q[]", value: "first_name:~\(first)"),
+                URLQueryItem(name: "q[]", value: "last_name:~\(last)")
+            ]
+        }
+        return [URLQueryItem(name: "q[]", value: "last_name:~\(trimmed)")]
     }
 
     /// ISO8601 with seconds + UTC. Cliniko accepts this canonical shape for

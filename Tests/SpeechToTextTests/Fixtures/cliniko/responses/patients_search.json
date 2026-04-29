@@ -24,6 +24,6 @@
   ],
   "total_entries": 3,
   "links": {
-    "self": "https://api.au1.cliniko.com/v1/patients?q=sample"
+    "self": "https://api.au1.cliniko.com/v1/patients?q%5B%5D=last_name%3A~sample"
   }
 }

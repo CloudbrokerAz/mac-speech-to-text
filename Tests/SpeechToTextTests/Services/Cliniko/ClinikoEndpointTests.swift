@@ -27,7 +27,9 @@ struct ClinikoEndpointTests {
     func patientSearchShape() {
         let endpoint = ClinikoEndpoint.patientSearch(query: "smith")
         #expect(endpoint.method == .get)
-        #expect(endpoint.pathTemplate == "/patients?q={query}")
+        // Template now reflects Cliniko's array-shaped filter syntax (#101).
+        // Bound query value still excluded — `{filter}` is the placeholder.
+        #expect(endpoint.pathTemplate == "/patients?q[]={filter}")
         #expect(endpoint.body == nil)
         #expect(endpoint.isIdempotent)
         #expect(endpoint.resource == .patient)
@@ -69,16 +71,84 @@ struct ClinikoEndpointTests {
         #expect(url?.absoluteString == "https://api.au1.cliniko.com/v1/user")
     }
 
-    @Test("patientSearch URL encodes the query")
-    func patientSearchURL() {
-        let url = ClinikoEndpoint.patientSearch(query: "John & Jane").buildURL(against: baseURL)
-        // The query must be percent-encoded; `&` becomes `%26`, space becomes `%20`.
+    @Test("patientSearch URL emits Cliniko's q[]=field:~term filter syntax (single token)")
+    func patientSearchURL_singleToken_emitsLastNameFilter() {
+        let url = ClinikoEndpoint.patientSearch(query: "smith").buildURL(against: baseURL)
         #expect(url != nil)
+        let components = url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+        let queryItems = components?.queryItems ?? []
+        // Single token → q[]=last_name:~smith. Reference: epc-letter-generation
+        // ClinikoPatientService.searchPatients(query:) — last_name is the most
+        // common surname-only search pattern in the picker UI.
+        #expect(queryItems.count == 1, "got \(queryItems)")
+        #expect(queryItems.first?.name == "q[]")
+        #expect(queryItems.first?.value == "last_name:~smith")
+        #expect(components?.path == "/v1/patients")
+    }
+
+    @Test("patientSearch URL splits on embedded newlines as well as spaces")
+    func patientSearchURL_multiToken_splitsOnEmbeddedNewlines() {
+        // A pasted multi-line clipboard ("John\nDoe") used to tokenise as a
+        // single value (because `.whitespaces` excludes line terminators),
+        // landing on the wire as `last_name:~John%0ADoe`. The split now uses
+        // `.whitespacesAndNewlines` so it splits on `\n` / `\r` too — Gemini
+        // Code Assist review on PR #112.
+        let url = ClinikoEndpoint.patientSearch(query: "John\nDoe")
+            .buildURL(against: baseURL)
+        let components = url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+        let items = components?.queryItems ?? []
+        #expect(items.count == 2, "got \(items)")
+        #expect(items[0].value == "first_name:~John")
+        #expect(items[1].value == "last_name:~Doe")
+    }
+
+    @Test("patientSearch URL emits q[]=first_name + q[]=last_name for multi-token query")
+    func patientSearchURL_multiToken_emitsFirstAndLastNameFilters() {
+        let url = ClinikoEndpoint.patientSearch(query: "Mary Jane Smith")
+            .buildURL(against: baseURL)
+        let components = url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+        let queryItems = components?.queryItems ?? []
+        #expect(queryItems.count == 2, "got \(queryItems)")
+        #expect(queryItems[0].name == "q[]")
+        #expect(queryItems[0].value == "first_name:~Mary")
+        #expect(queryItems[1].name == "q[]")
+        // Trailing tokens are joined back together so "Jane Smith" stays a
+        // single last-name filter value (handles compound surnames).
+        #expect(queryItems[1].value == "last_name:~Jane Smith")
+    }
+
+    @Test("patientSearch URL percent-escapes user-supplied special chars in the value")
+    func patientSearchURL_percentEscapesSpecialChars() {
+        // `&` and `=` would break the query string if unescaped; URLComponents
+        // must encode them inside the value half of the URLQueryItem so they
+        // can't terminate the filter or introduce a sibling query parameter.
+        let url = ClinikoEndpoint.patientSearch(query: "O&Brien=test")
+            .buildURL(against: baseURL)
         let absolute = url?.absoluteString ?? ""
         #expect(absolute.contains("/v1/patients"))
-        #expect(absolute.contains("q="))
-        // URLComponents standard encoding turns space into "%20"
-        #expect(absolute.contains("John%20%26%20Jane") || absolute.contains("John+%26+Jane"))
+        // Single-token branch (no whitespace) → last_name filter. The user
+        // input portion is encoded; `:` and `~` in the structural prefix
+        // pass through as URL-safe.
+        #expect(absolute.contains("q%5B%5D=last_name:~O%26Brien%3Dtest"),
+                "expected encoded `&` and `=`, got: \(absolute)")
+    }
+
+    @Test("patientSearch with empty / whitespace-only query emits a clean URL with no trailing `?`")
+    func patientSearchURL_emptyQuery_hasNoTrailingQuestionMark() {
+        // URL hygiene only — `URLComponents.queryItems = []` would still
+        // emit `…/patients?` (trailing `?`). Returning `nil` from the
+        // endpoint's `queryItems` accessor keeps the URL clean. Note this
+        // is NOT the PHI guard against an unfiltered list-all of every
+        // patient — that lives in `ClinikoPatientService.searchPatients`.
+        for input in ["", "   \t\n  "] {
+            let url = ClinikoEndpoint.patientSearch(query: input).buildURL(against: baseURL)
+            let absolute = url?.absoluteString ?? ""
+            #expect(absolute == "https://api.au1.cliniko.com/v1/patients",
+                    "expected clean URL for query \"\(input)\", got: \(absolute)")
+            #expect(!absolute.hasSuffix("?"), "trailing `?` for query \"\(input)\"")
+            let components = url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+            #expect(components?.queryItems == nil)
+        }
     }
 
     @Test("patientAppointments URL embeds id + ISO8601 dates")
