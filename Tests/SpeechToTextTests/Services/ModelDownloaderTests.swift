@@ -348,6 +348,114 @@ struct ModelDownloaderTests {
         }
     }
 
+    // MARK: - waitForFileBytes (issue #94)
+
+    @Test("waitForFileBytes returns immediately when the file already has expected bytes")
+    func waitForFileBytes_returnsWhenSizeAlreadySatisfied() async throws {
+        let base = try Self.makeTempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let file = base.appendingPathComponent("ready.bin")
+        try Self.helloPayload.write(to: file)
+
+        let size = try await ModelDownloader.waitForFileBytes(
+            at: file,
+            expectedBytes: Int64(Self.helloPayload.count)
+        )
+        #expect(size == Int64(Self.helloPayload.count))
+    }
+
+    @Test("waitForFileBytes resolves once a delayed writer reaches the expected size")
+    func waitForFileBytes_returnsOnceFileGrowsToExpected() async throws {
+        let base = try Self.makeTempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let file = base.appendingPathComponent("growing.bin")
+        // Start as a 0-byte file — mimics URLSession's tempURL the moment
+        // download(for:) returns but before the writer thread has flushed.
+        try Data().write(to: file)
+
+        // Background writer: appends the payload after ~50 ms, simulating
+        // the URLSession writer thread catching up after the continuation
+        // has already resumed.
+        let payload = Self.helloPayload
+        let target = file
+        Task.detached {
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50 ms
+            try? payload.write(to: target)
+        }
+
+        let size = try await ModelDownloader.waitForFileBytes(
+            at: file,
+            expectedBytes: Int64(payload.count),
+            timeoutSeconds: 2.0
+        )
+        #expect(size == Int64(payload.count))
+    }
+
+    @Test("waitForFileBytes returns the actually-observed size when the file never reaches expected")
+    func waitForFileBytes_returnsObservedSizeOnTimeout() async throws {
+        let base = try Self.makeTempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let file = base.appendingPathComponent("short.bin")
+        // 1 byte, never grows. Short timeout — the helper waits the
+        // full deadline (no stable-plateau optimisation) and returns
+        // the last-observed size so the caller's sizeMismatch
+        // diagnostic carries the actually-observed count, not 0.
+        try Data("x".utf8).write(to: file)
+
+        let size = try await ModelDownloader.waitForFileBytes(
+            at: file,
+            expectedBytes: 100,
+            timeoutSeconds: 0.05
+        )
+        #expect(size == 1)
+    }
+
+    @Test("waitForFileBytes returns 0 when the file does not exist within the timeout")
+    func waitForFileBytes_returnsZeroForMissingFile() async throws {
+        let base = try Self.makeTempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let missing = base.appendingPathComponent("never-created.bin")
+
+        let size = try await ModelDownloader.waitForFileBytes(
+            at: missing,
+            expectedBytes: 4,
+            timeoutSeconds: 0.05
+        )
+        #expect(size == 0)
+    }
+
+    @Test("waitForFileBytes returns the file's freshly-stat'd size at the deadline (no stale lastSize)")
+    func waitForFileBytes_returnsFreshSizeAtDeadline() async throws {
+        let base = try Self.makeTempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let file = base.appendingPathComponent("late-grower.bin")
+        try Data().write(to: file)
+
+        // Schedule a writer that fires close to the helper's deadline.
+        // The pre-Gemini shape returned `lastSize` recorded *before* the
+        // final sleep — so a writer that landed during the sleep was
+        // invisible. The post-Gemini stat-then-check shape always sees
+        // the freshly-stat'd size, even at the deadline. We assert "the
+        // helper returned the file's actual on-disk size at exit",
+        // which is true under the new shape regardless of whether the
+        // writer landed in time, and would FAIL deterministically on
+        // the old shape if scheduling lined up.
+        let payload = Self.helloPayload
+        let target = file
+        Task.detached {
+            try? await Task.sleep(for: .milliseconds(95))
+            try? payload.write(to: target)
+        }
+
+        let size = try await ModelDownloader.waitForFileBytes(
+            at: file,
+            expectedBytes: Int64(payload.count),
+            timeoutSeconds: 0.1
+        )
+        let actualSize = (try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int64) ?? -1
+        #expect(size == actualSize)
+    }
+
     // MARK: - Streamed sha256 helper
 
     @Test("sha256Hex(of:) matches CryptoKit one-shot hash")

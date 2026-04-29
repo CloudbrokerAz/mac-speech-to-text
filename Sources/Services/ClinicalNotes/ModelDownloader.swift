@@ -296,6 +296,28 @@ public actor ModelDownloader {
 
         try Self.assertHTTPSuccess(response: response, path: file.path)
 
+        // Wait for URLSession's internal writer to finish flushing
+        // `tempURL` before we touch it. `download(for:)`'s continuation
+        // can resume before the writer has drained all delegate-buffered
+        // body bytes to the temp file — surfacing as transient
+        // `sizeMismatch(expected:N, got:0)` (issue #94). Polling the
+        // size attribute is cheap on the happy path (one stat) and
+        // gives up promptly when the file is genuinely short, so the
+        // size guard below still produces the correct diagnostic for
+        // a real short response.
+        let durableTempSize = try await Self.waitForFileBytes(
+            at: tempURL,
+            expectedBytes: file.size
+        )
+        guard durableTempSize == file.size else {
+            try? FileManager.default.removeItem(at: tempURL)
+            throw DownloaderError.sizeMismatch(
+                path: file.path,
+                expected: file.size,
+                got: durableTempSize
+            )
+        }
+
         // After the download completes, validate size against the
         // manifest *before* the (more expensive) sha256 hash. We move
         // the temp file into our `<file>.partial` slot first so the
@@ -450,6 +472,65 @@ public actor ModelDownloader {
             throw DownloaderError.malformedManifest(reason: "url-components:\(path)")
         }
         return url
+    }
+
+    /// Polls `url`'s on-disk size until it satisfies `expectedBytes`,
+    /// stops growing, or the deadline elapses. Returns the size observed
+    /// at exit so the caller can decide whether the file is durable
+    /// enough to move/verify.
+    ///
+    /// **Issue #94.** Without this, `URLSession.download(for:)` can
+    /// resume its async continuation before the system's internal
+    /// writer has finished draining the response body into the temp URL
+    /// — surfacing as a transient `sizeMismatch(expected:N, got:0)` in
+    /// CI under `URLProtocolStub` (where the protocol thread synchronously
+    /// fires `didLoad` immediately followed by `urlProtocolDidFinishLoading`,
+    /// giving URLSession's writer no opportunity to interleave). The race
+    /// is also possible in production on slow disks. Polling is the
+    /// surgical fix — switching to `URLSessionDownloadDelegate` would
+    /// give a documented "writer flushed" signal but is a wider refactor
+    /// (deferred — see the comment on `downloadAndVerify`).
+    ///
+    /// Returns when one of: (a) the file's size reaches `expectedBytes`,
+    /// (b) the deadline elapses. We deliberately do *not* early-exit on
+    /// a "stable plateau" (size unchanged for N polls): a ~15 ms gap
+    /// between flushes is normal in chunked production downloads and
+    /// would produce a spurious `sizeMismatch` on a perfectly healthy
+    /// transfer. Errors stat'ing the file (e.g. the writer has not yet
+    /// created it) are treated as "0 bytes for now" and re-polled.
+    /// The 2-second default is a wide buffer over the few-millisecond
+    /// flush window observed in CI; on a genuinely short server
+    /// response this is the worst-case wait before the caller raises
+    /// `sizeMismatch`.
+    static func waitForFileBytes(
+        at url: URL,
+        expectedBytes: Int64,
+        timeoutSeconds: Double = 2.0
+    ) async throws -> Int64 {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(timeoutSeconds))
+        let pollInterval = Duration.milliseconds(5)
+        // Stat-then-check ensures the size returned at deadline is the
+        // freshly-observed value, not a stale pre-sleep one — so a file
+        // that reaches `expectedBytes` during the final `Task.sleep`
+        // still resolves as a success rather than getting clipped to
+        // the previous iteration's read (Gemini Code Assist, PR #111).
+        // `attributesOfItem` is intentional here: `URL.resourceValues`
+        // caches per-URL and we re-stat the same path every iteration,
+        // so the cache makes the loop see a stale size after the writer
+        // has already grown the file.
+        while true {
+            try Task.checkCancellation()
+            let size: Int64 = {
+                guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+                      let value = attrs[.size] as? Int64 else { return 0 }
+                return value
+            }()
+            if size >= expectedBytes || clock.now >= deadline {
+                return size
+            }
+            try await Task.sleep(for: pollInterval, clock: clock)
+        }
     }
 
     /// Streamed sha256 over a file on disk. Reads in 4 MB chunks so a
