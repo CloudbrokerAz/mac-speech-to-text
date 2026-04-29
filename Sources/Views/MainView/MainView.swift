@@ -128,7 +128,16 @@ struct MainView: View {
         .accessibilityIdentifier("mainView")
         .onAppear {
             initializeViewModels()
-            focusedSection = viewModel.selectedSection
+            // Defer the @FocusState write so it runs after the NSHostingView
+            // is fully attached to its window. A synchronous set here races
+            // with the attachment and AppKit logs the "first responder for
+            // window X, but it is in a different window ((null))" warning
+            // when SwiftUI's FocusBridge tries to apply the pending focus
+            // before the view has a window. Same root cause as
+            // `ReviewScreen.swift`'s `.onAppear` hop.
+            Task { @MainActor in
+                focusedSection = viewModel.selectedSection
+            }
         }
         .onChange(of: focusedSection) { _, newValue in
             if let newValue = newValue {

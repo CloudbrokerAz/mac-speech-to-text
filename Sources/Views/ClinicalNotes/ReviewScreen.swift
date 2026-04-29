@@ -73,8 +73,24 @@ struct ReviewScreen: View {
         .onAppear {
             // Ensure the practitioner can immediately start editing the
             // most-used field without an extra click.
-            focusedField = .subjective
-            viewModel.noteFieldFocused(.subjective)
+            //
+            // Defer via `Task { @MainActor }` so the focus assignment runs
+            // after the NSHostingView is fully attached to its window. A
+            // synchronous set here races with the attachment and AppKit logs
+            // "Setting <view> as the first responder for window X, but it is
+            // in a different window ((null))!" when SwiftUI's FocusBridge
+            // tries to apply the pending focus before the view has a window.
+            Task { @MainActor in
+                focusedField = .subjective
+                viewModel.noteFieldFocused(.subjective)
+            }
+        }
+        .onDisappear {
+            // Clear focus before NSHostingView teardown so SwiftUI's
+            // FocusBridge has no pending responder to flush onto a detached
+            // view during the close transaction. Mirrors the same root cause
+            // as the `.onAppear` hop above.
+            focusedField = nil
         }
         .accessibilityIdentifier("reviewScreen")
     }
