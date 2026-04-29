@@ -14,6 +14,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainViewObserver: NSObjectProtocol?
     private var themeChangeObserver: NSObjectProtocol?
     private var voiceTriggerSettingsObserver: NSObjectProtocol?
+    /// AppKit-level willClose observer scoped to the active recording-modal NSWindow
+    /// (#109). Drives `cleanupAfterRecordingModalClose()` for in-session window
+    /// teardown — `window.close()` from `.onDisappear`, programmatic close from
+    /// the chord stop callback, or any future close path. The SwiftUI
+    /// `.onDisappear` was previously the sole cleanup trigger, but `.onDisappear`
+    /// is unreliable when an `NSHostingView` is torn down by `NSWindow.close()`
+    /// rather than through SwiftUI's own dismissal flow — the cleanup was being
+    /// skipped entirely after Generate Notes, leaving `isRecordingClinicalNotes
+    /// == true` and `recordingWindow != nil` so subsequent chord presses
+    /// short-circuited in `showRecordingModal`'s "window already present" guard.
+    ///
+    /// **Termination is the one path that does NOT route through this observer.**
+    /// `applicationWillTerminate` removes the observer in step 3 (with the other
+    /// notification observers) *before* it closes `recordingWindow` in step 7.
+    /// That ordering is intentional — at terminate the process is dying, the
+    /// HotkeyManager has already been nilled, and there is no "next press" to
+    /// protect against. We keep the cleanup function out of the terminate path
+    /// to avoid running MainActor-hopped tasks during shutdown.
+    private var recordingWindowWillCloseObserver: NSObjectProtocol?
 
     // MARK: - Hold-to-Record Recording
 
@@ -204,6 +223,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let observer = voiceTriggerSettingsObserver {
             NotificationCenter.default.removeObserver(observer)
             voiceTriggerSettingsObserver = nil
+        }
+        if let observer = recordingWindowWillCloseObserver {
+            NotificationCenter.default.removeObserver(observer)
+            recordingWindowWillCloseObserver = nil
         }
 
         // 4. Mark sessions inactive to prevent async operations from proceeding
@@ -1014,17 +1037,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .onDisappear { [weak self] in
                 AppLogger.app.debug("showRecordingModal: LiquidGlassRecordingModal disappeared")
                 AppLogger.app.info("[#109-probe] modal.onDisappear: isEnabled(.clinicalNotesRecord)=\(KeyboardShortcuts.isEnabled(for: .clinicalNotesRecord), privacy: .public) clinicalMode=\(clinicalMode, privacy: .public)")
+                // Belt: trigger the same cleanup the willClose observer runs.
+                // Either path may fire first; the cleanup is idempotent.
+                // .onDisappear is the SwiftUI-native path but is unreliable
+                // when NSHostingView teardown happens via NSWindow.close()
+                // rather than through SwiftUI's own dismissal flow — see #109.
                 self?.recordingWindow?.close()
-                self?.recordingWindow = nil
-                // Reset the clinical-notes chord state so the next chord
-                // press starts a fresh session. Without this, Done in the
-                // modal closes the window but leaves
-                // `HotkeyManager.isRecordingClinicalNotes == true`, and
-                // the next chord press is wasted on the "stop" branch
-                // (no active modal → no-op). Idempotent — also fires for
-                // chord-initiated stop and Cancel paths.
-                self?.hotkeyManager?.clinicalNotesSessionEnded()
-                // weak `activeRecordingViewModel` auto-nils once the SwiftUI host releases the strong ref
+                self?.cleanupAfterRecordingModalClose(reason: "onDisappear")
             }
 
         // #98 Bug C: clinical recordings need room for a 5–20 min
@@ -1064,6 +1083,67 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
 
         recordingWindow = window
+
+        // AppKit-level willClose observer scoped to *this* window object. Fires
+        // reliably regardless of how the window closes — the canonical teardown
+        // signal that .onDisappear (above) is supposed to be but is not when
+        // NSHostingView teardown happens via NSWindow.close(). See #109 and the
+        // comment on `recordingWindowWillCloseObserver`. Both paths converge on
+        // the idempotent `cleanupAfterRecordingModalClose`.
+        //
+        // Defence: clear any stale observer from a previous modal before
+        // registering for this one. Reaching this point with a non-nil observer
+        // means the previous modal closed without either teardown path running
+        // cleanup — a regression of #109 in some new path. Surface it in OSLog
+        // so a future bug report has correlation evidence.
+        if let existing = recordingWindowWillCloseObserver {
+            AppLogger.app.warning("[#109-probe] showRecordingModal: stale willClose observer found on entry — previous modal closed without cleanup, possible regression of #109 in a new path")
+            NotificationCenter.default.removeObserver(existing)
+            recordingWindowWillCloseObserver = nil
+        }
+        recordingWindowWillCloseObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            // willCloseNotification is posted on .main queue but observers are
+            // not MainActor-isolated by default; hop explicitly per
+            // `.claude/references/concurrency.md` §2 to safely touch
+            // MainActor-isolated state.
+            Task { @MainActor [weak self] in
+                self?.cleanupAfterRecordingModalClose(reason: "willCloseNotification")
+            }
+        }
+    }
+
+    /// Idempotent cleanup invoked from both the SwiftUI `.onDisappear` and the
+    /// AppKit `NSWindow.willCloseNotification` observer. Either path may fire
+    /// first; the second is a fast no-op once `recordingWindow` is nil. #109.
+    @MainActor
+    private func cleanupAfterRecordingModalClose(reason: String) {
+        AppLogger.app.info("[#109-probe] cleanupAfterRecordingModalClose: reason=\(reason, privacy: .public) recordingWindow==nil=\(self.recordingWindow == nil, privacy: .public) isEnabled(.clinicalNotesRecord)=\(KeyboardShortcuts.isEnabled(for: .clinicalNotesRecord), privacy: .public)")
+
+        // Drop the willClose observer first so a re-entrant close (e.g.
+        // .onDisappear → window.close() → willClose fires after we already
+        // ran via .onDisappear) can't queue a second cleanup.
+        if let observer = recordingWindowWillCloseObserver {
+            NotificationCenter.default.removeObserver(observer)
+            recordingWindowWillCloseObserver = nil
+        }
+
+        recordingWindow = nil
+
+        // Reset the clinical-notes chord state so the next chord press starts a
+        // fresh session. Without this, Done / Generate Notes / Cancel paths
+        // that bypass `handleClinicalNotesKeyPress`'s stop branch leave
+        // `HotkeyManager.isRecordingClinicalNotes == true`, and the next
+        // chord press is wasted on the "stop" branch (no active modal →
+        // no-op) — exactly the broken-second-press symptom in #109.
+        // Idempotent.
+        hotkeyManager?.clinicalNotesSessionEnded()
+
+        // weak `activeRecordingViewModel` auto-nils once the SwiftUI host
+        // releases the strong ref; we don't touch it here.
     }
 
     // MARK: - Main View Window
