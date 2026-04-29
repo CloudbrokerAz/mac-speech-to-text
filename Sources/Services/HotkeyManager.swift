@@ -242,6 +242,24 @@ class HotkeyManager {
         await onClinicalNotesRecordingStart?()
     }
 
+    /// Notify HotkeyManager that the clinical-notes modal has closed so the
+    /// chord state flag stays in sync with reality. Called from the modal's
+    /// `.onDisappear` in `AppDelegate`. Required because the modal can close
+    /// for reasons that don't go through the chord-stop callback — most
+    /// commonly the in-modal **Done** button (which transcribes via the same
+    /// `viewModel.stopRecording()` path the chord uses, but bypasses
+    /// `handleClinicalNotesKeyPress`). Without this call, the next chord
+    /// press sees a stale `isRecordingClinicalNotes == true`, takes the
+    /// "stop" branch, fires a no-op stop callback (no active modal), and
+    /// the user perceives the chord as broken until they press it again.
+    /// Idempotent — safe to call from any close path.
+    func clinicalNotesSessionEnded() {
+        if isRecordingClinicalNotes {
+            isRecordingClinicalNotes = false
+            AppLogger.app.debug("HotkeyManager: clinicalNotesSessionEnded - state reset")
+        }
+    }
+
     // MARK: - Key Event Handlers (internal for testability)
 
     /// Handle key down event - starts recording if not already processing and not in cooldown

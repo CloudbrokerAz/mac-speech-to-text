@@ -1015,6 +1015,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 AppLogger.app.debug("showRecordingModal: LiquidGlassRecordingModal disappeared")
                 self?.recordingWindow?.close()
                 self?.recordingWindow = nil
+                // Reset the clinical-notes chord state so the next chord
+                // press starts a fresh session. Without this, Done in the
+                // modal closes the window but leaves
+                // `HotkeyManager.isRecordingClinicalNotes == true`, and
+                // the next chord press is wasted on the "stop" branch
+                // (no active modal → no-op). Idempotent — also fires for
+                // chord-initiated stop and Cancel paths.
+                self?.hotkeyManager?.clinicalNotesSessionEnded()
                 // weak `activeRecordingViewModel` auto-nils once the SwiftUI host releases the strong ref
             }
 

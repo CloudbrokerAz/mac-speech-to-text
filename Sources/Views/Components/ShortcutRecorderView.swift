@@ -141,6 +141,17 @@ struct ShortcutRecorderView: View {
         isRecording = true
         validationError = nil // clear any prior rejection so the user sees the new attempt's outcome
 
+        // Suspend the bound Carbon hotkey while recording. Without this,
+        // pressing the currently-bound chord (or anything that overlaps
+        // with another bound shortcut) fires the Carbon hotkey **before**
+        // the local NSEvent monitor below sees the keystroke — the user
+        // would either see the bound action fire or hear the system
+        // "bonk" with no recorder feedback. `KeyboardShortcuts.Recorder`
+        // (the library's own recorder) does this internally; our custom
+        // SPM-safe replacement has to do it explicitly. Re-enabled in
+        // `stopRecording()` and defensively in `.onDisappear`.
+        KeyboardShortcuts.disable(shortcutName)
+
         // Start monitoring key events
         keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [self] event in
             if event.type == .keyDown {
@@ -179,6 +190,14 @@ struct ShortcutRecorderView: View {
             NSEvent.removeMonitor(monitor)
             mouseEventMonitor = nil
         }
+        // Re-bind the Carbon hotkey to whatever's now stored. If the
+        // recorder didn't actually persist a new chord (Esc / outside
+        // click / validator rejection), `enable` re-activates the
+        // previous binding. If it did persist, `enable` activates the
+        // new one. Either way, the chord is live again after the
+        // recorder closes — paired with the `disable` in
+        // `startRecording()`.
+        KeyboardShortcuts.enable(shortcutName)
     }
 
     private func handleKeyDown(_ event: NSEvent) {
