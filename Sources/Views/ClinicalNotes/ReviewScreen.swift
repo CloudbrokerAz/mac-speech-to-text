@@ -82,11 +82,9 @@ struct ReviewScreen: View {
             // the first responder for window X, but it is in a different
             // window ((null))!" when SwiftUI's FocusBridge tries to apply
             // the pending focus before the target editor view has a window.
-            AppLogger.app.info("[#109-probe] ReviewScreen.onAppear: scheduling deferred focus")
             DispatchQueue.main.async {
                 focusedField = .subjective
                 viewModel.noteFieldFocused(.subjective)
-                AppLogger.app.info("[#109-probe] ReviewScreen.onAppear: applied focus=.subjective")
             }
         }
         .onDisappear {

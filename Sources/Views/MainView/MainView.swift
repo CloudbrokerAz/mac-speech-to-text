@@ -137,10 +137,8 @@ struct MainView: View {
             // (which can interleave with the same layout transaction). Same
             // root cause as `ReviewScreen.swift`'s `.onAppear` hop and
             // `HomeSection.swift`'s.
-            AppLogger.app.info("[#109-probe] MainView.onAppear: scheduling deferred focus")
             DispatchQueue.main.async {
                 focusedSection = viewModel.selectedSection
-                AppLogger.app.info("[#109-probe] MainView.onAppear: applied focus")
             }
         }
         .onDisappear {
