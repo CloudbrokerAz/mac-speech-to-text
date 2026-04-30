@@ -424,35 +424,53 @@ struct ModelDownloaderTests {
         #expect(size == 0)
     }
 
-    @Test("waitForFileBytes returns the file's freshly-stat'd size at the deadline (no stale lastSize)")
-    func waitForFileBytes_returnsFreshSizeAtDeadline() async throws {
+    @Test("waitForFileBytes observes a writer that lands during the wait (no stale lastSize)")
+    func waitForFileBytes_observesWriterDuringWait() async throws {
         let base = try Self.makeTempBase()
         defer { try? FileManager.default.removeItem(at: base) }
         let file = base.appendingPathComponent("late-grower.bin")
         try Data().write(to: file)
 
-        // Schedule a writer that fires close to the helper's deadline.
         // The pre-Gemini shape returned `lastSize` recorded *before* the
-        // final sleep — so a writer that landed during the sleep was
+        // final sleep, so a writer that landed during the sleep was
         // invisible. The post-Gemini stat-then-check shape always sees
-        // the freshly-stat'd size, even at the deadline. We assert "the
-        // helper returned the file's actual on-disk size at exit",
-        // which is true under the new shape regardless of whether the
-        // writer landed in time, and would FAIL deterministically on
-        // the old shape if scheduling lined up.
+        // the freshly-stat'd size when the loop next iterates.
+        //
+        // **#115 fix.** The previous shape raced a 95 ms writer against
+        // a 100 ms timeout: under macOS-15 runner load the writer
+        // sometimes landed in the gap between the helper returning 0
+        // and the test stat'ing the file (observed `size → 0` /
+        // `actualSize → 4`). The race was inherent to measuring the
+        // writer's effect *after* the helper exited.
+        //
+        // New shape: schedule the writer well inside a generous timeout
+        // so the helper's `size >= expectedBytes` early-exit branch
+        // fires, then `await` the writer task before stat'ing so the
+        // post-helper stat is deterministic. This still catches a stale
+        // lastSize regression — if the helper returned a cached 0 when
+        // the writer had clearly landed, `size != actualSize` and
+        // `size != payload.count` both fail.
         let payload = Self.helloPayload
         let target = file
-        Task.detached {
-            try? await Task.sleep(for: .milliseconds(95))
+        let writer: Task<Void, Never> = Task.detached {
+            try? await Task.sleep(for: .milliseconds(50))
             try? payload.write(to: target)
         }
 
         let size = try await ModelDownloader.waitForFileBytes(
             at: file,
             expectedBytes: Int64(payload.count),
-            timeoutSeconds: 0.1
+            timeoutSeconds: 1.0
         )
+
+        // Drain the writer so the post-helper stat is stable regardless
+        // of when the helper returned. Without this `await`, the test
+        // could re-introduce the same race the new shape fixed (writer
+        // task fires between helper exit and test stat).
+        await writer.value
+
         let actualSize = (try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int64) ?? -1
+        #expect(size == Int64(payload.count))
         #expect(size == actualSize)
     }
 
