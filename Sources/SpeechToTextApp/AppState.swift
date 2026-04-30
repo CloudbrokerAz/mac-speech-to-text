@@ -40,8 +40,18 @@ class AppState {
     /// `clinicalNotesProcessor` is `nil` only when the prompt template
     /// fails to load from the bundle, which would also have failed
     /// earlier asserts.
+    ///
+    /// Typed as `(any LLMProvider)?` rather than the concrete
+    /// `MLXGemmaProvider?` so non-hardware tests can inject a
+    /// `MockLLMProvider` via the `llmPipelineOverride:` init seam (#123).
+    /// Without that, the cancel + await drain branch added by #121 in
+    /// `removeClinicalNotesModel()` and the `unload()` wire-through
+    /// added by #120 are only exercisable against the real Gemma 4
+    /// model (gated on `RUN_MLX_GOLDEN=1` + a downloaded ~5 GB model)
+    /// — a refactor that subtly broke cancel propagation would only be
+    /// caught by the nightly hardware run.
     @ObservationIgnored let modelDownloader: ModelDownloader?
-    @ObservationIgnored let llmProvider: MLXGemmaProvider?
+    @ObservationIgnored let llmProvider: (any LLMProvider)?
     @ObservationIgnored let clinicalNotesProcessor: ClinicalNotesProcessor?
     /// Cached pointer to the bundled manifest so per-file size lookups
     /// in `applyDownloadProgress` don't have to enter the downloader
@@ -168,7 +178,19 @@ class AppState {
     /// nonisolated copy for deinit access
     @ObservationIgnored private nonisolated(unsafe) var deinitClinicalNotesGenerateObserver: NSObjectProtocol?
 
-    init() {
+    /// Designated initialiser.
+    ///
+    /// `llmPipelineOverride` is the `#123` init-time DI seam: pass
+    /// `nil` (the production default) to build the pipeline from the
+    /// bundled Gemma 4 manifest via `makeLLMPipeline(...)`; pass a
+    /// pre-built pipeline (typically with a `MockLLMProvider` and a
+    /// processor wired against it) to exercise the cancel + drain +
+    /// unload branches added by #120 / #121 from non-hardware tests.
+    /// The override does NOT replace `manipulations` — that loads from
+    /// a bundle resource which is also bundled into the test target,
+    /// so production manipulations and test manipulations are the same
+    /// data.
+    init(llmPipelineOverride: LLMPipeline? = nil) {
         // Initialize services
         self.fluidAudioService = FluidAudioService()
         self.permissionService = PermissionService()
@@ -184,8 +206,10 @@ class AppState {
         // builds, and the prompt template may fail to load (asserts but
         // doesn't crash). Each `nil` translates downstream into the
         // existing raw-transcript fallback path — we never crash the
-        // app on a missing model.
-        let llmPipeline = Self.makeLLMPipeline(manipulations: self.manipulations)
+        // app on a missing model. Tests can inject a pre-built pipeline
+        // via `llmPipelineOverride:` (#123).
+        let llmPipeline = llmPipelineOverride
+            ?? Self.makeLLMPipeline(manipulations: self.manipulations)
         self.modelDownloader = llmPipeline.downloader
         self.llmProvider = llmPipeline.provider
         self.clinicalNotesProcessor = llmPipeline.processor
@@ -389,6 +413,22 @@ class AppState {
 
         ReviewWindowController.shared.present()
 
+        startClinicalNotesPipeline(transcript: transcript)
+    }
+
+    /// Pipeline-start core (#121 / #123). Schedules the in-flight
+    /// `clinicalNotesPipelineTask`, applies the re-entrancy guards, and
+    /// flips `isClinicalNotesPipelineActive`. Extracted from
+    /// `handleClinicalNotesGenerateRequested` so the
+    /// `runClinicalNotesPipelineForTesting(transcript:)` seam below can
+    /// drive the task lifecycle from non-hardware tests without going
+    /// through the production `SessionStore.start` + `ReviewWindowController.present`
+    /// side-effects (windowing depends on a host process / display server
+    /// that `swift test` may not have, and the cross-test risk of two
+    /// AppStates sharing the singleton review controller is real).
+    /// The body is a verbatim move from the previous inline location;
+    /// behaviour is unchanged.
+    private func startClinicalNotesPipeline(transcript: String) {
         // Re-entrant guard for #121 / silent-failure-hunter Scenario 4:
         // if a Settings-initiated `removeClinicalNotesModel()` is mid-drain
         // we must NOT spawn a fresh pipeline — it would re-mmap the model
@@ -453,6 +493,22 @@ class AppState {
         isClinicalNotesPipelineActive = true
         updateModelStatusMirror()
     }
+
+    #if DEBUG
+    /// Test-only seam (#123). Drives the same pipeline-start logic as
+    /// the production `.clinicalNotesGenerateRequested` notification
+    /// path, minus the `SessionStore.start` + `ReviewWindowController.shared.present()`
+    /// side-effects that headless test environments may not support and
+    /// that would otherwise risk cross-test interference via the
+    /// MainActor-singleton review controller. Tests pre-seed
+    /// `llmDownloadState = .ready` so the `runClinicalNotesPipeline`
+    /// body proceeds straight to the processor (skipping
+    /// `downloadClinicalNotesModel`'s MLX-only cast). Compiled out of
+    /// release builds.
+    func startClinicalNotesPipelineForTesting(transcript: String) {
+        startClinicalNotesPipeline(transcript: transcript)
+    }
+    #endif
 
     /// Token-guarded clear for `clinicalNotesPipelineTask` (#121). Called
     /// from both the pipeline Task body's trailing line and the drain
@@ -666,11 +722,30 @@ class AppState {
             updateModelStatusMirror()
             return
         }
+        // `runDownloadAndWarmup` requires the concrete `MLXGemmaProvider`
+        // because `warmup()` is MLX-specific (#123 — `LLMProvider`'s
+        // protocol surface intentionally stays minimal; warmup stays on
+        // the concrete type per the issue's "Out of scope" section). In
+        // production this cast is total because `makeLLMPipeline`
+        // constructs `MLXGemmaProvider`. In non-hardware tests using a
+        // `MockLLMProvider` injected via the `llmPipelineOverride:` init
+        // seam, callers MUST pre-set `llmDownloadState = .ready` so this
+        // method's short-circuit at the top fires before reaching here.
+        // The structural-log-and-fail below is the defensive arm for a
+        // future test that forgets that pre-condition.
+        guard let mlxProvider = provider as? MLXGemmaProvider else {
+            AppLogger.app.warning(
+                "AppState: clinical-notes download skipped — non-MLX provider injected; tests must pre-set llmDownloadState=.ready (#123)"
+            )
+            llmDownloadState = .failed
+            updateModelStatusMirror()
+            return
+        }
 
         let token = UUID()
         let task: Task<Void, Never> = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.runDownloadAndWarmup(downloader: downloader, provider: provider)
+            await self.runDownloadAndWarmup(downloader: downloader, provider: mlxProvider)
         }
         clinicalNotesDownloadTask = (token: token, task: task)
         await task.value
@@ -892,9 +967,15 @@ class AppState {
 
     // MARK: - LLM pipeline construction
 
-    private struct LLMPipeline {
+    /// Bundled value type that `makeLLMPipeline` returns and that the
+    /// init seam (#123) accepts as an override. `internal` (rather than
+    /// `private` as it was before #123) so non-hardware tests can build
+    /// a test-only pipeline with a `MockLLMProvider` and inject it via
+    /// `init(llmPipelineOverride:)`. Construction itself remains
+    /// internal-to-the-target — there is no public API surface.
+    internal struct LLMPipeline {
         let downloader: ModelDownloader?
-        let provider: MLXGemmaProvider?
+        let provider: (any LLMProvider)?
         let processor: ClinicalNotesProcessor?
         let manifest: ModelManifest?
     }
