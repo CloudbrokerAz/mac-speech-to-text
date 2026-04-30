@@ -404,6 +404,22 @@ class AppState {
             return
         }
 
+        // Re-entrant Generate Notes (a second tap arriving while Pipeline
+        // A is still running): cancel A and chain B behind it so A's
+        // `runGeneration` unwinds, releases its captured container, and
+        // the slot ends up holding only B. Without this chain the slot
+        // assignment below would orphan A's task handle — A keeps
+        // running, captures the container into a strong local that
+        // survives any subsequent `unload()`, and `removeClinicalNotesModel`
+        // can no longer drain it (Gemini Code Assist HIGH on PR #124).
+        // The previous task is captured into B's body so `await` is
+        // legal here in this synchronous notification handler; the
+        // slot flips to B immediately so `removeClinicalNotesModel`
+        // arriving during B's prologue still finds the load-bearing
+        // handle.
+        let previousTask = clinicalNotesPipelineTask?.task
+        previousTask?.cancel()
+
         // Kick off LLM processing without blocking the UI present.
         // `runClinicalNotesPipeline` ensures-download + warms-up + runs
         // the processor; every terminal branch flips `draftStatus` so
@@ -419,7 +435,17 @@ class AppState {
         // `clearClinicalNotesPipelineSlotIfMatching(token:)` so this site
         // and `removeClinicalNotesModel` stay in sync.
         let token = UUID()
-        let task: Task<Void, Never> = Task { @MainActor [weak self, token] in
+        let task: Task<Void, Never> = Task { @MainActor [weak self, token, previousTask] in
+            // Wait for any cancelled predecessor to fully unwind before
+            // we touch the provider. `Task<Void, Never>.value` resolves
+            // when the body returns, including via the cancellation
+            // path. If `removeClinicalNotesModel` cancels *this* task
+            // before the predecessor finishes, we still complete the
+            // await (cancellation propagates a level deeper) and then
+            // exit before `runClinicalNotesPipeline` starts.
+            if let previousTask {
+                await previousTask.value
+            }
             await self?.runClinicalNotesPipeline(transcript: transcript)
             self?.clearClinicalNotesPipelineSlotIfMatching(token: token)
         }
@@ -754,9 +780,10 @@ class AppState {
     /// `unload()` alone wouldn't release the mmap if a generate were
     /// suspended on a chunk. Cancelling the wrapping Task trips
     /// `Task.checkCancellation()` in the chunk loop; the processor
-    /// catches `CancellationError` and falls back gracefully. The Review
-    /// screen flips to fallback banner — honest UX for "you removed the
-    /// model mid-stream" — and the unload is then race-free.
+    /// catches `CancellationError` and resolves to
+    /// `.rawTranscriptFallback(reason: reasonModelRemovedMidFlight)` —
+    /// honest UX for "you removed the model mid-stream" — and the
+    /// unload is then race-free.
     func removeClinicalNotesModel() async {
         // Block any fresh pipeline from spawning while we're draining +
         // unloading + unlinking. Cleared via `defer` so any early return
@@ -785,9 +812,10 @@ class AppState {
         // survives `self.container = nil` due to Swift actor reentrancy.
         // Cancelling the wrapping Task trips `Task.checkCancellation()`
         // inside the chunk loop; the processor catches `CancellationError`
-        // and resolves to `.rawTranscriptFallback(reason: reasonLLMError)`,
-        // so the Review screen flips out of its loading overlay into the
-        // honest fallback banner. Identity-guarded clear mirrors the
+        // and resolves to `.rawTranscriptFallback(reason:
+        // reasonModelRemovedMidFlight)`, so the Review screen flips out
+        // of its loading overlay into the banner that names the user's
+        // gesture honestly. Identity-guarded clear mirrors the
         // download-task pattern above.
         if let existing = clinicalNotesPipelineTask {
             existing.task.cancel()
