@@ -53,6 +53,17 @@ final class ClinicalNotesModelStatusViewModel {
     /// the disk-usage caption row that only appears in `.ready`.
     var modelDirectoryURL: URL?
 
+    /// Mirrors `AppState.isClinicalNotesPipelineActive` (#121). When `true`,
+    /// the Settings-row "Remove" button must be disabled — releasing the
+    /// `ModelContainer` mid-generation cannot reclaim the mmap-backed
+    /// bytes (Swift actor reentrancy + a strong local container binding
+    /// inside `runGeneration`), so the row gates the affordance until
+    /// the active pipeline completes. The drain inside
+    /// `AppState.removeClinicalNotesModel()` is the load-bearing
+    /// correctness mechanism; this flag drives the UX gate that keeps
+    /// users from hitting the post-cancel fallback banner unnecessarily.
+    var isPipelineActive: Bool
+
     /// Tap handler for the primary "Download model" / "Retry" affordance.
     /// `@Sendable` so the row can fire it from a `Task` without capturing
     /// VM state. Defaults to a no-op so test fixtures don't have to wire
@@ -76,6 +87,7 @@ final class ClinicalNotesModelStatusViewModel {
         progress: Double = 0,
         manifestSizeBytes: Int64 = 0,
         modelDirectoryURL: URL? = nil,
+        isPipelineActive: Bool = false,
         onDownload: @escaping @Sendable () async -> Void = {},
         onCancel: @escaping @Sendable () async -> Void = {},
         onRemove: @escaping @Sendable () async -> Void = {}
@@ -84,6 +96,7 @@ final class ClinicalNotesModelStatusViewModel {
         self.progress = progress
         self.manifestSizeBytes = manifestSizeBytes
         self.modelDirectoryURL = modelDirectoryURL
+        self.isPipelineActive = isPipelineActive
         self.onDownload = onDownload
         self.onCancel = onCancel
         self.onRemove = onRemove

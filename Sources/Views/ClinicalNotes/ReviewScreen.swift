@@ -367,6 +367,8 @@ struct ReviewScreen: View {
             return "The clinical-notes model isn't ready. Open Settings → Clinical Notes to download it."
         case ClinicalNotesProcessor.reasonModelDownloadCancelled:
             return "Model download cancelled. Open Settings → Clinical Notes to finish it."
+        case ClinicalNotesProcessor.reasonModelRemovedMidFlight:
+            return "Model was removed before generation finished. Edit the SOAP sections manually, or re-download from Settings to try again."
         case ClinicalNotesProcessor.reasonSessionExpired:
             return "Session expired — please cancel and re-record."
         default:

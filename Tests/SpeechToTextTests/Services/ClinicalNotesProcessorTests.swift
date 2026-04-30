@@ -309,6 +309,29 @@ struct ClinicalNotesProcessorTests {
         #expect(await provider.callCount() == 2)
     }
 
+    /// **#121 — `CancellationError` from the provider maps to
+    /// `reasonModelRemovedMidFlight`, not `reasonLLMError`.**
+    /// When `removeClinicalNotesModel()` cancels the wrapping pipeline
+    /// Task mid-stream, `Task.checkCancellation()` inside
+    /// `MLXGemmaProvider.runGeneration` throws `CancellationError`. The
+    /// processor's `catch is CancellationError` arm must distinguish
+    /// "user removed the model" from the broader "LLM error" bucket so
+    /// the Review banner can be honest about why generation didn't
+    /// finish. The retry catch is symmetric — when both arms see
+    /// `CancellationError`, the same sentinel surfaces.
+    @Test("CancellationError on first attempt → .rawTranscriptFallback(model_removed_mid_flight)")
+    func llmCancellation_firstAttempt_modelRemovedSentinel() async {
+        let provider = MockLLMProvider(error: CancellationError())
+        let proc = Self.processor(provider: provider)
+
+        let outcome = await proc.process(transcript: "t")
+
+        #expect(outcome == .rawTranscriptFallback(
+            reason: ClinicalNotesProcessor.reasonModelRemovedMidFlight
+        ))
+        #expect(await provider.callCount() == 1)
+    }
+
     // MARK: - Manipulation mapping
 
     @Test("Mapping matches by Manipulation.id")
