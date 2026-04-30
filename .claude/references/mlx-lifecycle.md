@@ -85,6 +85,39 @@ Unload policy for v2: keep the model loaded once it's in memory. Don't
 evict on idle — warming it up is expensive. Revisit if memory pressure
 surfaces on smaller Macs (E4B is roughly 2× v1's resident set).
 
+### `unload()` and the release-before-unlink invariant (#120)
+
+`MLXGemmaProvider.unload()` drops the `ModelContainer` reference so the
+mmap-backed weights can be reclaimed. Idempotent — a no-op when the
+container is already nil. Symmetric counterpart to `warmup()`.
+
+**Always called before `FileManager.removeItem(at: dir)`** in
+`AppState.removeClinicalNotesModel()`. POSIX semantics let `removeItem`
+succeed even with a live mmap, but the bytes don't free until the last
+reference drops. Without `unload()` first, the user thinks they
+reclaimed ~5 GB by tapping "Remove model" but the bytes persist until
+the next app restart — and worse, a follow-up "Download model" tap
+could short-circuit on the manifest hash check while the original
+(now-orphaned) container still mmaps the just-deleted directory,
+producing behavioural ambiguity.
+
+The remove path is the only **production** call site today. We don't
+evict on idle (per the policy above) — `unload()` exists for the
+explicit user-driven "release these bytes" gesture, not for memory
+management. Tests exercise it directly (see
+`MLXGemmaProviderUnitTests.unloadIdempotentBeforeWarmup` and the
+hardware-gated `warmupUnloadReWarmupCycle`).
+
+```
+Settings "Remove model" tap
+  → AppState.removeClinicalNotesModel()
+      → cancelClinicalNotesModelDownload()           // cancel in-flight task
+      → await existing.task.value                    // unwind cancellation
+      → await llmProvider?.unload()                  // <-- release container mmap
+      → FileManager.default.removeItem(at: dir)      // unlink directory
+      → llmDownloadState = .idle
+```
+
 ---
 
 ## Inference defaults

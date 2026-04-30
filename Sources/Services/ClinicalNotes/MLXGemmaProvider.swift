@@ -86,6 +86,10 @@ public actor MLXGemmaProvider: LLMProvider {
     /// instrumentation introduced for #106: when the next MLX-related
     /// crash report lands, the surrounding signposts localise whether
     /// we crashed pre- or post-load. Cheap to leave in.
+    ///
+    /// Pair with `unload()` to release the container — required on the
+    /// `AppState.removeClinicalNotesModel()` path so the unlinked
+    /// directory's mmap-backed bytes actually free (#120).
     public func warmup() async throws {
         if container != nil { return }
         let started = ContinuousClock.now
@@ -118,6 +122,39 @@ public actor MLXGemmaProvider: LLMProvider {
             logger.error("MLX warmup failed kind=\(kind, privacy: .public)")
             throw ProviderError.modelLoadFailed(kind: kind)
         }
+    }
+
+    /// Release the loaded `ModelContainer` so the mmap-backed weights
+    /// can be reclaimed. Idempotent — a no-op when `container == nil`.
+    /// Symmetric counterpart to `warmup()`.
+    ///
+    /// **Invariant for `AppState.removeClinicalNotesModel()` (#120).**
+    /// Must run before `FileManager.removeItem(at: dir)`. POSIX semantics
+    /// let the unlink succeed while a live mmap pins the file's backing
+    /// store until the last reference drops, so without releasing the
+    /// container first the user thinks they reclaimed ~5 GB but the
+    /// bytes don't actually free until the next app restart. Worse,
+    /// a follow-up "Download model" tap could short-circuit on the
+    /// manifest hash check while the original (now-orphaned) container
+    /// still mmaps the just-deleted directory — behavioural ambiguity
+    /// that this method's load-bearing release prevents.
+    ///
+    /// **Caller invariant: no in-flight generation.** Swift actors are
+    /// reentrant, so `unload()` can land while a `runGeneration` is
+    /// suspended on `await container.generate(…)` or inside its chunk
+    /// loop. `runGeneration` binds the container into a strong local
+    /// (`let container = try await requireContainer()`), so clearing
+    /// `self.container` here does **not** release the mmap until that
+    /// local goes out of scope at the end of the in-flight generation.
+    /// Callers MUST ensure no `generate` / `generateStream` task is
+    /// active before calling. The release-before-unlink in
+    /// `AppState.removeClinicalNotesModel()` is correct for the steady
+    /// state (no Generate Notes mid-flight while the user is in
+    /// Settings); the active-generation race is tracked separately.
+    public func unload() {
+        guard container != nil else { return }
+        container = nil
+        logger.info("MLX unload completed")
     }
 
     public func generate(

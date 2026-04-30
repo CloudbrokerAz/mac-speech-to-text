@@ -76,6 +76,34 @@ struct AppStateModelStatusTests {
         #expect(appState.modelStatusViewModel.state == .idle)
     }
 
+    /// **#120 — `.ready` → remove collapses to `.idle` without
+    /// the bridge warning that PR #119 emitted.**
+    ///
+    /// PR #119 added a structural `OSLog.warning` on the `.ready → remove`
+    /// path as a bridge until `MLXGemmaProvider.unload()` shipped (#120).
+    /// This test pins down the post-#120 contract: forcing `.ready` then
+    /// calling `removeClinicalNotesModel()` collapses cleanly to `.idle`
+    /// — and the `await llmProvider?.unload()` call sequenced into the
+    /// remove path neither throws nor hangs.
+    ///
+    /// In tests the `llmProvider` is the real `MLXGemmaProvider` (the
+    /// manifest is bundled at `Sources/Resources/Models/.../manifest.json`),
+    /// but it has not been warmed in this test, so `unload()` resolves
+    /// to its idempotent no-op branch (`guard container != nil`). We
+    /// can't observe the mmap release without real weights — that's
+    /// covered by the hardware-gated `warmupUnloadReWarmupCycle` test
+    /// in `MLXGemmaProviderGoldenTests`.
+    @Test("removeClinicalNotesModel from .ready collapses to .idle")
+    func removeClinicalNotesModel_fromReady_collapsesToIdle() async {
+        let appState = AppState()
+        appState.llmDownloadState = .ready
+
+        await appState.removeClinicalNotesModel()
+
+        #expect(appState.llmDownloadState == .idle)
+        #expect(appState.modelStatusViewModel.state == .idle)
+    }
+
     @Test("modelStatusViewModel mirrors manifest size at init")
     func modelStatusViewModel_mirrorsManifestSize() async {
         let appState = AppState()

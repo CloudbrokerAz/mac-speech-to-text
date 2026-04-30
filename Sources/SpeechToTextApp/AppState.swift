@@ -659,20 +659,16 @@ class AppState {
     /// PHI-free: only the model directory is touched. The path is logged
     /// as `.private` per `phi-handling.md` (user-home paths count as PII
     /// in the OSLog channel).
+    ///
+    /// **Release-before-unlink invariant (#120).** When the provider is
+    /// `.ready`, its `ModelContainer` mmaps the model directory we're
+    /// about to remove. POSIX `removeItem` succeeds even with a live
+    /// mmap, but the bytes don't free until the last reference drops —
+    /// so we call `await llmProvider?.unload()` before the unlink so the
+    /// user actually reclaims the ~5 GB they expect from "Remove model".
+    /// `unload()` is idempotent and safe to call from any state, so we
+    /// don't need to gate on `llmDownloadState == .ready`.
     func removeClinicalNotesModel() async {
-        // Mitigation for the mmap-still-active concern (silent-failure-hunter
-        // H5): if the provider has warmed up, its `ModelContainer` may still
-        // mmap the directory we're about to unlink. POSIX semantics let the
-        // unlink succeed but the bytes don't get freed until the provider
-        // releases the container. Surface a structural warning so a
-        // regression here is debuggable. Proper fix is `MLXGemmaProvider.unload()`
-        // — tracked as a follow-up; the warning is the bridge.
-        if llmDownloadState == .ready {
-            AppLogger.app.warning(
-                "AppState: removing Gemma 4 model while provider may still hold mmap — bytes may persist until app restart"
-            )
-        }
-
         cancelClinicalNotesModelDownload()
         // Wait for any cancelled task to unwind before we delete on-disk
         // state — otherwise the downloader's `.partial` rename can race
@@ -684,6 +680,13 @@ class AppState {
                 clinicalNotesDownloadTask = nil
             }
         }
+
+        // Release any live `ModelContainer` mmap before unlinking the
+        // directory — see the doc comment above for the POSIX rationale.
+        // Sequenced after the in-flight task await so we can't race a
+        // warmup that's about to set `container`. Idempotent no-op when
+        // the provider was never warmed.
+        await llmProvider?.unload()
 
         guard let manifest = llmManifest else {
             // No manifest means no `<bundleId>/Models/<dir>/` to clear; just
