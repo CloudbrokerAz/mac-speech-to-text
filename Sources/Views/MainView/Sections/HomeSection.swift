@@ -29,6 +29,14 @@ struct HomeSection: View {
     let settingsService: SettingsService
     let permissionService: PermissionService
 
+    /// Cliniko credential store consulted to decide whether the
+    /// "Start Clinical Note" trigger row is shown (#97). Default-injected
+    /// to mirror `MenuBarViewModel` / `ClinicalNotesSectionViewModel` —
+    /// `ClinikoCredentialStore` is a stateless wrapper around the
+    /// `SecureStore` actor + `UserDefaults`, so multiple instances all read
+    /// the same underlying state.
+    let credentialStore: ClinikoCredentialStore
+
     // MARK: - Focus State
 
     @FocusState private var focusedCard: PermissionCardFocus?
@@ -43,11 +51,25 @@ struct HomeSection: View {
     @State private var hasTestedSuccessfully: Bool = false
     @State private var settings: UserSettings
 
+    // MARK: - Clinical Notes Gate (#97)
+
+    /// Mirrors the rule in `ClinicalNotesSection` (`showShortcutRow`) and
+    /// the now-removed menu-bar gate (#92): the trigger is visible only
+    /// when Clinical Notes Mode is on AND Cliniko credentials are
+    /// present. Hidden in all other states — the doctor either has the
+    /// feature or doesn't (no greyed-out trigger).
+    @State private var clinicalNotesGateOpen: Bool = false
+
     // MARK: - Initialization
 
-    init(settingsService: SettingsService, permissionService: PermissionService) {
+    init(
+        settingsService: SettingsService,
+        permissionService: PermissionService,
+        credentialStore: ClinikoCredentialStore = ClinikoCredentialStore()
+    ) {
         self.settingsService = settingsService
         self.permissionService = permissionService
+        self.credentialStore = credentialStore
         self._settings = State(initialValue: settingsService.load())
     }
 
@@ -85,6 +107,7 @@ struct HomeSection: View {
         .accessibilityIdentifier("homeSection")
         .task {
             await refreshPermissions()
+            await refreshClinicalNotesGate()
             startPulseAnimation()
         }
         .onDisappear {
@@ -125,8 +148,13 @@ struct HomeSection: View {
             return .ignored
         }
         .onAppear {
-            // Reload settings on appear to ensure fresh state
-            settings = settingsService.load()
+            // Reload settings on appear to ensure fresh state. The
+            // Clinical Notes trigger gate (#97) is refreshed by the
+            // `.task` modifier above — it re-fires on each appearance,
+            // so a duplicate `Task { await refreshClinicalNotesGate() }`
+            // here would be a redundant Keychain read with the same
+            // answer. Mirrors the single-source pattern in
+            // `ClinicalNotesSection.refreshState`.
             // Set initial focus to microphone card if no permissions granted.
             // Defer through the runloop so SwiftUI's FocusBridge applies the
             // focus AFTER the inner card views are attached to their window.
@@ -302,6 +330,19 @@ struct HomeSection: View {
             )
             .shadow(color: Color.cardShadowAdaptive, radius: 10, x: 0, y: 3)
 
+            // Clinical Notes trigger row (#97)
+            // Visible only when Clinical Notes Mode is on AND Cliniko
+            // credentials are present. Hidden in all other states (no
+            // greyed-out entries) — the doctor either has the feature
+            // or doesn't. Tap posts the same `.showRecordingModal`
+            // notification the dedicated hotkey (#91) and the now-
+            // removed menu-bar item (#92, superseded by #97) used, so
+            // the existing AppDelegate observer presents
+            // `LiquidGlassRecordingModal` with `clinicalMode: true`.
+            if clinicalNotesGateOpen {
+                clinicalNoteTriggerRow
+            }
+
             // Toggle Recording shortcut (only shown in toggle mode)
             if settings.ui.recordingMode == .toggle {
                 HStack {
@@ -346,6 +387,62 @@ struct HomeSection: View {
             }
         }
         .accessibilityIdentifier("hotkeySection")
+    }
+
+    // MARK: - Clinical Notes Trigger Row (#97)
+
+    /// Trigger row that opens `LiquidGlassRecordingModal` with the PHI
+    /// invariant active. Sits next to the Hold-to-Record / Toggle
+    /// Recording rows so the doctor sees their three recording options
+    /// in one place. Posts `.showRecordingModal` with
+    /// `userInfo["clinicalMode"] = true` — the AppDelegate observer
+    /// constructs `RecordingViewModel(clinicalMode: true)`, which is
+    /// what stops the transcript from being pasted into the focused
+    /// app via the general-dictation path.
+    private var clinicalNoteTriggerRow: some View {
+        Button {
+            startClinicalNote()
+        } label: {
+            HStack {
+                HStack(spacing: 12) {
+                    Image(systemName: "stethoscope")
+                        .font(.system(size: 18))
+                        .foregroundStyle(Color.amberPrimary)
+                        .frame(width: 28)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Start Clinical Note")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(.primary)
+
+                        Text("Record a consultation and draft a SOAP note")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.cardBackgroundAdaptive)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color.cardBorderAdaptive, lineWidth: 1)
+                )
+        )
+        .shadow(color: Color.cardShadowAdaptive, radius: 10, x: 0, y: 3)
+        .accessibilityIdentifier("homeStartClinicalNote")
+        .accessibilityLabel("Start Clinical Note")
+        .accessibilityHint("Records a consultation and drafts a SOAP note for review and Cliniko export")
     }
 
     // MARK: - Permission Cards
@@ -510,6 +607,44 @@ struct HomeSection: View {
     private func refreshPermissions() async {
         microphoneGranted = await permissionService.checkMicrophonePermission()
         accessibilityGranted = permissionService.checkAccessibilityPermission()
+    }
+
+    /// Re-read Clinical Notes Mode + Cliniko credential presence to
+    /// decide whether `clinicalNoteTriggerRow` is visible (#97). A
+    /// Keychain `.readFailed` is treated as "may exist", matching
+    /// `ClinicalNotesSectionViewModel.hasStoredCredentials` — the user
+    /// can still recover via Settings, and the gate must not silently
+    /// flip closed on a transient lock.
+    private func refreshClinicalNotesGate() async {
+        let modeOn = settingsService.load().general.clinicalNotesModeEnabled
+        guard modeOn else {
+            clinicalNotesGateOpen = false
+            return
+        }
+        do {
+            let present = try await credentialStore.hasAPIKey()
+            clinicalNotesGateOpen = present
+        } catch {
+            clinicalNotesGateOpen = true
+            AppLogger.app.warning(
+                "HomeSection: Cliniko credential read failed (\(String(describing: type(of: error)), privacy: .public)); leaving Start Clinical Note row visible"
+            )
+        }
+    }
+
+    /// Posts `.showRecordingModal` with `userInfo["clinicalMode"] =
+    /// true`. The AppDelegate observer constructs the modal's view
+    /// model with the PHI invariant active so the transcript is not
+    /// pasted into the focused app via the general-dictation path.
+    /// Same shape used by the dedicated hotkey
+    /// (`AppDelegate.startClinicalNotesRecordingFromHotkey`) and the
+    /// previously-shipped menu-bar item (#92 — superseded by #97).
+    private func startClinicalNote() {
+        NotificationCenter.default.post(
+            name: .showRecordingModal,
+            object: nil,
+            userInfo: ["clinicalMode": true]
+        )
     }
 
     private func startPulseAnimation() {

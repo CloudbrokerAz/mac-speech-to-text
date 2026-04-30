@@ -11,9 +11,9 @@ struct MenuBarView: View {
     @Environment(AppState.self) private var appState
     @State private var viewModel: MenuBarViewModel
 
-    /// Production callers use the parameterless default; tests inject a VM
-    /// pre-seeded with a custom `SettingsService` / `ClinikoCredentialStore`
-    /// to exercise the gate states for the "Start Clinical Note" item (#92).
+    /// Production callers use the parameterless default; tests inject a
+    /// `MenuBarViewModel` to control permission state and observe the
+    /// `openMainView` / `quit` notifications.
     init(viewModel: MenuBarViewModel? = nil) {
         self._viewModel = State(initialValue: viewModel ?? MenuBarViewModel())
     }
@@ -52,33 +52,6 @@ struct MenuBarView: View {
 
             Divider()
 
-            // Start Clinical Note (#92)
-            // Visible only when Clinical Notes Mode is on AND Cliniko
-            // credentials are present. Hidden in all other states (no
-            // greyed-out entries) — the doctor either has the feature or
-            // doesn't. Tap posts the same `.showRecordingModal` notification
-            // the dedicated hotkey (#91) uses, so the existing AppDelegate
-            // observer presents `LiquidGlassRecordingModal`.
-            if viewModel.canStartClinicalNote {
-                Button {
-                    viewModel.startClinicalNote()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "stethoscope")
-                            .foregroundStyle(Color("AmberPrimary", bundle: nil))
-                        Text("Start Clinical Note")
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("menuBarStartClinicalNote")
-
-                Divider()
-            }
-
             // Quit
             Button {
                 viewModel.quit()
@@ -104,12 +77,6 @@ struct MenuBarView: View {
             .keyboardShortcut("q", modifiers: .command)
         }
         .frame(width: 220)
-        .task {
-            // Re-read settings + credential presence on each menu open so the
-            // "Start Clinical Note" gate reflects changes made elsewhere in
-            // the session without requiring an app restart (#92).
-            await viewModel.refreshState()
-        }
     }
 }
 
