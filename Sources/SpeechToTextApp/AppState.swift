@@ -64,6 +64,29 @@ class AppState {
     /// Manifest's total bytes — captured once at `.starting`.
     @ObservationIgnored private var llmDownloadTotalBytes: Int64 = 0
 
+    /// Settings-side surface for the Gemma 4 model lifecycle (#104). Mirrors
+    /// the two `llmDownload*` properties + `modelDirectoryURL` so the
+    /// Settings row can bind directly. Constructed once at init with three
+    /// closures that route to `downloadClinicalNotesModel()`,
+    /// `cancelClinicalNotesModelDownload()`, and `removeClinicalNotesModel()`
+    /// below. PHI-free by construction.
+    ///
+    /// `var` rather than `let` so init can construct it with `[weak self]`
+    /// closures at the bottom of init (after all other stored properties
+    /// have been assigned). Re-assigned exactly once and never mutated
+    /// afterwards.
+    @ObservationIgnored private(set) var modelStatusViewModel: ClinicalNotesModelStatusViewModel = .init()
+
+    /// In-flight model-download / warmup task (#104). Set by
+    /// `runClinicalNotesPipeline` and `downloadClinicalNotesModel` so that
+    /// `cancelClinicalNotesModelDownload` can call `cancel()` on it.
+    /// Re-entrant guard: a second call while the task is alive returns
+    /// fast — the downloader is itself idempotent. Token-tagged so a
+    /// fresh download started after a cancel doesn't have its slot
+    /// clobbered by the original caller's slot-clear (silent-failure-hunter
+    /// H2 / code-reviewer B2).
+    @ObservationIgnored private var clinicalNotesDownloadTask: (token: UUID, task: Task<Void, Never>)?
+
     /// Static manipulations taxonomy bundled with the app (#6). Loaded
     /// once at launch and handed to `ReviewWindowController` so the
     /// review surface (#13) renders the checklist without re-parsing the
@@ -251,6 +274,34 @@ class AppState {
         }
         clinicalNotesGenerateObserver = clinicalObserver
         deinitClinicalNotesGenerateObserver = clinicalObserver
+
+        // Settings-side model status surface (#104). Replace the placeholder
+        // VM (`@ObservationIgnored ... = .init()` in the property declaration)
+        // with the wired one. By this point in init, all stored properties
+        // have been assigned, so `[weak self]` is legal in the action
+        // closures. The closures hop to MainActor explicitly because the VM's
+        // `@Sendable` shape lets the row's button-tap fire them from any
+        // context — defence in depth even when SwiftUI dispatches on Main.
+        let totalBytes = llmManifest?.totalBytes ?? 0
+        modelStatusViewModel = ClinicalNotesModelStatusViewModel(
+            state: llmDownloadState,
+            progress: llmDownloadProgress,
+            manifestSizeBytes: totalBytes,
+            modelDirectoryURL: nil,
+            onDownload: { [weak self] in
+                await self?.downloadClinicalNotesModel()
+            },
+            onCancel: { [weak self] in
+                await self?.cancelClinicalNotesModelDownload()
+            },
+            onRemove: { [weak self] in
+                await self?.removeClinicalNotesModel()
+            }
+        )
+        // Wire the singleton MainWindowController with the VM so any
+        // subsequently-constructed MainWindow threads it through to
+        // ClinicalNotesSection. Mirrors `ReviewWindowController.shared.configure`.
+        MainWindowController.shared.configure(modelStatusViewModel: modelStatusViewModel)
     }
 
     deinit {
@@ -323,8 +374,6 @@ class AppState {
     /// a structural reason sentinel — never PHI.
     private func runClinicalNotesPipeline(transcript: String) async {
         guard
-            let downloader = modelDownloader,
-            let provider = llmProvider,
             let processor = clinicalNotesProcessor
         else {
             AppLogger.app.warning(
@@ -336,47 +385,25 @@ class AppState {
             applyClinicalNotesFallback(reasonCode: ClinicalNotesProcessor.reasonModelUnavailable)
             return
         }
-        do {
-            llmDownloadState = .downloading
-            // Per-event Task hops to MainActor are not strictly ordered
-            // (Gemini Code Assist, PR #70). After the refactor to
-            // `URLSession.download(for:)` the events are far apart in
-            // time (one `.fileStarted` / `.bytesReceived` / `.fileVerified`
-            // per file in the manifest, not per byte) so practical
-            // reordering is highly unlikely. The aggregator
-            // (`applyDownloadProgress`) is also hardened to be order-
-            // insensitive: progress monotonically increases and latches
-            // at 1.0 on `.completed`, and `.cancelled` / `.failed` are
-            // terminal. Promote to an `AsyncStream`-piped source if a
-            // future progress event design becomes per-byte.
-            let modelDir = try await downloader.ensureModelDownloaded { [weak self] event in
-                Task { @MainActor [weak self] in
-                    self?.applyDownloadProgress(event)
-                }
-            }
-            llmDownloadState = .verified(directory: modelDir)
-            try await provider.warmup()
-            llmDownloadState = .ready
-        } catch is CancellationError {
-            // User-initiated cancel is a clean state transition, not a
-            // failure. Don't overwrite to `.failed` — `applyDownloadProgress`
-            // may have already set `.cancelled`, and either order yields the
-            // correct final state.
-            AppLogger.app.info("AppState: clinical-notes pipeline cancelled")
-            if llmDownloadState != .cancelled {
-                llmDownloadState = .cancelled
-            }
-            // Pipeline cancellation leaves the Review screen alive (the
-            // user may have backgrounded the app, not closed the window);
-            // surface the same fallback so the editors are interactive
-            // rather than stuck in `.pending`.
-            applyClinicalNotesFallback(reasonCode: ClinicalNotesProcessor.reasonModelUnavailable)
+
+        // Delegate the download+warmup phase to the shared helper so the
+        // Settings-side "Download model" button (#104) and the Generate-Notes
+        // path drive the same pipeline. The helper updates `llmDownloadState`
+        // / `llmDownloadProgress` / `modelStatusViewModel` consistently.
+        await downloadClinicalNotesModel()
+
+        // Branch on the helper's terminal state. Cancellation is a distinct
+        // user gesture from a network/load failure — same recovery path
+        // (deep-link to Settings) but the banner copy differs so the
+        // practitioner isn't told "model unavailable" when they actively
+        // tapped Cancel (silent-failure-hunter H1).
+        switch llmDownloadState {
+        case .ready:
+            break  // proceed to processor
+        case .cancelled:
+            applyClinicalNotesFallback(reasonCode: ClinicalNotesProcessor.reasonModelDownloadCancelled)
             return
-        } catch {
-            AppLogger.app.error(
-                "AppState: clinical-notes warmup failed kind=\(String(describing: type(of: error)), privacy: .public)"
-            )
-            llmDownloadState = .failed
+        case .idle, .downloading, .verified, .failed:
             applyClinicalNotesFallback(reasonCode: ClinicalNotesProcessor.reasonModelUnavailable)
             return
         }
@@ -415,6 +442,18 @@ class AppState {
     /// across the multi-file manifest (file boundaries no longer leave
     /// the UI looking frozen).
     private func applyDownloadProgress(_ event: ModelDownloader.DownloadProgress) {
+        // Late events from a torn-down download (terminal `.cancelled` /
+        // `.failed` already set) must not advance the progress bar or
+        // re-flip state. The progress callback is dispatched via a Task
+        // hop, so a `.bytesReceived` queued before cancel can land after
+        // `runDownloadAndWarmup`'s catch arm has already terminated state
+        // (silent-failure-hunter M1).
+        switch llmDownloadState {
+        case .cancelled, .failed:
+            return
+        case .idle, .downloading, .verified, .ready:
+            break
+        }
         switch event {
         case .starting(let totalBytes):
             llmDownloadProgress = 0
@@ -451,6 +490,230 @@ class AppState {
         case .cancelled:
             llmDownloadState = .cancelled
         }
+        updateModelStatusMirror()
+    }
+
+    /// Push the latest `llmDownloadState` / `llmDownloadProgress` /
+    /// model-directory into `modelStatusViewModel`. Called from every site
+    /// that mutates either of the source fields so the Settings UI surface
+    /// (#104) never lags the underlying state. Cheap — three property
+    /// writes on a `@MainActor`-isolated VM. PHI-free; the model directory
+    /// is structural.
+    private func updateModelStatusMirror() {
+        modelStatusViewModel.state = llmDownloadState
+        modelStatusViewModel.progress = llmDownloadProgress
+        switch llmDownloadState {
+        case .verified(let directory):
+            modelStatusViewModel.modelDirectoryURL = directory
+        case .ready:
+            // `.verified(directory:)` already wrote `modelDirectoryURL` on
+            // the immediately-prior transition. Re-resolving here would be
+            // a no-op at best and could mask a desync at worst (type-design
+            // analyzer Nit 1). Leave the prior value in place.
+            break
+        case .idle, .cancelled, .failed:
+            modelStatusViewModel.modelDirectoryURL = nil
+        case .downloading:
+            // Keep any prior directory hint until the next terminal state.
+            break
+        }
+    }
+
+    // MARK: - Settings-side model lifecycle (#104)
+
+    /// Trigger a Gemma 4 download + warmup with no transcript and no Review
+    /// surface side-effects. Used by the Settings model-status row's
+    /// "Download model" / "Retry" actions. Idempotent across model state —
+    /// a re-entrant call while a download Task is in flight returns
+    /// immediately. Every terminal branch updates `llmDownloadState`
+    /// + the mirrored `modelStatusViewModel`. PHI-free; model bytes only.
+    ///
+    /// Awaits the in-flight task on re-entry so the caller's `await`
+    /// resolves after the model is actually ready. The `Task` storage
+    /// makes `cancelClinicalNotesModelDownload()` actionable.
+    func downloadClinicalNotesModel() async {
+        // Re-entry: there's already a download in flight. Await its
+        // completion (cancelled-but-still-unwinding tasks complete
+        // promptly) and return. We deliberately don't gate on
+        // `!isCancelled`: a cancelled task whose body is still running
+        // would otherwise let a second caller spawn a parallel task,
+        // and our slot can only hold one. The body's catch arm will
+        // flip state to `.cancelled` before the task resolves.
+        if let existing = clinicalNotesDownloadTask {
+            await existing.task.value
+            return
+        }
+
+        guard
+            let downloader = modelDownloader,
+            let provider = llmProvider
+        else {
+            AppLogger.app.warning(
+                "AppState: clinical-notes download requested but pipeline unavailable"
+            )
+            llmDownloadState = .failed
+            updateModelStatusMirror()
+            return
+        }
+
+        let token = UUID()
+        let task: Task<Void, Never> = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.runDownloadAndWarmup(downloader: downloader, provider: provider)
+        }
+        clinicalNotesDownloadTask = (token: token, task: task)
+        await task.value
+        // Identity-guarded clear: only nil the slot if it's still the
+        // generation we set. `removeClinicalNotesModel()` may have
+        // claimed the slot while we were suspended on `task.value`, and
+        // an unconditional `= nil` would clobber the fresh task it set.
+        if clinicalNotesDownloadTask?.token == token {
+            clinicalNotesDownloadTask = nil
+        }
+    }
+
+    /// Body of the download + warmup phase, isolated so
+    /// `downloadClinicalNotesModel` can store / cancel the wrapping Task.
+    /// Mirrors the original inline pipeline shape from
+    /// `runClinicalNotesPipeline` — the two now share this implementation.
+    private func runDownloadAndWarmup(
+        downloader: ModelDownloader,
+        provider: MLXGemmaProvider
+    ) async {
+        // Track which phase threw so error logs distinguish a network /
+        // hash failure during fetch from an MLX load failure during
+        // warmup. Cheap; helps post-mortem on real crash reports.
+        var phase = "download"
+        do {
+            llmDownloadState = .downloading
+            updateModelStatusMirror()
+            let modelDir = try await downloader.ensureModelDownloaded { [weak self] event in
+                Task { @MainActor [weak self] in
+                    self?.applyDownloadProgress(event)
+                }
+            }
+            llmDownloadState = .verified(directory: modelDir)
+            updateModelStatusMirror()
+            phase = "warmup"
+            try await provider.warmup()
+            llmDownloadState = .ready
+            updateModelStatusMirror()
+        } catch is CancellationError {
+            AppLogger.app.info(
+                "AppState: clinical-notes download cancelled phase=\(phase, privacy: .public)"
+            )
+            if llmDownloadState != .cancelled {
+                llmDownloadState = .cancelled
+            }
+            updateModelStatusMirror()
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            // URLSession reifies `Task.cancel()` as `URLError(.cancelled)`
+            // for some transports; treat it identically to `CancellationError`
+            // so the user-cancel UX matches.
+            AppLogger.app.info(
+                "AppState: clinical-notes download cancelled (URLError.cancelled) phase=\(phase, privacy: .public)"
+            )
+            if llmDownloadState != .cancelled {
+                llmDownloadState = .cancelled
+            }
+            updateModelStatusMirror()
+        } catch {
+            AppLogger.app.error(
+                "AppState: clinical-notes download failed phase=\(phase, privacy: .public) kind=\(String(describing: type(of: error)), privacy: .public)"
+            )
+            llmDownloadState = .failed
+            updateModelStatusMirror()
+        }
+    }
+
+    /// Cancel the active model download / warmup, if any. Safe to call
+    /// when no download is in flight — the no-op is the common case
+    /// after a `.ready` state is reached. Doesn't await; cancellation
+    /// propagates through `Task.cancel()` and lands in the in-flight
+    /// task's `catch is CancellationError` arm.
+    func cancelClinicalNotesModelDownload() {
+        guard let entry = clinicalNotesDownloadTask else { return }
+        AppLogger.app.info("AppState: cancelling clinical-notes model download")
+        entry.task.cancel()
+    }
+
+    /// Remove the on-disk Gemma 4 model directory and reset the download
+    /// state machine to `.idle`. Used by the Settings row's "Remove" action.
+    /// Idempotent — a missing directory is a no-op apart from the state
+    /// reset. Cancels any in-flight download first so the `Task` can't
+    /// race the unlink.
+    ///
+    /// PHI-free: only the model directory is touched. The path is logged
+    /// as `.private` per `phi-handling.md` (user-home paths count as PII
+    /// in the OSLog channel).
+    func removeClinicalNotesModel() async {
+        // Mitigation for the mmap-still-active concern (silent-failure-hunter
+        // H5): if the provider has warmed up, its `ModelContainer` may still
+        // mmap the directory we're about to unlink. POSIX semantics let the
+        // unlink succeed but the bytes don't get freed until the provider
+        // releases the container. Surface a structural warning so a
+        // regression here is debuggable. Proper fix is `MLXGemmaProvider.unload()`
+        // — tracked as a follow-up; the warning is the bridge.
+        if llmDownloadState == .ready {
+            AppLogger.app.warning(
+                "AppState: removing Gemma 4 model while provider may still hold mmap — bytes may persist until app restart"
+            )
+        }
+
+        cancelClinicalNotesModelDownload()
+        // Wait for any cancelled task to unwind before we delete on-disk
+        // state — otherwise the downloader's `.partial` rename can race
+        // the directory removal. Identity-guarded clear so a re-entrant
+        // download started by a parallel caller isn't clobbered.
+        if let existing = clinicalNotesDownloadTask {
+            await existing.task.value
+            if clinicalNotesDownloadTask?.token == existing.token {
+                clinicalNotesDownloadTask = nil
+            }
+        }
+
+        guard let manifest = llmManifest else {
+            // No manifest means no `<bundleId>/Models/<dir>/` to clear; just
+            // collapse the state machine.
+            llmDownloadState = .idle
+            llmDownloadProgress = 0
+            llmDownloadCompletedBytes = 0
+            llmDownloadTotalBytes = 0
+            updateModelStatusMirror()
+            return
+        }
+        let dir = ModelDownloader.defaultBaseDirectory()
+            .appendingPathComponent(manifest.modelDirectoryName, isDirectory: true)
+        if FileManager.default.fileExists(atPath: dir.path) {
+            do {
+                try FileManager.default.removeItem(at: dir)
+                AppLogger.app.info(
+                    "AppState: removed Gemma 4 model directory at \(dir.path, privacy: .private)"
+                )
+            } catch {
+                // Surface failure as `.failed` (silent-failure-hunter H4):
+                // collapsing to `.idle` after a failed unlink would mislead
+                // the user into thinking the model is gone, while the next
+                // `Download model` tap silently re-uses the still-on-disk
+                // bytes — they'd think a re-download succeeded when it
+                // never ran. Surface state honestly so the row's "Retry"
+                // affordance is reachable.
+                AppLogger.app.error(
+                    "AppState: failed to remove Gemma 4 model directory kind=\(String(describing: type(of: error)), privacy: .public)"
+                )
+                llmDownloadState = .failed
+                updateModelStatusMirror()
+                return
+            }
+        } else {
+            AppLogger.app.info("AppState: Gemma 4 model directory already absent")
+        }
+
+        llmDownloadState = .idle
+        llmDownloadProgress = 0
+        llmDownloadCompletedBytes = 0
+        llmDownloadTotalBytes = 0
+        updateModelStatusMirror()
     }
 
     /// Lookup the manifest-declared size of a file by its repo-relative

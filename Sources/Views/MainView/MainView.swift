@@ -30,6 +30,12 @@ struct MainView: View {
     /// Permission service for checking/requesting system permissions
     private let permissionService: PermissionService
 
+    /// Optional model-status surface for the Gemma 4 download lifecycle
+    /// (#104, Deliverable A). Threaded into `ClinicalNotesSection` so the
+    /// row can bind directly to `AppState`-mirrored state. Defaults to
+    /// `nil` to keep existing previews and tests intact.
+    private let modelStatusViewModel: ClinicalNotesModelStatusViewModel?
+
     // MARK: - Section ViewModels (lazy initialized)
 
     @State private var languageViewModel: LanguageSectionViewModel?
@@ -42,11 +48,13 @@ struct MainView: View {
     init(
         viewModel: MainViewModel = MainViewModel(),
         settingsService: SettingsService = SettingsService(),
-        permissionService: PermissionService = PermissionService()
+        permissionService: PermissionService = PermissionService(),
+        modelStatusViewModel: ClinicalNotesModelStatusViewModel? = nil
     ) {
         self._viewModel = State(initialValue: viewModel)
         self.settingsService = settingsService
         self.permissionService = permissionService
+        self.modelStatusViewModel = modelStatusViewModel
     }
 
     // MARK: - Body
@@ -321,14 +329,15 @@ struct MainView: View {
             if let clinicalNotesVM = clinicalNotesViewModel {
                 ClinicalNotesSection(
                     viewModel: clinicalNotesVM,
-                    settingsService: settingsService
+                    settingsService: settingsService,
+                    modelStatusViewModel: modelStatusViewModel
                 )
             } else {
                 ClinicalNotesSectionPlaceholder()
             }
         case .about:
             if let aboutVM = aboutViewModel {
-                AboutSection(viewModel: aboutVM)
+                AboutSection(viewModel: aboutVM, modelStatusViewModel: modelStatusViewModel)
             } else {
                 AboutSectionPlaceholder()
             }

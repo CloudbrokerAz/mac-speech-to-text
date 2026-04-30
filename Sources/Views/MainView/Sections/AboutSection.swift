@@ -13,6 +13,13 @@ struct AboutSection: View {
 
     @Bindable var viewModel: AboutSectionViewModel
 
+    /// Optional clinical-notes model status (#104). When non-nil and the
+    /// app's Clinical Notes Mode pipeline is configured, the "Powered By"
+    /// section renders a Gemma 4 badge with a live state pill. nil keeps
+    /// the section Parakeet-only — used by previews and tests that don't
+    /// stand up the full pipeline.
+    let modelStatusViewModel: ClinicalNotesModelStatusViewModel?
+
     // MARK: - Environment
 
     @Environment(\.openURL) private var openURL
@@ -20,6 +27,16 @@ struct AboutSection: View {
     // MARK: - Animation State
 
     @State private var isPulsing: Bool = false
+
+    // MARK: - Init
+
+    init(
+        viewModel: AboutSectionViewModel,
+        modelStatusViewModel: ClinicalNotesModelStatusViewModel? = nil
+    ) {
+        self.viewModel = viewModel
+        self.modelStatusViewModel = modelStatusViewModel
+    }
 
     // MARK: - Body
 
@@ -68,8 +85,14 @@ struct AboutSection: View {
             return image
         }
 
-        // Fallback to app icon
-        return NSApp.applicationIconImage
+        // Fallback to app icon. In a unit-test context (no NSApplication
+        // launched) `NSApp.applicationIconImage` is nil; return an empty
+        // placeholder so view inspection doesn't crash. The production
+        // path always has at least the system icon available.
+        if let appIcon = NSApp?.applicationIconImage {
+            return appIcon
+        }
+        return NSImage()
     }
 
     // MARK: - App Identity Section
@@ -157,6 +180,46 @@ struct AboutSection: View {
 
     // MARK: - Technology Section
 
+    private static let gemmaByteFormatter: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useGB, .useMB]
+        formatter.countStyle = .file
+        formatter.includesUnit = true
+        return formatter
+    }()
+
+    /// Manifest size in human-readable form. Falls back to a generic phrase
+    /// when the manifest is missing (`manifestSizeBytes == 0`) — keeps the
+    /// subtitle copy from reading "Zero KB" mid-sentence.
+    private func formattedGemmaSize(_ bytes: Int64) -> String {
+        guard bytes > 0 else { return "~5 GB" }
+        return Self.gemmaByteFormatter.string(fromByteCount: bytes)
+    }
+
+    /// Maps the live `LLMDownloadState` to the badge's pill copy + tint.
+    /// PHI-free — only structural state.
+    private func pillForGemmaState(
+        _ state: LLMDownloadState,
+        progress: Double
+    ) -> PoweredByBadge.StatePill {
+        switch state {
+        case .idle:
+            return PoweredByBadge.StatePill(label: "Not downloaded", tint: Color.warmAmber)
+        case .downloading:
+            let clamped = min(max(progress, 0), 1)
+            let pct = Int((clamped * 100).rounded())
+            return PoweredByBadge.StatePill(label: "Downloading \(pct)%", tint: Color.warmAmber)
+        case .verified:
+            return PoweredByBadge.StatePill(label: "Verifying", tint: Color.warmAmber)
+        case .ready:
+            return PoweredByBadge.StatePill(label: "Ready", tint: Color.successGreen)
+        case .failed:
+            return PoweredByBadge.StatePill(label: "Failed", tint: Color.errorRed)
+        case .cancelled:
+            return PoweredByBadge.StatePill(label: "Cancelled", tint: Color.secondary)
+        }
+    }
+
     private var technologySection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Powered By")
@@ -166,38 +229,36 @@ struct AboutSection: View {
                 .accessibilityAddTraits(.isHeader)
 
             VStack(alignment: .leading, spacing: 8) {
-                // Parakeet model info
-                HStack(spacing: 12) {
-                    Image(systemName: "waveform.badge.mic")
-                        .font(.title2)
-                        .foregroundStyle(Color.amberPrimary)
-                        .frame(width: 32)
+                // Parakeet — always shown, no state pill (always-on).
+                PoweredByBadge(
+                    icon: "waveform.badge.mic",
+                    iconColor: Color.amberPrimary,
+                    name: "NVIDIA Parakeet TDT",
+                    versionTag: "0.6b-v3",
+                    subtitle: "State-of-the-art multilingual speech recognition running locally via Apple Neural Engine",
+                    accentColor: Color.amberPrimary,
+                    statePill: nil
+                )
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text("NVIDIA Parakeet TDT")
-                                .font(.callout)
-                                .fontWeight(.medium)
-
-                            Text("0.6b-v3")
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.amberPrimary.opacity(0.2))
-                                .foregroundStyle(Color.amberPrimary)
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                        }
-
-                        Text("State-of-the-art multilingual speech recognition running locally via Apple Neural Engine")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                // Gemma 4 — only when the VM is available (Clinical Notes
+                // Mode pipeline is configured). The state pill reflects
+                // the live download lifecycle. PHI-free by construction
+                // (#104 / `.claude/references/phi-handling.md`).
+                if let modelStatusViewModel {
+                    let sizeText = formattedGemmaSize(modelStatusViewModel.manifestSizeBytes)
+                    PoweredByBadge(
+                        icon: "brain.head.profile",
+                        iconColor: Color.amberPrimary,
+                        name: "Gemma 4 E4B-IT",
+                        versionTag: "mlx-4bit",
+                        subtitle: "Local clinical-note drafting via MLX Swift on Apple Silicon. \(sizeText). PHI never leaves your Mac.",
+                        accentColor: Color.amberPrimary,
+                        statePill: pillForGemmaState(
+                            modelStatusViewModel.state,
+                            progress: modelStatusViewModel.progress
+                        )
+                    )
                 }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(nsColor: .controlBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
 
                 // Privacy note
                 HStack(spacing: 8) {
@@ -430,6 +491,106 @@ final class AboutSectionViewModel {
     }
 }
 
+// MARK: - Powered By Badge
+
+/// Reusable "Powered By" technology card. Used twice in `AboutSection`:
+/// once for Parakeet (always shown, no state pill) and once for Gemma 4
+/// (shown when Clinical Notes Mode infrastructure is available; renders a
+/// real download-state pill driven by `ClinicalNotesModelStatusViewModel`).
+///
+/// PHI-free by construction — every input is structural metadata
+/// (model name, version tag, byte size). See
+/// `.claude/references/phi-handling.md`.
+private struct PoweredByBadge: View {
+    /// Pill rendered next to the version tag. `nil` hides the pill
+    /// entirely (used by Parakeet, which is always-on).
+    struct StatePill: Equatable {
+        let label: String
+        let tint: Color
+    }
+
+    let icon: String
+    let iconColor: Color
+    let name: String
+    let versionTag: String
+    let subtitle: String
+    let accentColor: Color
+    let statePill: StatePill?
+
+    private var slug: String { aboutSectionSlugify(name) }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundStyle(iconColor)
+                .frame(width: 32)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(name)
+                        .font(.callout)
+                        .fontWeight(.medium)
+
+                    Text(versionTag)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(accentColor.opacity(0.2))
+                        .foregroundStyle(accentColor)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                    if let pill = statePill {
+                        Text(pill.label)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(pill.tint.opacity(0.2))
+                            .foregroundStyle(pill.tint)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .accessibilityIdentifier("aboutSection.poweredByBadge.\(slug).statePill")
+                    }
+                }
+
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("aboutSection.poweredByBadge.\(slug)")
+    }
+}
+
+/// Lower-cases an arbitrary display name and converts non-alphanumeric
+/// runs to single hyphens for use as an accessibility-identifier suffix.
+/// Pure / Sendable / file-scope — no Foundation dependency beyond
+/// `String`. Lives at file scope so previews + the badge can share it.
+private func aboutSectionSlugify(_ value: String) -> String {
+    var result = ""
+    var lastWasHyphen = true   // so leading non-alphanumerics drop, not produce "-foo"
+    for scalar in value.unicodeScalars {
+        if scalar.isASCII, let ascii = Character(scalar).lowercased().first,
+           ascii.isLetter || ascii.isNumber {
+            result.append(ascii)
+            lastWasHyphen = false
+        } else if !lastWasHyphen {
+            result.append("-")
+            lastWasHyphen = true
+        }
+    }
+    if result.hasSuffix("-") { result.removeLast() }
+    return result
+}
+
 // MARK: - Previews
 
 #Preview("About Section") {
@@ -443,4 +604,22 @@ final class AboutSectionViewModel {
         .frame(width: 320, height: 600)
         .padding()
         .preferredColorScheme(.dark)
+}
+
+#Preview("About Section - With Gemma 4 Ready") {
+    // Real Gemma 4 manifest size — keeps the subtitle copy realistic.
+    let modelStatusVM = ClinicalNotesModelStatusViewModel(
+        state: .ready,
+        progress: 1,
+        manifestSizeBytes: 5_249_808_308,
+        modelDirectoryURL: URL(
+            fileURLWithPath: "/Users/example/Library/Application Support/com.speechtotext.app/Models/gemma-4-e4b-it-4bit"
+        )
+    )
+    return AboutSection(
+        viewModel: AboutSectionViewModel(),
+        modelStatusViewModel: modelStatusVM
+    )
+        .frame(width: 320, height: 700)
+        .padding()
 }

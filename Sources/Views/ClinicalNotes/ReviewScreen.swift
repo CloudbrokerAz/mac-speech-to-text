@@ -324,6 +324,18 @@ struct ReviewScreen: View {
 
             Spacer()
 
+            if showsOpenSettingsAffordance {
+                Button {
+                    viewModel.openClinicalNotesSettings()
+                } label: {
+                    Label("Open Clinical Notes Settings", systemImage: "gearshape")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                }
+                .buttonStyle(.bordered)
+                .tint(Color.amberPrimary)
+                .accessibilityIdentifier("reviewScreen.fallback.openClinicalNotesSettings")
+            }
+
             Button {
                 viewModel.insertRawTranscriptIntoSubjective()
             } label: {
@@ -347,13 +359,33 @@ struct ReviewScreen: View {
         .accessibilityIdentifier("reviewScreen.fallbackBanner")
     }
 
-    /// Banner copy. Currently a single sentence regardless of
-    /// `fallbackReasonCode` — the codes are diagnostic, not user-
-    /// facing. Future copy could branch on `reasonCode == "model_unavailable"`
-    /// to nudge toward Settings; for now the unified surface keeps
-    /// the doctor's attention on editing.
+    /// Banner copy switches on the structural fallback reason code; see
+    /// `ClinicalNotesProcessor` for the code constants.
     private var fallbackBannerSubtitle: String {
-        "Edit the SOAP sections manually, or insert the raw transcript into Subjective as a starting point."
+        switch viewModel.fallbackReasonCode {
+        case ClinicalNotesProcessor.reasonModelUnavailable:
+            return "The clinical-notes model isn't ready. Open Settings → Clinical Notes to download it."
+        case ClinicalNotesProcessor.reasonModelDownloadCancelled:
+            return "Model download cancelled. Open Settings → Clinical Notes to finish it."
+        case ClinicalNotesProcessor.reasonSessionExpired:
+            return "Session expired — please cancel and re-record."
+        default:
+            // llm_error, invalid_json_after_retry, all_soap_empty_after_retry, nil
+            return "Edit the SOAP sections manually, or insert the raw transcript into Subjective as a starting point."
+        }
+    }
+
+    /// Show the "Open Clinical Notes Settings" deep-link button for the
+    /// model-availability reasons (download not run / cancelled). Both
+    /// recover via the same Settings → Clinical Notes route.
+    private var showsOpenSettingsAffordance: Bool {
+        switch viewModel.fallbackReasonCode {
+        case ClinicalNotesProcessor.reasonModelUnavailable,
+             ClinicalNotesProcessor.reasonModelDownloadCancelled:
+            return true
+        default:
+            return false
+        }
     }
 
     // MARK: Sidebar column

@@ -104,6 +104,15 @@ public actor MLXGemmaProvider: LLMProvider {
             logger.info(
                 "MLX warmup completed in \(ms, privacy: .public)ms"
             )
+        } catch is CancellationError {
+            // #104: cancel-during-warmup must surface as `CancellationError`,
+            // not as `ProviderError.modelLoadFailed`. The Settings row's
+            // "Cancel" button relies on `runDownloadAndWarmup`'s
+            // `catch is CancellationError` arm to flip state to `.cancelled`
+            // (showing "Download model"); collapsing into `.modelLoadFailed`
+            // here would leave the row showing "Retry" instead.
+            logger.info("MLX warmup cancelled")
+            throw CancellationError()
         } catch {
             let kind = String(describing: type(of: error))
             logger.error("MLX warmup failed kind=\(kind, privacy: .public)")
