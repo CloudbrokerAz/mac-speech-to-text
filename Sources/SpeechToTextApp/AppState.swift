@@ -532,6 +532,13 @@ class AppState {
     /// resolves after the model is actually ready. The `Task` storage
     /// makes `cancelClinicalNotesModelDownload()` actionable.
     func downloadClinicalNotesModel() async {
+        // Already-ready short-circuit: re-running download/warmup when
+        // the model is loaded just causes a `.downloading` → `.verified`
+        // → `.ready` UI flicker and a redundant warmup. The Generate-Notes
+        // path delegates here on every tap; this gate keeps it fast on
+        // the steady-state common case (Gemini Code Assist PR #119).
+        if llmDownloadState == .ready { return }
+
         // Re-entry: there's already a download in flight. Await its
         // completion (cancelled-but-still-unwinding tasks complete
         // promptly) and return. We deliberately don't gate on
@@ -580,6 +587,12 @@ class AppState {
         downloader: ModelDownloader,
         provider: MLXGemmaProvider
     ) async {
+        // Concurrency note: progress events are dispatched via per-event
+        // `Task { @MainActor in ... }` hops and can land out of order with
+        // respect to each other. `applyDownloadProgress` is hardened to
+        // be monotonic (latches at 1.0) and terminal-state-aware (early
+        // out on `.cancelled` / `.failed`), so a stale event after this
+        // helper has flipped to a terminal state cannot regress UI.
         // Track which phase threw so error logs distinguish a network /
         // hash failure during fetch from an MLX load failure during
         // warmup. Cheap; helps post-mortem on real crash reports.

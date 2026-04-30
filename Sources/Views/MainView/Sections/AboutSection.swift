@@ -204,7 +204,10 @@ struct AboutSection: View {
     ) -> PoweredByBadge.StatePill {
         switch state {
         case .idle:
-            return PoweredByBadge.StatePill(label: "Not downloaded", tint: Color.warmAmber)
+            // Match `ClinicalNotesModelStatusRow`'s `.idle` pill tint:
+            // gray reads as "not yet started"; amber would read as
+            // "active/warning" (Gemini Code Assist PR #119).
+            return PoweredByBadge.StatePill(label: "Not downloaded", tint: Color.secondary)
         case .downloading:
             let clamped = min(max(progress, 0), 1)
             let pct = Int((clamped * 100).rounded())
