@@ -151,7 +151,7 @@ public actor MLXGemmaProvider: LLMProvider {
     /// `AppState.removeClinicalNotesModel()` is correct for the steady
     /// state (no Generate Notes mid-flight while the user is in
     /// Settings); the active-generation race is tracked separately.
-    public func unload() {
+    public func unload() async {
         guard container != nil else { return }
         container = nil
         logger.info("MLX unload completed")
