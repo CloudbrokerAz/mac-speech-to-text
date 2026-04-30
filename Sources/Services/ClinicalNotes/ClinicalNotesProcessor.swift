@@ -83,6 +83,16 @@ actor ClinicalNotesProcessor {
     /// copy is more honest — the model isn't broken, it's half-fetched.
     static let reasonModelDownloadCancelled = "model_download_cancelled"
 
+    /// Structural sentinel emitted by the processor when generation was
+    /// cancelled because the user tapped "Remove model" while the
+    /// pipeline was in flight (#121). Distinct from `reasonLLMError`
+    /// (which means the LLM itself failed) so the Review banner can be
+    /// honest about *why* generation didn't complete: the model isn't
+    /// broken, the user removed it. Surfaced when `process(transcript:)`
+    /// catches `CancellationError` from the provider — see the
+    /// `catch is CancellationError` arms inside `process`.
+    static let reasonModelRemovedMidFlight = "model_removed_mid_flight"
+
     /// Structural sentinel emitted by `ReviewViewModel.loadState` (NOT
     /// by the processor) when the active `ClinicalSession` was cleared
     /// while the Review window was still on screen — typically the
@@ -126,6 +136,14 @@ actor ClinicalNotesProcessor {
                 prompt: initialPrompt,
                 options: options
             )
+        } catch is CancellationError {
+            // User tapped "Remove model" mid-stream (#121) — the wrapping
+            // pipeline Task was cancelled by `removeClinicalNotesModel()`,
+            // which trips `Task.checkCancellation()` inside
+            // `MLXGemmaProvider.runGeneration`'s chunk loop. Surface a
+            // distinct reason so the Review banner can say "you removed
+            // the model" rather than "LLM error".
+            return .rawTranscriptFallback(reason: Self.reasonModelRemovedMidFlight)
         } catch {
             logLLMError(error, attempt: 1)
             return .rawTranscriptFallback(reason: Self.reasonLLMError)
@@ -152,6 +170,10 @@ actor ClinicalNotesProcessor {
                 prompt: retryPrompt,
                 options: options
             )
+        } catch is CancellationError {
+            // Mirror the first-attempt cancellation handling above —
+            // distinguishing "user removed model" from "LLM error" (#121).
+            return .rawTranscriptFallback(reason: Self.reasonModelRemovedMidFlight)
         } catch {
             logLLMError(error, attempt: 2)
             return .rawTranscriptFallback(reason: Self.reasonLLMError)

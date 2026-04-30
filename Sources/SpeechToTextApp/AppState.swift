@@ -87,6 +87,39 @@ class AppState {
     /// H2 / code-reviewer B2).
     @ObservationIgnored private var clinicalNotesDownloadTask: (token: UUID, task: Task<Void, Never>)?
 
+    /// In-flight clinical-notes pipeline task (#121). Set by
+    /// `handleClinicalNotesGenerateRequested` so that
+    /// `removeClinicalNotesModel` can drain it before releasing the
+    /// `ModelContainer` mmap. Without this drain, an active
+    /// `MLXGemmaProvider.runGeneration` would hold the container in a
+    /// strong local across actor suspensions and pin the mmap past
+    /// `unload()` due to Swift actor reentrancy. Token-tagged with the
+    /// same identity-guarded-clear pattern as `clinicalNotesDownloadTask`
+    /// so a re-entrant Generate Notes tap can't have its slot clobbered.
+    @ObservationIgnored private var clinicalNotesPipelineTask: (token: UUID, task: Task<Void, Never>)?
+
+    /// Mirror of `clinicalNotesPipelineTask != nil`, exposed as an
+    /// `@Observable` Bool so the Settings model-status row (#104) can
+    /// gate the "Remove" affordance while a pipeline is in flight (#121).
+    /// Set + cleared on the same MainActor as the task slot itself, so
+    /// the Bool and the slot are always in sync from a UI bind's
+    /// perspective.
+    var isClinicalNotesPipelineActive: Bool = false
+
+    /// Set to `true` for the duration of `removeClinicalNotesModel()` so
+    /// `handleClinicalNotesGenerateRequested` can short-circuit any
+    /// fresh transcript hand-off arriving via the menu-bar / hotkey /
+    /// other recording surfaces while the remove is draining (#121,
+    /// silent-failure-hunter Scenario 4 / Finding 9). Without this
+    /// gate, a new pipeline could start during the drain's `await
+    /// existing.task.value`, complete a fresh `requireContainer()` →
+    /// `warmup()` against the still-on-disk weights, and capture the
+    /// container into a strong local that survives the subsequent
+    /// `unload()` — exactly the reentrancy hazard #121 set out to fix,
+    /// in a different shape. Cleared via `defer` so an early-return
+    /// branch can't leave the flag stuck.
+    @ObservationIgnored private var isRemovingClinicalNotesModel: Bool = false
+
     /// Static manipulations taxonomy bundled with the app (#6). Loaded
     /// once at launch and handed to `ReviewWindowController` so the
     /// review surface (#13) renders the checklist without re-parsing the
@@ -356,13 +389,83 @@ class AppState {
 
         ReviewWindowController.shared.present()
 
+        // Re-entrant guard for #121 / silent-failure-hunter Scenario 4:
+        // if a Settings-initiated `removeClinicalNotesModel()` is mid-drain
+        // we must NOT spawn a fresh pipeline — it would re-mmap the model
+        // directory we're about to unlink and re-introduce the exact race
+        // the drain closes. The Settings row's gate on Remove is one
+        // surface; this check covers the menu-bar / hotkey / Generate-Notes
+        // surfaces that bypass the Settings UI.
+        if isRemovingClinicalNotesModel {
+            AppLogger.app.info(
+                "AppState: clinical-notes hand-off declined — model removal in flight"
+            )
+            applyClinicalNotesFallback(reasonCode: ClinicalNotesProcessor.reasonModelUnavailable)
+            return
+        }
+
+        // Re-entrant Generate Notes (a second tap arriving while Pipeline
+        // A is still running): cancel A and chain B behind it so A's
+        // `runGeneration` unwinds, releases its captured container, and
+        // the slot ends up holding only B. Without this chain the slot
+        // assignment below would orphan A's task handle — A keeps
+        // running, captures the container into a strong local that
+        // survives any subsequent `unload()`, and `removeClinicalNotesModel`
+        // can no longer drain it (Gemini Code Assist HIGH on PR #124).
+        // The previous task is captured into B's body so `await` is
+        // legal here in this synchronous notification handler; the
+        // slot flips to B immediately so `removeClinicalNotesModel`
+        // arriving during B's prologue still finds the load-bearing
+        // handle.
+        let previousTask = clinicalNotesPipelineTask?.task
+        previousTask?.cancel()
+
         // Kick off LLM processing without blocking the UI present.
         // `runClinicalNotesPipeline` ensures-download + warms-up + runs
         // the processor; every terminal branch flips `draftStatus` so
         // the Review screen never silently lingers in `.pending`.
-        Task { @MainActor [weak self] in
+        //
+        // The task handle is stored on `clinicalNotesPipelineTask` so
+        // `removeClinicalNotesModel` can drain it before releasing the
+        // ModelContainer (#121). Identity-guarded clear inside the same
+        // Task body — mirrors the `clinicalNotesDownloadTask` pattern at
+        // `downloadClinicalNotesModel` so a re-entrant Generate Notes tap
+        // that started a fresh pipeline doesn't have its slot clobbered
+        // by the original task's completion path. The clear runs via
+        // `clearClinicalNotesPipelineSlotIfMatching(token:)` so this site
+        // and `removeClinicalNotesModel` stay in sync.
+        let token = UUID()
+        let task: Task<Void, Never> = Task { @MainActor [weak self, token, previousTask] in
+            // Wait for any cancelled predecessor to fully unwind before
+            // we touch the provider. `Task<Void, Never>.value` resolves
+            // when the body returns, including via the cancellation
+            // path. If `removeClinicalNotesModel` cancels *this* task
+            // before the predecessor finishes, we still complete the
+            // await (cancellation propagates a level deeper) and then
+            // exit before `runClinicalNotesPipeline` starts.
+            if let previousTask {
+                await previousTask.value
+            }
             await self?.runClinicalNotesPipeline(transcript: transcript)
+            self?.clearClinicalNotesPipelineSlotIfMatching(token: token)
         }
+        clinicalNotesPipelineTask = (token: token, task: task)
+        isClinicalNotesPipelineActive = true
+        updateModelStatusMirror()
+    }
+
+    /// Token-guarded clear for `clinicalNotesPipelineTask` (#121). Called
+    /// from both the pipeline Task body's trailing line and the drain
+    /// inside `removeClinicalNotesModel()`; centralising the three
+    /// writes (`slot = nil`, `isClinicalNotesPipelineActive = false`,
+    /// `updateModelStatusMirror()`) prevents the two sites from drifting.
+    /// No-op if the slot is empty or holds a different generation —
+    /// re-entrant Generate Notes that swapped the slot keeps its slot.
+    private func clearClinicalNotesPipelineSlotIfMatching(token: UUID) {
+        guard clinicalNotesPipelineTask?.token == token else { return }
+        clinicalNotesPipelineTask = nil
+        isClinicalNotesPipelineActive = false
+        updateModelStatusMirror()
     }
 
     /// Drive the LLM pipeline end-to-end for a single transcript. Idempotent
@@ -502,6 +605,7 @@ class AppState {
     private func updateModelStatusMirror() {
         modelStatusViewModel.state = llmDownloadState
         modelStatusViewModel.progress = llmDownloadProgress
+        modelStatusViewModel.isPipelineActive = isClinicalNotesPipelineActive
         switch llmDownloadState {
         case .verified(let directory):
             modelStatusViewModel.modelDirectoryURL = directory
@@ -668,7 +772,27 @@ class AppState {
     /// user actually reclaims the ~5 GB they expect from "Remove model".
     /// `unload()` is idempotent and safe to call from any state, so we
     /// don't need to gate on `llmDownloadState == .ready`.
+    ///
+    /// **Pipeline drain (#121).** Before `unload()` we also cancel +
+    /// await any in-flight clinical-notes pipeline. `runGeneration`
+    /// inside `MLXGemmaProvider` binds the container into a strong local
+    /// that survives `self.container = nil` due to actor reentrancy, so
+    /// `unload()` alone wouldn't release the mmap if a generate were
+    /// suspended on a chunk. Cancelling the wrapping Task trips
+    /// `Task.checkCancellation()` in the chunk loop; the processor
+    /// catches `CancellationError` and resolves to
+    /// `.rawTranscriptFallback(reason: reasonModelRemovedMidFlight)` —
+    /// honest UX for "you removed the model mid-stream" — and the
+    /// unload is then race-free.
     func removeClinicalNotesModel() async {
+        // Block any fresh pipeline from spawning while we're draining +
+        // unloading + unlinking. Cleared via `defer` so any early return
+        // (no-manifest branch, removeItem failure) leaves the gate open.
+        // See `isRemovingClinicalNotesModel`'s doc comment for the race
+        // this closes (#121, silent-failure-hunter Scenario 4).
+        isRemovingClinicalNotesModel = true
+        defer { isRemovingClinicalNotesModel = false }
+
         cancelClinicalNotesModelDownload()
         // Wait for any cancelled task to unwind before we delete on-disk
         // state — otherwise the downloader's `.partial` rename can race
@@ -681,11 +805,30 @@ class AppState {
             }
         }
 
+        // Drain any in-flight clinical-notes pipeline before we touch
+        // the provider (#121). The pipeline calls `processor.process` →
+        // `provider.generate` → `MLXGemmaProvider.runGeneration`, which
+        // captures the `ModelContainer` into a strong local that
+        // survives `self.container = nil` due to Swift actor reentrancy.
+        // Cancelling the wrapping Task trips `Task.checkCancellation()`
+        // inside the chunk loop; the processor catches `CancellationError`
+        // and resolves to `.rawTranscriptFallback(reason:
+        // reasonModelRemovedMidFlight)`, so the Review screen flips out
+        // of its loading overlay into the banner that names the user's
+        // gesture honestly. Identity-guarded clear mirrors the
+        // download-task pattern above.
+        if let existing = clinicalNotesPipelineTask {
+            existing.task.cancel()
+            await existing.task.value
+            clearClinicalNotesPipelineSlotIfMatching(token: existing.token)
+        }
+
         // Release any live `ModelContainer` mmap before unlinking the
         // directory — see the doc comment above for the POSIX rationale.
-        // Sequenced after the in-flight task await so we can't race a
-        // warmup that's about to set `container`. Idempotent no-op when
-        // the provider was never warmed.
+        // Sequenced after the in-flight task awaits so we can't race a
+        // warmup that's about to set `container` or a generation whose
+        // local container binding would otherwise pin the mmap past the
+        // unlink. Idempotent no-op when the provider was never warmed.
         await llmProvider?.unload()
 
         guard let manifest = llmManifest else {

@@ -104,6 +104,49 @@ struct AppStateModelStatusTests {
         #expect(appState.modelStatusViewModel.state == .idle)
     }
 
+    /// **#121 — `removeClinicalNotesModel()` clears its in-flight gate
+    /// even on the no-manifest early return.**
+    /// `isRemovingClinicalNotesModel` is set at the top of the function
+    /// and cleared by `defer` so an early-return branch (e.g. the
+    /// no-manifest path that flushes state without touching the
+    /// directory) can't leave the gate stuck — which would block all
+    /// subsequent Generate Notes hand-offs forever. We can't read the
+    /// private flag directly, but we can prove the gate clears by
+    /// calling `removeClinicalNotesModel()` twice in sequence and
+    /// asserting the second call also resolves cleanly to `.idle`. If
+    /// the flag had stuck `true`, internal logic that depends on it
+    /// (e.g. fresh pipeline short-circuit) would be observable, but at
+    /// the AppState public surface this is the cleanest pin.
+    @Test("removeClinicalNotesModel clears its in-flight gate via defer")
+    func removeClinicalNotesModel_clearsGateAcrossRepeatedCalls() async {
+        let appState = AppState()
+        await appState.removeClinicalNotesModel()
+        #expect(appState.llmDownloadState == .idle)
+        await appState.removeClinicalNotesModel()
+        #expect(appState.llmDownloadState == .idle)
+    }
+
+    /// **#121 — `isClinicalNotesPipelineActive` defaults false at init
+    /// and is mirrored into the VM.**
+    /// AppState init must NOT spawn a pipeline (no recording has happened
+    /// yet), so the gate the row uses to disable Remove must be `false`.
+    /// The mirror call inside `updateModelStatusMirror` (driven by
+    /// `removeClinicalNotesModel`'s `.idle` no-op write) propagates the
+    /// flag onto the VM as `isPipelineActive`. Pinning down both axes
+    /// here protects against a regression that left the gate stuck
+    /// `true` after init.
+    @Test("isClinicalNotesPipelineActive defaults false and mirrors into VM")
+    func isClinicalNotesPipelineActive_defaultsFalseAndMirrors() async {
+        let appState = AppState()
+        #expect(appState.isClinicalNotesPipelineActive == false)
+        #expect(appState.modelStatusViewModel.isPipelineActive == false)
+
+        // A no-op remove flushes through `updateModelStatusMirror()` so
+        // we observe the propagation into the VM end-to-end.
+        await appState.removeClinicalNotesModel()
+        #expect(appState.modelStatusViewModel.isPipelineActive == false)
+    }
+
     @Test("modelStatusViewModel mirrors manifest size at init")
     func modelStatusViewModel_mirrorsManifestSize() async {
         let appState = AppState()

@@ -225,23 +225,43 @@ struct ClinicalNotesModelStatusRow: View {
                 .accessibilityIdentifier("clinicalNotesModelStatusRow.actionButton")
             }
         case .ready:
-            HStack(spacing: 8) {
-                Spacer()
-                Button {
-                    showRedownloadConfirm = true
-                } label: {
-                    Label("Re-download", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("clinicalNotesModelStatusRow.redownloadButton")
+            VStack(alignment: .trailing, spacing: 4) {
+                HStack(spacing: 8) {
+                    Spacer()
+                    Button {
+                        showRedownloadConfirm = true
+                    } label: {
+                        Label("Re-download", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.isPipelineActive)
+                    .accessibilityIdentifier("clinicalNotesModelStatusRow.redownloadButton")
 
-                Button(role: .destructive) {
-                    showRemoveConfirm = true
-                } label: {
-                    Label("Remove", systemImage: "trash")
+                    Button(role: .destructive) {
+                        showRemoveConfirm = true
+                    } label: {
+                        Label("Remove", systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    // Gate Remove + Re-download while a clinical-notes pipeline
+                    // is in flight (#121). The drain inside
+                    // `AppState.removeClinicalNotesModel()` would still close
+                    // the race correctly if the user forced a remove, but the
+                    // resulting cancellation flips the Review screen to a
+                    // fallback banner that the practitioner didn't ask for —
+                    // gating the button keeps the UX honest. The accessibility
+                    // identifier stays stable across enabled / disabled so
+                    // existing UI tests don't need conditional locators.
+                    .disabled(viewModel.isPipelineActive)
+                    .accessibilityIdentifier("clinicalNotesModelStatusRow.actionButton")
                 }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("clinicalNotesModelStatusRow.actionButton")
+                if viewModel.isPipelineActive {
+                    Text("Cannot remove while generating notes — finish the active note first.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
+                        .accessibilityIdentifier("clinicalNotesModelStatusRow.pipelineActiveCaption")
+                }
             }
         case .failed:
             HStack {

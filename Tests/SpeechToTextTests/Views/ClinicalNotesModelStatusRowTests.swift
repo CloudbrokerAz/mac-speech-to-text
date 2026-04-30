@@ -20,13 +20,15 @@ final class ClinicalNotesModelStatusRowTests: XCTestCase {
     private func makeViewModel(
         state: LLMDownloadState,
         progress: Double = 0,
-        modelDirectoryURL: URL? = nil
+        modelDirectoryURL: URL? = nil,
+        isPipelineActive: Bool = false
     ) -> ClinicalNotesModelStatusViewModel {
         ClinicalNotesModelStatusViewModel(
             state: state,
             progress: progress,
             manifestSizeBytes: Self.sampleManifestBytes,
-            modelDirectoryURL: modelDirectoryURL
+            modelDirectoryURL: modelDirectoryURL,
+            isPipelineActive: isPipelineActive
         )
     }
 
@@ -120,6 +122,79 @@ final class ClinicalNotesModelStatusRowTests: XCTestCase {
         // Progress bar hidden in .ready.
         XCTAssertThrowsError(
             try view.inspect().find(viewWithAccessibilityIdentifier: "clinicalNotesModelStatusRow.progressBar")
+        )
+    }
+
+    /// **#121 — Remove + Re-download disabled while pipeline active.**
+    /// When `isPipelineActive` is `true` the Settings row gates the
+    /// destructive actions so the user can't trip the post-cancel
+    /// fallback banner unnecessarily. The drain inside
+    /// `AppState.removeClinicalNotesModel()` is the load-bearing
+    /// correctness mechanism (cancels + awaits the pipeline before
+    /// `unload()`); this UI gate is the polite UX layer on top.
+    ///
+    /// Both buttons stay reachable in the view tree (so tests using
+    /// the existing accessibility identifiers don't have to learn a
+    /// new locator), but `.disabled(...)` flips to `true`. The helper
+    /// caption is mounted under a new identifier
+    /// `clinicalNotesModelStatusRow.pipelineActiveCaption`.
+    func test_readyState_pipelineActive_disablesRemoveAndShowsCaption() throws {
+        let dir = URL(fileURLWithPath: "/tmp/test/gemma-4-e4b-it-4bit")
+        let viewModel = makeViewModel(
+            state: .ready,
+            progress: 1,
+            modelDirectoryURL: dir,
+            isPipelineActive: true
+        )
+        let view = ClinicalNotesModelStatusRow(viewModel: viewModel)
+
+        let removeButton = try view.inspect()
+            .find(viewWithAccessibilityIdentifier: "clinicalNotesModelStatusRow.actionButton")
+        XCTAssertTrue(
+            try removeButton.isDisabled(),
+            "Remove button must be disabled while a clinical-notes pipeline is in flight"
+        )
+
+        let redownloadButton = try view.inspect()
+            .find(viewWithAccessibilityIdentifier: "clinicalNotesModelStatusRow.redownloadButton")
+        XCTAssertTrue(
+            try redownloadButton.isDisabled(),
+            "Re-download must also be disabled while pipeline active (it routes through the same Remove path)"
+        )
+
+        XCTAssertNoThrow(
+            try view.inspect()
+                .find(viewWithAccessibilityIdentifier: "clinicalNotesModelStatusRow.pipelineActiveCaption"),
+            "Caption explaining why Remove is disabled must be visible while pipeline active"
+        )
+    }
+
+    /// Symmetric assertion: when `isPipelineActive == false` the caption
+    /// is absent and the buttons are enabled. Pins down that the gate
+    /// only activates under the documented condition — protects against
+    /// a regression that flips the gate unconditionally.
+    func test_readyState_pipelineIdle_enablesRemoveAndHidesCaption() throws {
+        let dir = URL(fileURLWithPath: "/tmp/test/gemma-4-e4b-it-4bit")
+        let viewModel = makeViewModel(
+            state: .ready,
+            progress: 1,
+            modelDirectoryURL: dir,
+            isPipelineActive: false
+        )
+        let view = ClinicalNotesModelStatusRow(viewModel: viewModel)
+
+        let removeButton = try view.inspect()
+            .find(viewWithAccessibilityIdentifier: "clinicalNotesModelStatusRow.actionButton")
+        XCTAssertFalse(try removeButton.isDisabled())
+
+        let redownloadButton = try view.inspect()
+            .find(viewWithAccessibilityIdentifier: "clinicalNotesModelStatusRow.redownloadButton")
+        XCTAssertFalse(try redownloadButton.isDisabled())
+
+        XCTAssertThrowsError(
+            try view.inspect()
+                .find(viewWithAccessibilityIdentifier: "clinicalNotesModelStatusRow.pipelineActiveCaption"),
+            "Caption must be hidden when no pipeline is in flight"
         )
     }
 
