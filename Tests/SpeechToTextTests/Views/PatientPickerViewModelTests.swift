@@ -44,12 +44,12 @@ struct PatientPickerViewModelTests {
         let patients = FakePatientSearcher(result: .success([]))
         let appointments = FakeAppointmentLoader(result: .success([]))
         let store = SessionStore()
-        // Tiny debounce so the test budget for the post-keystroke wait
-        // gives a wide margin without slowing the suite. The previous
-        // 30ms / 150ms shape flaked on a loaded GitHub-Actions macOS
-        // runner — Task.sleep schedule jitter on a busy host can spike
-        // past the debounce window even when the wait is technically
-        // longer in wall-clock terms. 5ms / 250ms gives ~50× headroom.
+        // Real (non-zero) debounce here — we want to verify that rapid
+        // keystrokes within the window collapse to a single search call.
+        // Wall-clock budget is irrelevant because we await the in-flight
+        // search task directly via `currentSearchTaskForTests`; see #117
+        // (and #56's earlier insufficient mitigation that still raced
+        // a 5 ms debounce against a 250 ms wall-clock wait).
         let vm = PatientPickerViewModel(
             patientService: patients,
             appointmentService: appointments,
@@ -63,7 +63,11 @@ struct PatientPickerViewModelTests {
         vm.updateQuery("Samp")
         vm.updateQuery("Sample")
 
-        try await Task.sleep(nanoseconds: 250_000_000)
+        // Deterministic synchronisation — wait for the final scheduled
+        // search task to finish (debounce sleep + service call). The
+        // earlier 4 keystrokes already cancelled their respective tasks,
+        // so the remaining task is the "Sample" one.
+        await vm.currentSearchTaskForTests?.value
 
         let count = await patients.callCount
         let lastQuery = await patients.lastQuery
@@ -84,7 +88,11 @@ struct PatientPickerViewModelTests {
         )
 
         vm.updateQuery("   ")
-        try await Task.sleep(nanoseconds: 50_000_000)
+        // Whitespace short-circuits inside `updateQuery` — no search
+        // task is scheduled. A `Task.yield()` is sufficient to let any
+        // synchronous follow-up state mutation settle; no wall-clock
+        // budget needed.
+        await Task.yield()
 
         let count = await patients.callCount
         #expect(count == 0)
@@ -107,7 +115,7 @@ struct PatientPickerViewModelTests {
         )
 
         vm.updateQuery("Sample")
-        try await Task.sleep(nanoseconds: 50_000_000)
+        await vm.currentSearchTaskForTests?.value
 
         if case .results(let list) = vm.searchPhase {
             #expect(list == [patient])
@@ -129,7 +137,7 @@ struct PatientPickerViewModelTests {
         )
 
         vm.updateQuery("zzznomatch")
-        try await Task.sleep(nanoseconds: 50_000_000)
+        await vm.currentSearchTaskForTests?.value
 
         #expect(vm.searchPhase == .empty)
     }
@@ -147,7 +155,7 @@ struct PatientPickerViewModelTests {
         )
 
         vm.updateQuery("anything")
-        try await Task.sleep(nanoseconds: 50_000_000)
+        await vm.currentSearchTaskForTests?.value
 
         #expect(vm.searchPhase == .error(.unauthenticated))
     }
@@ -170,7 +178,7 @@ struct PatientPickerViewModelTests {
         )
 
         vm.updateQuery("anything")
-        try await Task.sleep(nanoseconds: 50_000_000)
+        await vm.currentSearchTaskForTests?.value
 
         #expect(vm.searchPhase == .error(.cancelled))
     }
@@ -246,7 +254,7 @@ struct PatientPickerViewModelTests {
         )
 
         vm.selectPatient(Patient(id: 1, firstName: "S", lastName: "P"))
-        try await Task.sleep(nanoseconds: 50_000_000)
+        await vm.currentAppointmentTaskForTests?.value
 
         if case .loaded(let list) = vm.appointmentPhase {
             #expect(list == [appointment])
@@ -270,7 +278,7 @@ struct PatientPickerViewModelTests {
         )
 
         vm.selectPatient(Patient(id: 1, firstName: "S", lastName: "P"))
-        try await Task.sleep(nanoseconds: 50_000_000)
+        await vm.currentAppointmentTaskForTests?.value
 
         #expect(vm.appointmentPhase == .error(.transport(.notConnectedToInternet)))
     }

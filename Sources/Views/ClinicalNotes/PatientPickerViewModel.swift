@@ -273,4 +273,34 @@ final class PatientPickerViewModel: Identifiable {
         sessionStore.setSelectedPatient(id: nil)
         sessionStore.setSelectedAppointment(id: nil)
     }
+
+    // MARK: - Test seams
+
+    /// Test seam — exposes the currently-scheduled debounced search task
+    /// so a test can `await currentSearchTaskForTests?.value` instead of
+    /// gambling on a wall-clock `Task.sleep` to elapse. The previous
+    /// timing-based shape (5 ms debounce + 250 ms wait, paper-budget
+    /// 50× headroom) was flaky on loaded GitHub-Actions macOS-15
+    /// runners — `Task.sleep` schedule jitter on a busy host can spike
+    /// past the wait budget even when the wait is technically longer
+    /// in wall-clock terms (#117 / previous mitigation in #56).
+    /// Awaiting the task's `value` is a deterministic synchronisation
+    /// point that doesn't care about wall-clock at all.
+    ///
+    /// Production callers MUST NOT use this — the search task lifecycle
+    /// is owned by `updateQuery(_:)` / `clearSelection()`. The accessor
+    /// is `internal` so test code can reach it via `@testable import`.
+    @ObservationIgnored
+    internal var currentSearchTaskForTests: Task<Void, Never>? {
+        searchTask
+    }
+
+    /// Test seam — exposes the currently-scheduled appointment-load task
+    /// for the same `await … .value` shape as `currentSearchTaskForTests`.
+    /// Used by `appointmentPhase_loaded` and `appointmentPhase_error`
+    /// after `selectPatient(_:)` kicks off the load.
+    @ObservationIgnored
+    internal var currentAppointmentTaskForTests: Task<Void, Never>? {
+        appointmentTask
+    }
 }
