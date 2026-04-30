@@ -54,6 +54,28 @@ public protocol LLMProvider: Actor {
         prompt: String,
         options: LLMOptions
     ) -> AsyncThrowingStream<String, any Error>
+
+    /// Release any internal model state so the underlying weights / file
+    /// descriptors can be reclaimed. Idempotent — a second call is a
+    /// no-op once state has been released. Symmetric counterpart to any
+    /// implementation-defined warmup. After `unload()`, the next
+    /// `generate` / `generateStream` call MUST behave as if the provider
+    /// were freshly constructed (typically by lazy-loading on demand).
+    ///
+    /// **Caller invariant (#120).** When the on-disk model directory is
+    /// being removed, callers MUST `await unload()` before unlinking so
+    /// the mmap-backed bytes actually free under POSIX semantics. See
+    /// `MLXGemmaProvider.unload()` and `.claude/references/mlx-lifecycle.md`
+    /// for the release-before-unlink invariant.
+    func unload() async
+}
+
+public extension LLMProvider {
+    /// Default no-op for providers that have no model state to release
+    /// (e.g. trivial test fakes that synthesise responses without
+    /// loading weights). Concrete in-process providers like
+    /// `MLXGemmaProvider` override this with a real release.
+    func unload() async {}
 }
 
 /// Sampling configuration for a single `LLMProvider` call.

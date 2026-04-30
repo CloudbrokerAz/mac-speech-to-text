@@ -91,6 +91,36 @@ struct MLXGemmaProviderUnitTests {
         #expect(boundary == text.endIndex)
     }
 
+    /// **#120 — `unload()` idempotency on a never-warmed provider.**
+    /// `unload()` is the load-bearing release used by
+    /// `AppState.removeClinicalNotesModel()` to drop the
+    /// `ModelContainer` mmap before unlinking the model directory.
+    /// The container starts `nil`, so calling `unload()` before any
+    /// `warmup()` must be a structural no-op — and a second call must
+    /// also no-op. Both must complete without throwing or blocking.
+    ///
+    /// The warmup → unload → re-warmup state-machine cycle requires
+    /// real weights and lives in `MLXGemmaProviderGoldenTests` below
+    /// (`RUN_MLX_GOLDEN=1`, `.requiresHardware`).
+    @Test("unload is a no-op on a never-warmed provider and is idempotent")
+    func unloadIdempotentBeforeWarmup() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mlx-gemma-unload-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: tempDir,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let provider = MLXGemmaProvider(modelDirectory: tempDir)
+        // Two calls back-to-back — both must complete cleanly. The
+        // assertion is implicit in not throwing or hanging; the actor
+        // serialises the calls so a concurrent re-entry can't trip
+        // a half-loaded state.
+        await provider.unload()
+        await provider.unload()
+    }
+
     /// **#106 — warmup error mapping (shape, not specific error type).**
     /// Verifies that `warmup()` catches *any* underlying error from
     /// `LLMModelFactory.shared.loadContainer` and re-raises it as
@@ -175,6 +205,33 @@ struct MLXGemmaProviderGoldenTests {
         // Loose budget — load latency varies wildly with thermal state
         // and disk pressure. The hard contract is just "completes".
         #expect(seconds < 30, "warmup took \(seconds)s, expected <30s")
+    }
+
+    /// **#120 — warmup → unload → re-warmup state-machine cycle.**
+    /// Verifies that `unload()` releases the `ModelContainer` cleanly
+    /// enough for a subsequent `warmup()` to repopulate it and a
+    /// follow-up `generate` to succeed. The hardware-gated test is the
+    /// only place this can run end-to-end; the fast-path counterpart
+    /// in `MLXGemmaProviderUnitTests.unloadIdempotentBeforeWarmup`
+    /// covers the never-warmed branch.
+    @Test("warmup → unload → re-warmup → generate cycle", .enabled(if: enabled))
+    func warmupUnloadReWarmupCycle() async throws {
+        guard let dir = Self.modelDirectory() else {
+            Issue.record("model directory not available; set MLX_GEMMA_DIR or run downloader first")
+            return
+        }
+        let provider = MLXGemmaProvider(modelDirectory: dir)
+        try await provider.warmup()
+        await provider.unload()
+        // Second warmup must succeed against the same on-disk weights.
+        try await provider.warmup()
+        let opts = LLMOptions(temperature: 0, topP: 1.0, maxTokens: 8, stop: [])
+        // PHI-free synthetic prompt per testing-conventions.md — we only
+        // assert that `generate` returns without throwing, not on text
+        // shape. Re-warmup soundness is the contract under test, not
+        // generation quality (covered by `deterministicGeneration`).
+        let prompt = "Briefly summarise: morning standup notes."
+        _ = try await provider.generate(prompt: prompt, options: opts)
     }
 
     @Test("greedy generation is deterministic across two calls", .enabled(if: enabled))

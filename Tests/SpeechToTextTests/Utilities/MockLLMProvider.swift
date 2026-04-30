@@ -55,6 +55,7 @@ public actor MockLLMProvider: LLMProvider {
 
     private var behavior: Behavior
     private var callLog: [Call] = []
+    private var unloadCalls: Int = 0
 
     /// Fixed-response mode. Default empty string is useful for tests
     /// that only care whether the consumer called `generate` at all.
@@ -93,6 +94,15 @@ public actor MockLLMProvider: LLMProvider {
         }
     }
 
+    /// Test-fake `unload()` overriding the protocol default. Increments
+    /// `unloadCalls` so consumers can assert wire-through from
+    /// `AppState.removeClinicalNotesModel()` (#120) — the production
+    /// `MLXGemmaProvider.unload()` releases the `ModelContainer` mmap;
+    /// the fake just records that the call landed.
+    public func unload() async {
+        unloadCalls += 1
+    }
+
     public nonisolated func generateStream(
         prompt: String,
         options: LLMOptions
@@ -128,6 +138,12 @@ public actor MockLLMProvider: LLMProvider {
 
     /// Most recent call, or `nil` if none has been made.
     public func lastCall() -> Call? { callLog.last }
+
+    /// Number of times `unload()` has been called against this fake.
+    /// Used by `AppState` integration tests (#120) to assert
+    /// `removeClinicalNotesModel()` releases the container before
+    /// unlinking the directory.
+    public func unloadCallCount() -> Int { unloadCalls }
 
     /// Swap the response mode mid-test.
     public func setBehavior(_ newBehavior: Behavior) {

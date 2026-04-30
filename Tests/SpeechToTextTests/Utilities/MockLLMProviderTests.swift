@@ -184,6 +184,25 @@ struct MockLLMProviderTests {
         // One generate call, regardless of whether we drained the stream.
         #expect(await provider.callCount() == 1)
     }
+
+    // MARK: - Unload
+
+    /// **#120 — `unload()` is recordable on the fake.** Mirrors the
+    /// production contract added to the `LLMProvider` protocol so
+    /// future AppState integration tests can assert call ordering
+    /// between `unload()` and `removeItem(at:)` without needing real
+    /// MLX weights. Every call increments the counter; the protocol
+    /// default is a no-op, but this fake overrides it.
+    @Test("unload increments unloadCallCount on every call")
+    func unload_recordsEachCall() async {
+        let provider = MockLLMProvider(response: "ignored")
+        #expect(await provider.unloadCallCount() == 0)
+        await provider.unload()
+        #expect(await provider.unloadCallCount() == 1)
+        await provider.unload()
+        await provider.unload()
+        #expect(await provider.unloadCallCount() == 3)
+    }
 }
 
 // MARK: - Test fixtures
