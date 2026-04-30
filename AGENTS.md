@@ -209,6 +209,12 @@ pre-commit run --files <specific-file>         # scoped
 ./scripts/build-app.sh --sync                  # rsync to remote Mac
 ./scripts/run-ui-tests.sh
 
+# LLM hardware-eval (golden tests, gated on RUN_MLX_GOLDEN=1)
+./scripts/llm-prefetch.sh                      # populate model dir from manifest
+./scripts/llm-eval.sh                          # prefetch + run golden tests + RSS
+./scripts/llm-reset.sh --dry-run               # inspect what would be wiped
+./scripts/llm-reset.sh --yes                   # clean re-download for first-run UX
+
 # GitHub
 gh issue list --state open --label epic
 gh issue view <N> --comments

@@ -157,6 +157,59 @@ Per #5 acceptance:
 
 ---
 
+## Hardware testing
+
+`MLXGemmaProviderGoldenTests`
+(`Tests/SpeechToTextTests/Services/MLXGemmaProviderTests.swift`) is the
+real-inference suite — gated on `RUN_MLX_GOLDEN=1` and tagged
+`.requiresHardware` so CI's macOS-15 path skips it. It runs on the
+remote Mac (pre-push or nightly) and locally during dev. Three CLI
+helpers under `scripts/` round out the gap that surfaced during the
+v2 cutover (#75) — they avoid the "launch the .app or hand-curate a
+directory" dance every time someone wants to run a golden pass.
+
+| Script | Purpose |
+|---|---|
+| [`scripts/llm-prefetch.sh`](../../scripts/llm-prefetch.sh) | Populate the model directory from `Sources/Resources/Models/<dir>/manifest.json`. Mirrors `ModelDownloader.swift`'s size-check + sha256-verify + atomic `<file>.partial` rename. Idempotent — re-runs are no-ops once every file matches. Honours `MLX_GEMMA_DIR` (full-path override) and `MAC_STT_BUNDLE_ID`. |
+| [`scripts/llm-eval.sh`](../../scripts/llm-eval.sh) | Calls `llm-prefetch.sh`, exports `RUN_MLX_GOLDEN=1`, runs `swift test --filter MLXGemmaProviderGoldenTests`, and reports wall time + peak resident memory via `/usr/bin/time -l`. `--release` and `--no-parallel` mirror `swift test` flags. |
+| [`scripts/llm-reset.sh`](../../scripts/llm-reset.sh) | Removes the on-disk model directory so the next prefetch / first-run starts clean. Interactive by default — prints every path with `du -sh` size before the y/N. `--yes` for scripted use; `--dry-run` for inspection; `--legacy` to also drop the v1 `gemma-3-text-4b-it-4bit/` if it survives outside the .app's auto-purge. |
+
+### Bundle id divergence
+
+`Bundle.main.bundleIdentifier` is `com.speechtotext.app` when the .app
+runs (per `Info.plist` from `scripts/build-app.sh`) and falls back to
+`com.cloudbroker.mac-speech-to-text` when invoked from `swift test` /
+`swift run` (because the test runner's bundle id wins, then the actor's
+fallback at `ModelDownloader.swift:105/116` kicks in). The two paths
+therefore use different `Application Support/<id>/Models/`
+directories. The scripts default to the **test** path so a golden pass
+works out of the box; pass `--bundle-id com.speechtotext.app` (or set
+`MAC_STT_BUNDLE_ID`) when you want the .app's directory instead. A
+bare `llm-reset.sh` clears both.
+
+### Workflow
+
+```bash
+# Clean run from scratch
+./scripts/llm-reset.sh --yes
+./scripts/llm-eval.sh                     # prefetch + golden tests
+
+# Iterate against an existing model (skip the prefetch round-trip)
+./scripts/llm-eval.sh --skip-prefetch
+
+# Point at a model living elsewhere (e.g. mirror / shared volume)
+./scripts/llm-prefetch.sh --dest /Volumes/llm-cache/gemma-4-e4b-it-4bit
+MLX_GEMMA_DIR=/Volumes/llm-cache/gemma-4-e4b-it-4bit \
+  ./scripts/llm-eval.sh --skip-prefetch
+```
+
+Per-token latency, deterministic-generation parity, and warmup-time
+budgets are surfaced inside the test's own `#expect` blocks — the
+script's role is only to wrap the env + IO concerns and report
+wall-time / RSS at the seam.
+
+---
+
 ## Privacy
 
 - The LLM is in-process; no weights or prompts leave the device.
