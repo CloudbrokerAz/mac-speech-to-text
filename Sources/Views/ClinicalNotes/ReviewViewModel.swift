@@ -164,6 +164,15 @@ final class ReviewViewModel {
     /// "set up Cliniko in Settings" message in that case.
     @ObservationIgnored private let makePatientPickerViewModel: () async -> PatientPickerViewModel?
 
+    /// Closure invoked when the practitioner taps "Open Clinical Notes
+    /// Settings" on the `model_unavailable` fallback banner (#104). Routed
+    /// through a closure (rather than reaching for
+    /// `MainWindowController.shared` directly) so unit tests can verify
+    /// the navigation intent without wiring a real `AppKit` window.
+    /// Default implementation mirrors the `AppState.openClinikoSettings`
+    /// pattern at `Sources/SpeechToTextApp/AppState.swift:676`.
+    @ObservationIgnored private let openClinicalNotesSettingsHandler: @MainActor () -> Void
+
     @ObservationIgnored private let now: @Sendable () -> Date
     @ObservationIgnored private let reAddTargetWindow: TimeInterval
     @ObservationIgnored private let logger = Logger(
@@ -193,7 +202,10 @@ final class ReviewViewModel {
         reAddTargetWindow: TimeInterval = 5.0,
         now: @escaping @Sendable () -> Date = { Date() },
         makeExportFlowViewModel: @escaping () async -> ExportFlowViewModel? = { nil },
-        makePatientPickerViewModel: @escaping () async -> PatientPickerViewModel? = { nil }
+        makePatientPickerViewModel: @escaping () async -> PatientPickerViewModel? = { nil },
+        openClinicalNotesSettingsHandler: @escaping @MainActor () -> Void = {
+            MainWindowController.shared.showSection(.clinicalNotes)
+        }
     ) {
         self.sessionStore = sessionStore
         self.manipulationsRepo = manipulations
@@ -201,6 +213,7 @@ final class ReviewViewModel {
         self.now = now
         self.makeExportFlowViewModel = makeExportFlowViewModel
         self.makePatientPickerViewModel = makePatientPickerViewModel
+        self.openClinicalNotesSettingsHandler = openClinicalNotesSettingsHandler
     }
 
     // MARK: - Manipulations accessor
@@ -641,6 +654,20 @@ final class ReviewViewModel {
         guard patientPickerSheet != nil else { return }
         logger.info("ReviewViewModel: patient picker dismissed")
         patientPickerSheet = nil
+    }
+
+    /// Deep-link to Settings → Clinical Notes from the
+    /// `model_unavailable` fallback banner (#104). Routes through the
+    /// closure-injected handler so tests can verify the navigation
+    /// intent without instantiating a real `MainWindowController`.
+    ///
+    /// PHI: structural log only — the fallback reason code is a
+    /// `String` constant on `ClinicalNotesProcessor` (never PHI).
+    func openClinicalNotesSettings() {
+        logger.info(
+            "ReviewViewModel: deep-link to Clinical Notes Settings (reason=\(self.fallbackReasonCode ?? "nil", privacy: .public))"
+        )
+        openClinicalNotesSettingsHandler()
     }
 }
 

@@ -76,6 +76,13 @@ actor ClinicalNotesProcessor {
     /// the ReviewScreen surfaces lives in a single namespace.
     static let reasonModelUnavailable = "model_unavailable"
 
+    /// Structural sentinel emitted by `AppState` when the user actively
+    /// cancelled the model download / warmup (vs. it failing for other
+    /// reasons). The recovery affordance is the same as
+    /// `reasonModelUnavailable` (deep-link to Settings), but the banner
+    /// copy is more honest — the model isn't broken, it's half-fetched.
+    static let reasonModelDownloadCancelled = "model_download_cancelled"
+
     /// Structural sentinel emitted by `ReviewViewModel.loadState` (NOT
     /// by the processor) when the active `ClinicalSession` was cleared
     /// while the Review window was still on screen — typically the

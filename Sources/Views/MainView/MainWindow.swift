@@ -25,6 +25,12 @@ final class MainWindow: NSObject, NSWindowDelegate {
     private let settingsService: SettingsService
     private let permissionService: PermissionService
 
+    /// Optional Gemma 4 model status surface (#104). Routed through
+    /// `MainView` → `ClinicalNotesSection`. `nil` for tests + the
+    /// fallback `MainWindowController.shared` constructions where
+    /// AppState hasn't called `configure(...)` yet.
+    private let modelStatusViewModel: ClinicalNotesModelStatusViewModel?
+
     /// Window dimensions
     private static let windowWidth: CGFloat = 900
     private static let windowHeight: CGFloat = 820
@@ -37,11 +43,13 @@ final class MainWindow: NSObject, NSWindowDelegate {
     init(
         viewModel: MainViewModel = MainViewModel(),
         settingsService: SettingsService = SettingsService(),
-        permissionService: PermissionService = PermissionService()
+        permissionService: PermissionService = PermissionService(),
+        modelStatusViewModel: ClinicalNotesModelStatusViewModel? = nil
     ) {
         self.viewModel = viewModel
         self.settingsService = settingsService
         self.permissionService = permissionService
+        self.modelStatusViewModel = modelStatusViewModel
         super.init()
     }
 
@@ -66,7 +74,8 @@ final class MainWindow: NSObject, NSWindowDelegate {
         let mainView = MainView(
             viewModel: viewModel,
             settingsService: settingsService,
-            permissionService: permissionService
+            permissionService: permissionService,
+            modelStatusViewModel: modelStatusViewModel
         )
 
         // Create the window with standard macOS chrome
@@ -201,6 +210,13 @@ final class MainWindowController {
     /// Observer for window close notifications
     private var windowCloseObserver: NSObjectProtocol?
 
+    /// Cached Gemma 4 model status VM (#104). Captured once via
+    /// `configure(modelStatusViewModel:)` from `AppState.init` and threaded
+    /// into every `MainWindow` constructed here. Defaults to `nil` so
+    /// any pre-configure window construction (tests, defensive paths)
+    /// still works — the `ClinicalNotesSection` row hides when this is nil.
+    private var modelStatusViewModel: ClinicalNotesModelStatusViewModel?
+
     // MARK: - Initialization
 
     private init() {
@@ -224,10 +240,31 @@ final class MainWindowController {
 
     // MARK: - Public Methods
 
+    /// Wire the controller with cross-window dependencies that can't be
+    /// reached at MainWindow's construction site (tests, AppDelegate).
+    /// Called once by `AppState.init`; subsequent calls overwrite, mirroring
+    /// `ReviewWindowController.shared.configure(...)`.
+    ///
+    /// A second call replaces the cached VM, but any already-presented
+    /// `MainWindow` was constructed with the first VM and continues to
+    /// bind against that — so a clobber after a window is open silently
+    /// goes stale on screen. Surface a structural warning so a regression
+    /// here is debuggable; in production this is a singleton path called
+    /// exactly once from `AppState.init`.
+    func configure(modelStatusViewModel: ClinicalNotesModelStatusViewModel) {
+        if self.modelStatusViewModel != nil,
+           self.modelStatusViewModel !== modelStatusViewModel {
+            AppLogger.app.warning(
+                "MainWindowController.configure: replacing live modelStatusViewModel — open windows may bind to stale VM"
+            )
+        }
+        self.modelStatusViewModel = modelStatusViewModel
+    }
+
     /// Show the main window
     func showWindow() {
         if mainWindow == nil {
-            mainWindow = MainWindow()
+            mainWindow = makeMainWindow()
         }
         mainWindow?.show()
     }
@@ -246,7 +283,7 @@ final class MainWindowController {
     /// Toggle main window visibility
     func toggleWindow() {
         if mainWindow == nil {
-            mainWindow = MainWindow()
+            mainWindow = makeMainWindow()
         }
         mainWindow?.toggle()
     }
@@ -259,7 +296,7 @@ final class MainWindowController {
     /// Navigate to a specific section and show window
     func showSection(_ section: SidebarSection) {
         if mainWindow == nil {
-            mainWindow = MainWindow()
+            mainWindow = makeMainWindow()
         }
         mainWindow?.navigateTo(section)
     }
@@ -268,6 +305,15 @@ final class MainWindowController {
     /// Called when user presses Cmd+, or clicks Settings
     func showSettings() {
         showSection(.general)
+    }
+
+    // MARK: - Private
+
+    /// Construct a `MainWindow` with the configured cross-window
+    /// dependencies threaded in. Pulled out so every `mainWindow == nil`
+    /// branch above gets the same wiring.
+    private func makeMainWindow() -> MainWindow {
+        MainWindow(modelStatusViewModel: modelStatusViewModel)
     }
 }
 

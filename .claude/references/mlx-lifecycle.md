@@ -57,12 +57,14 @@ on Apple Silicon. (`mlx-swift-examples` was deprecated in
   CI), (b) slow every notarisation, (c) force a full new DMG for every
   model swap. Mirrors the existing `FluidAudioService` pattern
   (`AsrModels.downloadAndLoad(version: .v3)`).
-- **Trigger UX**: today the download fires lazily on the first
-  Generate-Notes tap (with the existing empty-draft fallback if it
-  fails). A follow-up PR will move the trigger to the Settings
-  Clinical-Notes-Mode toggle so the user opts in *before* the first
-  recording, and surfaces progress via `AppState.llmDownloadProgress`
-  / `llmDownloadState`.
+- **Trigger UX**: the download is triggered explicitly from Settings →
+  Clinical Notes (the model-status row's "Download model" button) so the
+  practitioner opts in to the 5.25 GB before recording. Progress is
+  surfaced via `AppState.llmDownloadProgress` / `llmDownloadState`,
+  mirrored into `ClinicalNotesModelStatusViewModel`. If a Generate Notes
+  tap lands while the model is `.idle` or `.failed`, the Review screen
+  renders a `model_unavailable` fallback banner with a deep-link back to
+  Settings — the silent multi-GB block on first tap is gone.
 - **No HF auth needed** for `mlx-community` public weights, so the
   downloader uses `URLSession` with no token plumbing.
 

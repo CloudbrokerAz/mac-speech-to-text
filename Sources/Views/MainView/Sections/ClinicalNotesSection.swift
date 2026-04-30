@@ -21,6 +21,12 @@ struct ClinicalNotesSection: View {
 
     let settingsService: SettingsService
 
+    /// Optional Gemma 4 download status surface (#104, Deliverable A).
+    /// `nil` in render-only test fixtures and historical previews so
+    /// existing tests don't have to wire up the production VM. AppState
+    /// passes a real instance through `MainWindowController.configure(...)`.
+    let modelStatusViewModel: ClinicalNotesModelStatusViewModel?
+
     // MARK: - State
 
     @State private var settings: UserSettings
@@ -31,10 +37,12 @@ struct ClinicalNotesSection: View {
 
     init(
         viewModel: ClinicalNotesSectionViewModel,
-        settingsService: SettingsService = SettingsService()
+        settingsService: SettingsService = SettingsService(),
+        modelStatusViewModel: ClinicalNotesModelStatusViewModel? = nil
     ) {
         self.viewModel = viewModel
         self.settingsService = settingsService
+        self.modelStatusViewModel = modelStatusViewModel
         self._settings = State(initialValue: settingsService.load())
     }
 
@@ -54,6 +62,10 @@ struct ClinicalNotesSection: View {
                 }
 
                 connectionStatusCard
+
+                if showModelStatusRow, let modelStatusViewModel {
+                    ClinicalNotesModelStatusRow(viewModel: modelStatusViewModel)
+                }
 
                 Divider().padding(.vertical, 4)
 
@@ -120,6 +132,15 @@ struct ClinicalNotesSection: View {
     /// Cliniko credentials are present.
     private var showShortcutRow: Bool {
         settings.general.clinicalNotesModeEnabled && viewModel.hasStoredCredentials
+    }
+
+    /// Whether the Gemma 4 model status row should appear (#104). Gated on
+    /// Clinical Notes Mode being on — the model is only relevant once the
+    /// feature is enabled. Deliberately *not* gated on Cliniko credentials:
+    /// model and credentials are orthogonal pre-conditions for the SOAP
+    /// pipeline and the user can prepare them in any order.
+    private var showModelStatusRow: Bool {
+        settings.general.clinicalNotesModeEnabled
     }
 
     // MARK: - Section Header
