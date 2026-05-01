@@ -228,9 +228,14 @@ struct PatientPickerViewModelTests {
             debounceMillis: 0
         )
 
-        vm.selectAppointment(id: 5678)
-        #expect(store.active?.selectedAppointmentID == OpaqueClinikoID(5678))
-        #expect(vm.selectedAppointmentID == 5678)
+        vm.selectAppointment(id: "5678")
+        // `OpaqueClinikoID(5678)` (Int init, stringifies internally) and
+        // `OpaqueClinikoID("5678")` (String init) both produce
+        // `rawValue: "5678"`, so the equality holds across the #129
+        // boundary flip. The `String` literal documents the new
+        // wire-shape input.
+        #expect(store.active?.selectedAppointmentID == OpaqueClinikoID("5678"))
+        #expect(vm.selectedAppointmentID == "5678")
 
         vm.selectAppointment(id: nil)
         #expect(store.active?.selectedAppointmentID == nil)
@@ -245,7 +250,7 @@ struct PatientPickerViewModelTests {
         store.start(from: RecordingSession.empty())
 
         let appointment = Appointment(
-            id: 9000,
+            id: "9000",
             startsAt: Date(timeIntervalSince1970: 1_700_000_000),
             endsAt: Date(timeIntervalSince1970: 1_700_001_800)
         )
@@ -266,6 +271,106 @@ struct PatientPickerViewModelTests {
         } else {
             Issue.record("expected .loaded, got \(vm.appointmentPhase)")
         }
+    }
+
+    /// Regression pin for #129. After `.loaded` lands, the picker
+    /// pre-selects the appointment most likely to be the one the
+    /// recording is for: a slot containing the recording's start time
+    /// wins outright; otherwise the appointment whose `startsAt` is
+    /// nearest. Skips pre-selection if the user already picked
+    /// manually during the load.
+    @Test("after .loaded, the picker pre-selects the appointment most likely to be this recording's")
+    func appointmentPhase_preSelectsMostLikelyMatch() async throws {
+        let recordingStart = Date(timeIntervalSince1970: 1_700_000_900)  // 09:15
+        let store = SessionStore()
+        // RecordingSession's startTime is what the heuristic anchors
+        // on. Construct one explicitly so the test isn't subject to
+        // wall-clock drift.
+        store.start(from: RecordingSession(startTime: recordingStart))
+
+        let earlier = Appointment(
+            id: "earlier",
+            startsAt: Date(timeIntervalSince1970: 1_700_000_000),     // 09:00
+            endsAt: Date(timeIntervalSince1970: 1_700_001_800)        // 09:30 — contains 09:15
+        )
+        let later = Appointment(
+            id: "later",
+            startsAt: Date(timeIntervalSince1970: 1_700_007_200),     // 11:00
+            endsAt: Date(timeIntervalSince1970: 1_700_009_000)        // 11:30
+        )
+        let patients = FakePatientSearcher(result: .success([]))
+        let appointments = FakeAppointmentLoader(result: .success([later, earlier]))
+        let vm = PatientPickerViewModel(
+            patientService: patients,
+            appointmentService: appointments,
+            sessionStore: store,
+            debounceMillis: 0
+        )
+
+        vm.selectPatient(Patient(id: "1", firstName: "S", lastName: "P"))
+        await vm.currentAppointmentTaskForTests?.value
+
+        // Slot containing recordingStart wins — the doctor pressed
+        // record DURING the 09:00–09:30 slot, so that's the one the
+        // note attaches to.
+        #expect(vm.selectedAppointmentID == "earlier")
+        #expect(store.active?.selectedAppointmentID == OpaqueClinikoID("earlier"))
+    }
+
+    /// Mirror pin: with no slot containing `recordingStart`, the
+    /// nearest-startsAt appointment wins.
+    @Test("after .loaded, fallback to nearest-startsAt when no slot contains recordingStart")
+    func appointmentPhase_preSelects_nearestStartsAt() async throws {
+        let recordingStart = Date(timeIntervalSince1970: 1_700_005_400)  // 10:30
+        let store = SessionStore()
+        store.start(from: RecordingSession(startTime: recordingStart))
+
+        let earlier = Appointment(
+            id: "earlier",
+            startsAt: Date(timeIntervalSince1970: 1_700_000_000),     // 09:00
+            endsAt: Date(timeIntervalSince1970: 1_700_001_800)        // 09:30
+        )
+        let later = Appointment(
+            id: "later",
+            startsAt: Date(timeIntervalSince1970: 1_700_007_200),     // 11:00 — closer to 10:30
+            endsAt: Date(timeIntervalSince1970: 1_700_009_000)        // 11:30
+        )
+        let patients = FakePatientSearcher(result: .success([]))
+        let appointments = FakeAppointmentLoader(result: .success([earlier, later]))
+        let vm = PatientPickerViewModel(
+            patientService: patients,
+            appointmentService: appointments,
+            sessionStore: store,
+            debounceMillis: 0
+        )
+
+        vm.selectPatient(Patient(id: "1", firstName: "S", lastName: "P"))
+        await vm.currentAppointmentTaskForTests?.value
+
+        #expect(vm.selectedAppointmentID == "later")
+    }
+
+    /// Negative pin: with an empty `.loaded` array, no pre-selection
+    /// happens. The picker stays "no appointment / general note" by
+    /// default.
+    @Test("after .loaded with empty list, no pre-selection happens")
+    func appointmentPhase_emptyList_noPreSelection() async throws {
+        let store = SessionStore()
+        store.start(from: RecordingSession(startTime: Date(timeIntervalSince1970: 1_700_000_000)))
+
+        let patients = FakePatientSearcher(result: .success([]))
+        let appointments = FakeAppointmentLoader(result: .success([]))
+        let vm = PatientPickerViewModel(
+            patientService: patients,
+            appointmentService: appointments,
+            sessionStore: store,
+            debounceMillis: 0
+        )
+
+        vm.selectPatient(Patient(id: "1", firstName: "S", lastName: "P"))
+        await vm.currentAppointmentTaskForTests?.value
+
+        #expect(vm.selectedAppointmentID == nil)
     }
 
     @Test("appointment service error surfaces as .error")
@@ -305,7 +410,7 @@ struct PatientPickerViewModelTests {
         )
 
         vm.selectPatient(Patient(id: "1", firstName: "S", lastName: "P"))
-        vm.selectAppointment(id: 9)
+        vm.selectAppointment(id: "9")
         vm.clearSelection()
 
         #expect(vm.selectedPatient == nil)

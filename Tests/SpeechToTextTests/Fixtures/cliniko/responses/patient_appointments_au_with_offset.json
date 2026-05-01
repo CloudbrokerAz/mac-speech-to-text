@@ -1,0 +1,32 @@
+{
+  "individual_appointments": [
+    {
+      "id": "7001",
+      "starts_at": "2026-04-25T19:00:00+10:00",
+      "ends_at": "2026-04-25T19:30:00+10:00",
+      "cancelled_at": null
+    },
+    {
+      "id": "7002",
+      "starts_at": "2026-04-25T19:00:00+1000",
+      "ends_at": "2026-04-25T19:30:00+1000",
+      "cancelled_at": null
+    },
+    {
+      "id": "7003",
+      "starts_at": "2026-04-25T09:00:00.123Z",
+      "ends_at": "2026-04-25T09:30:00.456Z",
+      "cancelled_at": null
+    },
+    {
+      "id": "7004",
+      "starts_at": "2026-04-25T19:00:00.123+10:00",
+      "ends_at": "2026-04-25T19:30:00.456+10:00",
+      "cancelled_at": null
+    }
+  ],
+  "total_entries": 4,
+  "links": {
+    "self": "https://api.au1.cliniko.com/v1/individual_appointments?q%5B%5D=patient_id%3A%3D1001"
+  }
+}

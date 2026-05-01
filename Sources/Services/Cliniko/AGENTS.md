@@ -85,6 +85,46 @@ double-write a clinical record. The full table lives in
 [`cliniko-api.md`](../../../.claude/references/cliniko-api.md)
 §"Retry policy".
 
+### Cliniko date offsets — do NOT use `.iso8601` decoder strategy
+
+Cliniko's AU shards return ISO8601 timestamps in **three** distinct
+shapes the global `JSONDecoder.DateDecodingStrategy.iso8601` does not
+all handle:
+
+- `2026-04-25T09:00:00Z` (UTC) — works.
+- `2026-04-25T19:00:00+10:00` (RFC3339, with colon) — works.
+- `2026-04-25T19:00:00+1000` (ISO8601 basic offset, no colon) —
+  **rejected by `ISO8601DateFormatter` regardless of options**.
+- Plus any of the above with fractional seconds (`2026-04-25T09:00:00.123Z`)
+  which require `[.withInternetDateTime, .withFractionalSeconds]` —
+  also not the strategy default.
+
+**Rule** (#129): for any new endpoint that returns Cliniko-side
+datetimes, decode the wire field as raw `String` in the DTO and parse
+it through `ClinikoDateParser` in the `toDomainModel(parser:)`
+mapping. Do NOT add `.iso8601` (or any custom date strategy) to
+`ClinikoClient.defaultDecoder` — every endpoint that already worked
+(Patient `date_of_birth`, audit timestamps) does so because the field
+is `String`, not `Date`. Adding a strategy would cascade into hidden
+parse failures on the AU `+1000` form and silently degrade existing
+endpoints.
+
+The `ClinikoAppointmentService` flow is the canonical example:
+`Sources/Models/ClinikoAppointmentDTO.swift` decodes `starts_at` /
+`ends_at` / `cancelled_at` / `archived_at` as `String?`, then
+`ClinikoAppointmentService.recentAndTodayAppointments(...)` calls
+`dto.toDomainModel(parser:)` to produce `[Appointment]` with parsed
+`Date` fields.
+
+`ClinikoClient.defaultDecoder` already sets `.iso8601` as its date
+strategy. Every Cliniko endpoint we ship today decodes datetimes as
+`String` in the DTO and parses via `ClinikoDateParser`, so the
+strategy never fires — but don't *rely* on this. Don't *remove* the
+strategy either: removing it would silently change behaviour for any
+future `Date`-typed field added without a paired code review. The
+right pattern for a new `Date` field is to add it as `String` in the
+DTO and parse explicitly.
+
 ### Shard handling
 
 **Never** hardcode `api.au1.cliniko.com` (or any subdomain) anywhere

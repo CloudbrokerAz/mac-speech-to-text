@@ -21,21 +21,13 @@ public struct PatientSearchResponse: Decodable, Sendable, Equatable {
     }
 }
 
-public struct AppointmentListResponse: Decodable, Sendable, Equatable {
-    public let appointments: [Appointment]
-    public let totalEntries: Int?
-    public let links: ClinikoPaginationLinks?
-
-    public init(
-        appointments: [Appointment],
-        totalEntries: Int? = nil,
-        links: ClinikoPaginationLinks? = nil
-    ) {
-        self.appointments = appointments
-        self.totalEntries = totalEntries
-        self.links = links
-    }
-}
+// Note: `AppointmentListResponse` was removed in #129. The appointment
+// list now decodes through `ClinikoAppointmentListDTO` (wire-shape) and
+// maps to `[Appointment]` via `ClinikoAppointmentDTO.toDomainModel(parser:)`
+// at the service layer. Cliniko's `/individual_appointments` envelope key
+// is `individual_appointments`, not `appointments` — the previous shape
+// failed to decode any populated response. See the DTO file at
+// `Sources/Models/ClinikoAppointmentDTO.swift`.
 
 /// `links` envelope shared by every Cliniko list endpoint. We don't follow
 /// `next` today — keep the type loose (`URL?`) so a future paginate helper

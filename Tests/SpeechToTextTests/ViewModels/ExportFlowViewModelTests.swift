@@ -206,6 +206,38 @@ struct ExportFlowViewModelTests {
         #expect(onSuccessCalled, "onSuccess hook fires on success")
     }
 
+    /// Regression pin for #129's `appointmentIDMalformed` guard. After
+    /// `Appointment.id` flipped to `String` (Cliniko's documented
+    /// `string($int64)` shape), a non-numeric `OpaqueClinikoID.rawValue`
+    /// could silently degrade the export to a general note (losing
+    /// the appointment linkage with no user-visible signal). Same
+    /// class of bug #127's `patientIDMalformed` guard closed off for
+    /// the patient boundary.
+    @Test("confirm with malformed appointment id fails with appointmentIDMalformed")
+    func confirm_malformedAppointmentID_fails() {
+        let store = SessionStore()
+        store.start(from: RecordingSession(language: "en", state: .completed))
+        store.setSelectedPatient(id: OpaqueClinikoID(1001), displayName: "Sample")
+        store.setDraftNotes(StructuredNotes(subjective: "s"))
+        // Appointment id with a non-numeric rawValue. Production never
+        // produces this (Cliniko emits numeric strings) but Codable
+        // round-trip from a tampered audit ledger or a future Cliniko
+        // shape change would. The `.appointment(...)` shape (vs
+        // `.unset` / `.general`) is what triggers the guard.
+        store.setSelectedAppointment(id: OpaqueClinikoID(rawValue: "not-numeric"))
+        let exporter = makeExporter { _ in (HTTPURLResponse(), Data()) }
+        let viewModel = makeViewModel(store: store, exporter: exporter)
+        viewModel.enterConfirming()
+
+        viewModel.confirm()
+
+        if case .failed(.sessionState(.appointmentIDMalformed)) = viewModel.state {
+            // expected
+        } else {
+            Issue.record("expected .failed(.sessionState(.appointmentIDMalformed)), got \(viewModel.state)")
+        }
+    }
+
     @Test("confirm with .unset appointment fails with appointmentUnresolved")
     func confirm_unsetAppointment_fails() {
         let store = SessionStore()

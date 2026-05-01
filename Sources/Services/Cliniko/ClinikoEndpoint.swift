@@ -26,8 +26,18 @@ public enum ClinikoEndpoint: Sendable, Equatable {
     /// `patientSearchQueryItems` for the splitting strategy.
     case patientSearch(query: String)
 
-    /// `GET /patients/{id}/appointments?from={ISO8601}&to={ISO8601}` —
-    /// recent + today's appointments for the chosen patient (#9).
+    /// `GET /individual_appointments?q[]=patient_id:=<id>&q[]=starts_at:>=<from>&q[]=starts_at:<=<to>&q[]=cancelled_at:!?&sort=starts_at&order=desc&per_page=50`
+    /// — recent + today's appointments for the chosen patient (#9).
+    /// Switched from the previous `/patients/{id}/appointments` shape in
+    /// #129: the per-patient shorthand returned a different envelope shape
+    /// (`appointments` vs `individual_appointments`) and didn't accept the
+    /// `q[]=cancelled_at:!?` filter that lets the picker drop cancelled
+    /// rows server-side. The new path also takes server-side
+    /// `sort=starts_at&order=desc` so the most-recent slot lands first.
+    /// Defensive client-side filtering + sorting still runs in
+    /// `ClinikoAppointmentService` (`!isCancelled`, descending re-sort).
+    /// Mirrors the reference impl in
+    /// `CloudbrokerAz/epc-letter-generation/Sources/Services/Cliniko/ClinikoAppointmentService.swift`.
     case patientAppointments(patientID: String, from: Date, to: Date)
 
     /// `POST /treatment_notes` with a JSON body — #10 will own the codable
@@ -58,7 +68,11 @@ public enum ClinikoEndpoint: Sendable, Equatable {
         switch self {
         case .usersMe: return "/user"
         case .patientSearch: return "/patients?q[]={filter}"
-        case .patientAppointments: return "/patients/:id/appointments"
+        // Path template is PHI-safe — no bound IDs. The actual filters
+        // (patient_id, starts_at window, cancelled_at) ride in the
+        // query items. Logging this template at `privacy: .public` is
+        // safe; logging the resolved URL is not.
+        case .patientAppointments: return "/individual_appointments?q[]={patient_id}&q[]={starts_at}"
         case .createTreatmentNote: return "/treatment_notes"
         }
     }
@@ -133,15 +147,11 @@ public enum ClinikoEndpoint: Sendable, Equatable {
             return "user"
         case .patientSearch:
             return "patients"
-        case .patientAppointments(let patientID, _, _):
-            // Encode weirdness inside the bound id (spaces, slashes, etc.).
-            // We start from `urlPathAllowed` and *remove* "/" so an embedded
-            // slash in the id can't accidentally introduce a new path
-            // segment. Cliniko ids are numeric in practice; this is
-            // defence-in-depth.
-            let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
-            let encoded = patientID.addingPercentEncoding(withAllowedCharacters: allowed) ?? patientID
-            return "patients/\(encoded)/appointments"
+        case .patientAppointments:
+            // Patient ID lives in `q[]=patient_id:=...` query value,
+            // not in the path. `URLComponents` percent-encodes query
+            // values for us — see `queryItems` arm.
+            return "individual_appointments"
         case .createTreatmentNote:
             return "treatment_notes"
         }
@@ -159,10 +169,37 @@ public enum ClinikoEndpoint: Sendable, Equatable {
             // hygiene.
             let items = ClinikoEndpoint.patientSearchQueryItems(query: query)
             return items.isEmpty ? nil : items
-        case .patientAppointments(_, let from, let to):
+        case .patientAppointments(let patientID, let from, let to):
+            // Cliniko's `/individual_appointments` filter syntax
+            // (`q[]=field:operator value`) — verified against the
+            // reference impl in `epc-letter-generation`. We:
+            //
+            // - bind the patient ID server-side so a tampered client
+            //   cannot list-all (`patient_id:=` is the equality op);
+            // - constrain the window via `starts_at:>=` / `starts_at:<=`
+            //   in UTC (the helper at `ClinikoEndpoint.iso8601(_:)` emits
+            //   `Z`-form, which Cliniko's filter parser handles);
+            // - drop cancelled rows server-side via `cancelled_at:!?`
+            //   (Cliniko's "is null" filter — `:!?` reads as "no value").
+            //   `archived_at` and `did_not_arrive` are NOT filtered
+            //   server-side (the reference impl doesn't, and we haven't
+            //   verified Cliniko accepts those filter shapes); the
+            //   service layer drops them client-side via
+            //   `Appointment.isCancelled`;
+            // - sort server-side `starts_at desc` so the picker can
+            //   render in display order without an extra sort hop;
+            // - cap `per_page=50` so a runaway window can't blow the
+            //   response budget. The picker doesn't paginate today
+            //   (UX would benefit more from a window narrowing than from
+            //   a "load more" affordance).
             return [
-                URLQueryItem(name: "from", value: ClinikoEndpoint.iso8601(from)),
-                URLQueryItem(name: "to", value: ClinikoEndpoint.iso8601(to))
+                URLQueryItem(name: "q[]", value: "patient_id:=\(patientID)"),
+                URLQueryItem(name: "q[]", value: "starts_at:>=\(ClinikoEndpoint.iso8601(from))"),
+                URLQueryItem(name: "q[]", value: "starts_at:<=\(ClinikoEndpoint.iso8601(to))"),
+                URLQueryItem(name: "q[]", value: "cancelled_at:!?"),
+                URLQueryItem(name: "sort", value: "starts_at"),
+                URLQueryItem(name: "order", value: "desc"),
+                URLQueryItem(name: "per_page", value: "50")
             ]
         }
     }

@@ -429,6 +429,8 @@ struct ExportFlowView: View {
             return "Pick a patient before exporting."
         case .sessionState(.patientIDMalformed):
             return "Internal error. Cancel and re-record."
+        case .sessionState(.appointmentIDMalformed):
+            return "Internal error with the appointment ID. Re-pick the appointment, or choose 'No appointment / general note'."
         case .sessionState(.appointmentUnresolved):
             return "Choose an appointment (or 'No appointment / general note') before confirming."
         case .sessionState(.noDraftNotes):
