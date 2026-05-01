@@ -144,7 +144,8 @@ struct ExportFlowViewModelTests {
     /// silently mis-attribute a timeout to a logic regression.
     private func waitForTerminal(
         _ viewModel: ExportFlowViewModel,
-        timeout: TimeInterval = 5.0
+        timeout: TimeInterval = 5.0,
+        sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while true {
@@ -156,10 +157,13 @@ struct ExportFlowViewModelTests {
                 // landing on the very last loop iteration is not
                 // misreported as a timeout.
                 if Date() >= deadline { break }
-                try await Task.sleep(nanoseconds: 5_000_000)
+                try await Task.sleep(for: .milliseconds(5))
             }
         }
-        Issue.record("waitForTerminal timed out after \(timeout)s; state=\(viewModel.state)")
+        Issue.record(
+            "waitForTerminal timed out after \(timeout)s; state=\(viewModel.state)",
+            sourceLocation: sourceLocation
+        )
     }
 
     // MARK: - Confirming state
@@ -596,7 +600,8 @@ struct ExportFlowViewModelTests {
     private func assertConfirmFailsWith(
         _ expected: ExportFailure,
         status: Int,
-        body: Data = Data()
+        body: Data = Data(),
+        sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
         try await runGated(responder: { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
@@ -607,13 +612,16 @@ struct ExportFlowViewModelTests {
             let viewModel = self.makeViewModel(store: store, exporter: exporter)
             viewModel.enterConfirming()
             viewModel.confirm()
-            try await self.waitForTerminal(viewModel)
+            try await self.waitForTerminal(viewModel, sourceLocation: sourceLocation)
 
             guard case .failed(let actual) = viewModel.state else {
-                Issue.record("expected .failed(\(expected)), got \(viewModel.state)")
+                Issue.record(
+                    "expected .failed(\(expected)), got \(viewModel.state)",
+                    sourceLocation: sourceLocation
+                )
                 return
             }
-            #expect(actual == expected)
+            #expect(actual == expected, sourceLocation: sourceLocation)
         }
     }
 }
