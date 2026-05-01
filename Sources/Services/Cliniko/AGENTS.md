@@ -157,6 +157,17 @@ route — auto-detection is a possible follow-up.
   hand-rolled, zero-dependency `Sendable` `URLProtocol` subclass.
   Fixtures live under
   `Tests/SpeechToTextTests/Fixtures/cliniko/{requests,responses}/`.
+- **HTTP from a Swift Testing `@Suite`**: also wrap each `@Test` body
+  in `try await URLProtocolStubGate.shared.withGate { ... }`
+  (`Tests/SpeechToTextTests/Utilities/URLProtocolStubGate.swift`).
+  `URLProtocolStub` is a process-wide singleton and Swift Testing's
+  `.serialized` trait is suite-local, so without the gate two HTTP-
+  stubbed Swift Testing suites race across the suite boundary (PR #84
+  CI commit `964d877`). XCTest classes here (`ClinikoClientTests`,
+  `TreatmentNoteExporterTests`) do **not** need the gate; XCTest
+  scheduling has coexisted with Swift Testing safely since #20.
+  `Tests/SpeechToTextTests/Services/Cliniko/ClinikoStatusThreadingTests.swift`
+  is the reference adopter — issue #85.
 - **Credentials**: use `InMemorySecureStore` (actor fake, never imports
   `Security`) for `ClinikoCredentialStore` tests.
 - **Real Cliniko / real Keychain**: **never** in CI. Goldens that need

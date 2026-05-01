@@ -60,12 +60,71 @@ section).
 | Dependency | Test-only replacement | File |
 |---|---|---|
 | HTTP (`URLSession`) | `URLProtocolStub.install(_:)` returning a `URLSessionConfiguration` | `Tests/SpeechToTextTests/Utilities/URLProtocolStub.swift` |
+| HTTP cross-suite serialisation | `URLProtocolStubGate.shared.withGate(_:)` (Swift Testing only) | `Tests/SpeechToTextTests/Utilities/URLProtocolStubGate.swift` |
 | HTTP response fixtures | `HTTPStubFixture.load(_:)` / `loadJSON(_:,_:)` loading from `Tests/SpeechToTextTests/Fixtures/` | `Tests/SpeechToTextTests/Utilities/HTTPStubFixture.swift` |
 | Keychain (`SecureStore`) | `InMemorySecureStore` — actor-isolated `[String: Data]`, never imports `Security` | `Tests/SpeechToTextTests/Utilities/InMemorySecureStore.swift` |
 | LLM (`LLMProvider` — once #3 lands) | `MockLLMProvider` with canned prompt-hash → response lookup | pending #3 |
 
 Real Keychain / real LLM inference are **never** exercised in CI. They
 run locally or pre-push on a real Mac.
+
+---
+
+## URLProtocolStub process-wide gate
+
+`URLProtocolStub` keeps a single global `currentResponder`. Swift
+Testing's `.serialized` trait is **suite-local** — two Swift Testing
+suites that both stub HTTP race across the suite boundary because the
+scheduler still parallelises between suites. The race manifests as one
+suite's `defer { reset() }` clobbering another suite's responder
+mid-flight (PR #84 CI commit `964d877`: a Hugging Face 401 against
+`ModelDownloaderTests.happyPathDownload`).
+
+`URLProtocolStubGate` (issue #85) is the authoritative process-wide
+serialisation point. Adoption rule:
+
+- **Always** wrap a Swift Testing `@Test` body in
+  `try await URLProtocolStubGate.shared.withGate { ... }` if it calls
+  `URLProtocolStub.install(_:)` / `installScoped(_:)`.
+- **Never** rely on `.serialized` alone for HTTP-stubbed Swift Testing
+  suites. Suite-local serialisation does not protect against
+  cross-suite races.
+- XCTest test classes do **not** need to adopt the gate — XCTest
+  scheduling has empirically coexisted with Swift Testing since #20
+  without flakes. Mixing frameworks is fine; mixing Swift Testing
+  suites is not (until both have the gate).
+
+```swift
+@Suite("My HTTP suite", .tags(.fast))
+struct MyHTTPSuite {
+    @Test func happyPath() async throws {
+        try await URLProtocolStubGate.shared.withGate {
+            let config = URLProtocolStub.install { request in
+                // ...build response...
+            }
+            defer { URLProtocolStub.reset() }
+            // ...exercise SUT...
+        }
+    }
+}
+```
+
+The gate is non-reentrant and not cancellation-aware (test-only
+utility). See `URLProtocolStubGate.swift` for the rationale.
+
+Reference adopters:
+
+- `Tests/SpeechToTextTests/Services/ModelDownloaderTests.swift`
+- `Tests/SpeechToTextTests/Services/Cliniko/ClinikoStatusThreadingTests.swift`
+
+**Known gap:**
+`Tests/SpeechToTextTests/ViewModels/ExportFlowViewModelTests.swift` is
+also a Swift Testing `@Suite` that installs `URLProtocolStub`, but it
+is `@MainActor`-isolated and migrating it requires resolving the
+`@MainActor` × `@Sendable` interaction across 22 test bodies. Tracked
+as a follow-up to #85 — until the migration lands, the suite is
+protected only by its `.serialized` trait and remains a cross-suite
+race candidate against the gated suites above.
 
 ---
 

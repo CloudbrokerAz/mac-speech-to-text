@@ -3,17 +3,22 @@ import Testing
 import CryptoKit
 @testable import SpeechToText
 
-@Suite("ModelDownloader", .tags(.fast), .serialized)
+@Suite("ModelDownloader", .tags(.fast))
 struct ModelDownloaderTests {
     // MARK: - Serialisation note
     //
-    // `.serialized` is load-bearing: `URLProtocolStub` keeps a single
-    // global `currentResponder`, and `URLProtocolStub.install` /
-    // `URLProtocolStub.reset` mutate it. Tests running in parallel
-    // would race — one's `defer { reset() }` would null the responder
-    // mid-flight in another test, falling through to the real network
-    // (HF, which 401s unauthenticated requests). Per-suite serialisation
-    // scopes the global cleanly.
+    // Every test that installs `URLProtocolStub` wraps its body in
+    // `URLProtocolStubGate.shared.withGate { ... }`. The stub keeps a
+    // single global `currentResponder`; without the gate, parallel
+    // tests would race — one's `defer { reset() }` would null the
+    // responder mid-flight in another test, falling through to the
+    // real network (HF, which 401s unauthenticated requests). Earlier
+    // versions of this suite carried `.serialized` to scope the race
+    // *within* the suite, but Swift Testing's `.serialized` trait is
+    // suite-local and didn't protect against cross-suite races (PR #84
+    // CI commit 964d877). The process-wide gate is the authoritative
+    // mechanism — see issue #85 and `.claude/references/testing-conventions.md`
+    // §"URLProtocolStub process-wide gate".
     // MARK: - Test scaffolding
 
     /// Per-test temp directory. Each test creates a fresh sub-folder so the
@@ -85,20 +90,22 @@ struct ModelDownloaderTests {
             to: modelDir.appendingPathComponent("weights.bin")
         )
 
-        // The responder should NEVER fire — if it does, the test fails.
-        let config = URLProtocolStub.install { _ in
-            Issue.record("Downloader should not have made any requests")
-            throw URLError(.cancelled)
-        }
-        defer { URLProtocolStub.reset() }
+        try await URLProtocolStubGate.shared.withGate {
+            // The responder should NEVER fire — if it does, the test fails.
+            let config = URLProtocolStub.install { _ in
+                Issue.record("Downloader should not have made any requests")
+                throw URLError(.cancelled)
+            }
+            defer { URLProtocolStub.reset() }
 
-        let downloader = ModelDownloader(
-            manifest: Self.helloManifest(),
-            baseDirectory: base,
-            session: URLSession(configuration: config)
-        )
-        let resolved = try await downloader.ensureModelDownloaded()
-        #expect(resolved == modelDir)
+            let downloader = ModelDownloader(
+                manifest: Self.helloManifest(),
+                baseDirectory: base,
+                session: URLSession(configuration: config)
+            )
+            let resolved = try await downloader.ensureModelDownloaded()
+            #expect(resolved == modelDir)
+        }
     }
 
     @Test("emits .completed exactly once on the no-download path")
@@ -114,25 +121,27 @@ struct ModelDownloaderTests {
             to: modelDir.appendingPathComponent("weights.bin")
         )
 
-        let events = EventCollector()
-        let config = URLProtocolStub.install { _ in
-            Issue.record("Should not request anything")
-            throw URLError(.cancelled)
-        }
-        defer { URLProtocolStub.reset() }
+        try await URLProtocolStubGate.shared.withGate {
+            let events = EventCollector()
+            let config = URLProtocolStub.install { _ in
+                Issue.record("Should not request anything")
+                throw URLError(.cancelled)
+            }
+            defer { URLProtocolStub.reset() }
 
-        let downloader = ModelDownloader(
-            manifest: Self.helloManifest(),
-            baseDirectory: base,
-            session: URLSession(configuration: config)
-        )
-        _ = try await downloader.ensureModelDownloaded { events.append($0) }
-        let captured = await events.snapshot()
-        // Single .completed — no .starting / .fileStarted because the
-        // pre-flight loop short-circuited.
-        #expect(captured.count == 1)
-        if case .completed = captured.first {} else {
-            Issue.record("expected .completed first, got \(String(describing: captured.first))")
+            let downloader = ModelDownloader(
+                manifest: Self.helloManifest(),
+                baseDirectory: base,
+                session: URLSession(configuration: config)
+            )
+            _ = try await downloader.ensureModelDownloaded { events.append($0) }
+            let captured = await events.snapshot()
+            // Single .completed — no .starting / .fileStarted because the
+            // pre-flight loop short-circuited.
+            #expect(captured.count == 1)
+            if case .completed = captured.first {} else {
+                Issue.record("expected .completed first, got \(String(describing: captured.first))")
+            }
         }
     }
 
@@ -143,19 +152,21 @@ struct ModelDownloaderTests {
         let base = try Self.makeTempBase()
         defer { try? FileManager.default.removeItem(at: base) }
 
-        let config = URLProtocolStub.install(Self.makeOKResponder())
-        defer { URLProtocolStub.reset() }
+        try await URLProtocolStubGate.shared.withGate {
+            let config = URLProtocolStub.install(Self.makeOKResponder())
+            defer { URLProtocolStub.reset() }
 
-        let downloader = ModelDownloader(
-            manifest: Self.helloManifest(),
-            baseDirectory: base,
-            session: URLSession(configuration: config)
-        )
-        let resolved = try await downloader.ensureModelDownloaded()
-        let written = try Data(
-            contentsOf: resolved.appendingPathComponent("weights.bin")
-        )
-        #expect(written == Self.helloPayload)
+            let downloader = ModelDownloader(
+                manifest: Self.helloManifest(),
+                baseDirectory: base,
+                session: URLSession(configuration: config)
+            )
+            let resolved = try await downloader.ensureModelDownloaded()
+            let written = try Data(
+                contentsOf: resolved.appendingPathComponent("weights.bin")
+            )
+            #expect(written == Self.helloPayload)
+        }
     }
 
     @Test("happy path emits .starting → .fileStarted → .fileVerified → .completed")
@@ -163,37 +174,39 @@ struct ModelDownloaderTests {
         let base = try Self.makeTempBase()
         defer { try? FileManager.default.removeItem(at: base) }
 
-        let events = EventCollector()
-        let config = URLProtocolStub.install(Self.makeOKResponder())
-        defer { URLProtocolStub.reset() }
+        try await URLProtocolStubGate.shared.withGate {
+            let events = EventCollector()
+            let config = URLProtocolStub.install(Self.makeOKResponder())
+            defer { URLProtocolStub.reset() }
 
-        let downloader = ModelDownloader(
-            manifest: Self.helloManifest(),
-            baseDirectory: base,
-            session: URLSession(configuration: config)
-        )
-        _ = try await downloader.ensureModelDownloaded { events.append($0) }
+            let downloader = ModelDownloader(
+                manifest: Self.helloManifest(),
+                baseDirectory: base,
+                session: URLSession(configuration: config)
+            )
+            _ = try await downloader.ensureModelDownloaded { events.append($0) }
 
-        let captured = await events.snapshot()
-        // Loose check on event sequence — .bytesReceived may or may not
-        // fire for a 4-byte file depending on the chunk-flush threshold,
-        // so we assert structure not exact count.
-        guard captured.count >= 3 else {
-            Issue.record("expected ≥3 events, got \(captured.count)")
-            return
+            let captured = await events.snapshot()
+            // Loose check on event sequence — .bytesReceived may or may not
+            // fire for a 4-byte file depending on the chunk-flush threshold,
+            // so we assert structure not exact count.
+            guard captured.count >= 3 else {
+                Issue.record("expected ≥3 events, got \(captured.count)")
+                return
+            }
+            if case .starting = captured.first {} else {
+                Issue.record("first event should be .starting")
+            }
+            let last = captured.last
+            if case .completed = last {} else {
+                Issue.record("last event should be .completed; got \(String(describing: last))")
+            }
+            // .fileVerified must appear once for our single file.
+            let verifiedCount = captured.filter {
+                if case .fileVerified = $0 { return true } else { return false }
+            }.count
+            #expect(verifiedCount == 1)
         }
-        if case .starting = captured.first {} else {
-            Issue.record("first event should be .starting")
-        }
-        let last = captured.last
-        if case .completed = last {} else {
-            Issue.record("last event should be .completed; got \(String(describing: last))")
-        }
-        // .fileVerified must appear once for our single file.
-        let verifiedCount = captured.filter {
-            if case .fileVerified = $0 { return true } else { return false }
-        }.count
-        #expect(verifiedCount == 1)
     }
 
     // MARK: - Error paths
@@ -203,25 +216,27 @@ struct ModelDownloaderTests {
         let base = try Self.makeTempBase()
         defer { try? FileManager.default.removeItem(at: base) }
 
-        let config = URLProtocolStub.install { request in
-            let url = request.url ?? URL(string: "https://huggingface.co/")!
-            let response = HTTPURLResponse(
-                url: url,
-                statusCode: 404,
-                httpVersion: "HTTP/1.1",
-                headerFields: nil
-            )!
-            return (response, Data())
-        }
-        defer { URLProtocolStub.reset() }
+        try await URLProtocolStubGate.shared.withGate {
+            let config = URLProtocolStub.install { request in
+                let url = request.url ?? URL(string: "https://huggingface.co/")!
+                let response = HTTPURLResponse(
+                    url: url,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: nil
+                )!
+                return (response, Data())
+            }
+            defer { URLProtocolStub.reset() }
 
-        let downloader = ModelDownloader(
-            manifest: Self.helloManifest(),
-            baseDirectory: base,
-            session: URLSession(configuration: config)
-        )
-        await #expect(throws: ModelDownloader.DownloaderError.self) {
-            _ = try await downloader.ensureModelDownloaded()
+            let downloader = ModelDownloader(
+                manifest: Self.helloManifest(),
+                baseDirectory: base,
+                session: URLSession(configuration: config)
+            )
+            await #expect(throws: ModelDownloader.DownloaderError.self) {
+                _ = try await downloader.ensureModelDownloaded()
+            }
         }
     }
 
@@ -230,34 +245,36 @@ struct ModelDownloaderTests {
         let base = try Self.makeTempBase()
         defer { try? FileManager.default.removeItem(at: base) }
 
-        // Manifest expects 4 bytes; we serve 8.
-        let config = URLProtocolStub.install(
-            Self.makeOKResponder(body: Data("hellworld".utf8))
-        )
-        defer { URLProtocolStub.reset() }
+        try await URLProtocolStubGate.shared.withGate {
+            // Manifest expects 4 bytes; we serve 8.
+            let config = URLProtocolStub.install(
+                Self.makeOKResponder(body: Data("hellworld".utf8))
+            )
+            defer { URLProtocolStub.reset() }
 
-        let downloader = ModelDownloader(
-            manifest: Self.helloManifest(),
-            baseDirectory: base,
-            session: URLSession(configuration: config)
-        )
-        do {
-            _ = try await downloader.ensureModelDownloaded()
-            Issue.record("expected sizeMismatch; succeeded instead")
-        } catch let err as ModelDownloader.DownloaderError {
-            if case .sizeMismatch = err {} else {
-                Issue.record("expected .sizeMismatch; got \(err)")
+            let downloader = ModelDownloader(
+                manifest: Self.helloManifest(),
+                baseDirectory: base,
+                session: URLSession(configuration: config)
+            )
+            do {
+                _ = try await downloader.ensureModelDownloaded()
+                Issue.record("expected sizeMismatch; succeeded instead")
+            } catch let err as ModelDownloader.DownloaderError {
+                if case .sizeMismatch = err {} else {
+                    Issue.record("expected .sizeMismatch; got \(err)")
+                }
             }
+            // No file at the final destination, no `.partial` lingering.
+            let dest = base
+                .appendingPathComponent("hello-model")
+                .appendingPathComponent("weights.bin")
+            let partial = base
+                .appendingPathComponent("hello-model")
+                .appendingPathComponent("weights.bin.partial")
+            #expect(!FileManager.default.fileExists(atPath: dest.path))
+            #expect(!FileManager.default.fileExists(atPath: partial.path))
         }
-        // No file at the final destination, no `.partial` lingering.
-        let dest = base
-            .appendingPathComponent("hello-model")
-            .appendingPathComponent("weights.bin")
-        let partial = base
-            .appendingPathComponent("hello-model")
-            .appendingPathComponent("weights.bin.partial")
-        #expect(!FileManager.default.fileExists(atPath: dest.path))
-        #expect(!FileManager.default.fileExists(atPath: partial.path))
     }
 
     @Test("hash mismatch raises .hashMismatch")
@@ -265,23 +282,25 @@ struct ModelDownloaderTests {
         let base = try Self.makeTempBase()
         defer { try? FileManager.default.removeItem(at: base) }
 
-        // Right size (4 bytes), wrong content.
-        let config = URLProtocolStub.install(
-            Self.makeOKResponder(body: Data("XXXX".utf8))
-        )
-        defer { URLProtocolStub.reset() }
+        try await URLProtocolStubGate.shared.withGate {
+            // Right size (4 bytes), wrong content.
+            let config = URLProtocolStub.install(
+                Self.makeOKResponder(body: Data("XXXX".utf8))
+            )
+            defer { URLProtocolStub.reset() }
 
-        let downloader = ModelDownloader(
-            manifest: Self.helloManifest(),
-            baseDirectory: base,
-            session: URLSession(configuration: config)
-        )
-        do {
-            _ = try await downloader.ensureModelDownloaded()
-            Issue.record("expected hashMismatch; succeeded instead")
-        } catch let err as ModelDownloader.DownloaderError {
-            if case .hashMismatch = err {} else {
-                Issue.record("expected .hashMismatch; got \(err)")
+            let downloader = ModelDownloader(
+                manifest: Self.helloManifest(),
+                baseDirectory: base,
+                session: URLSession(configuration: config)
+            )
+            do {
+                _ = try await downloader.ensureModelDownloaded()
+                Issue.record("expected hashMismatch; succeeded instead")
+            } catch let err as ModelDownloader.DownloaderError {
+                if case .hashMismatch = err {} else {
+                    Issue.record("expected .hashMismatch; got \(err)")
+                }
             }
         }
     }
@@ -291,24 +310,26 @@ struct ModelDownloaderTests {
         let base = try Self.makeTempBase()
         defer { try? FileManager.default.removeItem(at: base) }
 
-        // Wrong content but right size, manifest doesn't carry a hash.
-        let config = URLProtocolStub.install(
-            Self.makeOKResponder(body: Data("XXXX".utf8))
-        )
-        defer { URLProtocolStub.reset() }
+        try await URLProtocolStubGate.shared.withGate {
+            // Wrong content but right size, manifest doesn't carry a hash.
+            let config = URLProtocolStub.install(
+                Self.makeOKResponder(body: Data("XXXX".utf8))
+            )
+            defer { URLProtocolStub.reset() }
 
-        let downloader = ModelDownloader(
-            manifest: Self.helloManifest(includeHash: false),
-            baseDirectory: base,
-            session: URLSession(configuration: config)
-        )
-        _ = try await downloader.ensureModelDownloaded()
-        let written = try Data(
-            contentsOf: base
-                .appendingPathComponent("hello-model")
-                .appendingPathComponent("weights.bin")
-        )
-        #expect(written == Data("XXXX".utf8))
+            let downloader = ModelDownloader(
+                manifest: Self.helloManifest(includeHash: false),
+                baseDirectory: base,
+                session: URLSession(configuration: config)
+            )
+            _ = try await downloader.ensureModelDownloaded()
+            let written = try Data(
+                contentsOf: base
+                    .appendingPathComponent("hello-model")
+                    .appendingPathComponent("weights.bin")
+            )
+            #expect(written == Data("XXXX".utf8))
+        }
     }
 
     // MARK: - URL composition
