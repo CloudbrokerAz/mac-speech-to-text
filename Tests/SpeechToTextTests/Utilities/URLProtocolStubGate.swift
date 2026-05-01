@@ -26,21 +26,19 @@ import Foundation
 ///
 /// ## Adoption status
 ///
-/// Adopters as of issue #85:
+/// Every Swift Testing `@Suite` that calls `URLProtocolStub.install` is
+/// gated:
 /// - `Tests/SpeechToTextTests/Services/ModelDownloaderTests.swift`
 /// - `Tests/SpeechToTextTests/Services/Cliniko/ClinikoStatusThreadingTests.swift`
-///
-/// `Tests/SpeechToTextTests/ViewModels/ExportFlowViewModelTests.swift`
-/// is a third Swift Testing `@Suite` that calls `URLProtocolStub.install`
-/// from a `@MainActor`-isolated context. Migration is tracked separately
-/// (the `@MainActor` + `@Sendable` interaction needs a wider refactor
-/// than #85's scope) — until that lands, the suite remains protected
-/// only by its `.serialized` trait, which is suite-local and therefore
-/// still races against gated suites. Treat this as a known gap.
+/// - `Tests/SpeechToTextTests/ViewModels/ExportFlowViewModelTests.swift`
+///   (`@MainActor`-isolated for SwiftUI; uses a `@MainActor @Sendable`
+///   trailing closure on a local `runGated` helper so the test body
+///   stays on `@MainActor` while the gate's outer body runs off it —
+///   issue #133)
 ///
 /// See `.claude/references/testing-conventions.md` §"URLProtocolStub
 /// process-wide gate" and `Sources/Services/Cliniko/AGENTS.md`
-/// §Testing for adoption rules. Issue #85.
+/// §Testing for adoption rules. Originating issue #85; final adopter #133.
 ///
 /// ## Usage
 ///
