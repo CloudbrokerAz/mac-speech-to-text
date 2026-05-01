@@ -103,7 +103,7 @@ struct PatientPickerViewModelTests {
 
     @Test("non-empty result populates .results")
     func search_results() async throws {
-        let patient = Patient(id: 1, firstName: "Sample", lastName: "Patient")
+        let patient = Patient(id: "1", firstName: "Sample", lastName: "Patient")
         let patients = FakePatientSearcher(result: .success([patient]))
         let appointments = FakeAppointmentLoader(result: .success([]))
         let store = SessionStore()
@@ -201,10 +201,15 @@ struct PatientPickerViewModelTests {
             debounceMillis: 0
         )
 
-        let patient = Patient(id: 1234, firstName: "Sample", lastName: "Patient")
+        let patient = Patient(id: "1234", firstName: "Sample", lastName: "Patient")
         vm.selectPatient(patient)
 
-        #expect(store.active?.selectedPatientID == OpaqueClinikoID(1234))
+        // `OpaqueClinikoID(1234)` (Int init) and `OpaqueClinikoID("1234")`
+        // both produce `rawValue: "1234"`, so this equality holds across
+        // the #127 boundary flip. The literal here documents the
+        // string-shaped wire input that exercised the new `String` init.
+        #expect(store.active?.selectedPatientID == OpaqueClinikoID("1234"))
+        #expect(store.active?.selectedPatientDisplayName == "Sample Patient")
         #expect(vm.selectedPatient == patient)
         #expect(vm.appointmentPhase == .loading)
     }
@@ -253,7 +258,7 @@ struct PatientPickerViewModelTests {
             debounceMillis: 0
         )
 
-        vm.selectPatient(Patient(id: 1, firstName: "S", lastName: "P"))
+        vm.selectPatient(Patient(id: "1", firstName: "S", lastName: "P"))
         await vm.currentAppointmentTaskForTests?.value
 
         if case .loaded(let list) = vm.appointmentPhase {
@@ -277,7 +282,7 @@ struct PatientPickerViewModelTests {
             debounceMillis: 0
         )
 
-        vm.selectPatient(Patient(id: 1, firstName: "S", lastName: "P"))
+        vm.selectPatient(Patient(id: "1", firstName: "S", lastName: "P"))
         await vm.currentAppointmentTaskForTests?.value
 
         #expect(vm.appointmentPhase == .error(.transport(.notConnectedToInternet)))
@@ -299,7 +304,7 @@ struct PatientPickerViewModelTests {
             debounceMillis: 0
         )
 
-        vm.selectPatient(Patient(id: 1, firstName: "S", lastName: "P"))
+        vm.selectPatient(Patient(id: "1", firstName: "S", lastName: "P"))
         vm.selectAppointment(id: 9)
         vm.clearSelection()
 

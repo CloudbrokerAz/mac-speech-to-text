@@ -26,6 +26,31 @@ struct OpaqueClinikoIDTests {
         #expect(id.rawValue == "1001")
     }
 
+    @Test("init(_:String) preserves the string-shaped wire form (Patient.id, #127)")
+    func stringInit_preservesValue() {
+        // Cliniko's documented `Patient.id` shape is `string($int64)` —
+        // post-#127 the picker speaks `String` at the SessionStore
+        // boundary, and this canonical init is the path. Distinct from
+        // `init(rawValue:)` so a contributor can tell production
+        // type-tagging apart from Codable / test deterministic-literal
+        // wiring.
+        let id = OpaqueClinikoID("1001")
+        #expect(id.rawValue == "1001")
+    }
+
+    @Test("init(_:Int) and init(_:String) with the same digit-string produce equal IDs")
+    func intAndStringInit_producesEqualIDs() {
+        // The Int and String boundaries store the same `rawValue` so a
+        // patient picked by the new String-shaped boundary is equal to
+        // one constructed from the legacy Int boundary — keeps existing
+        // assertions of the `OpaqueClinikoID(<digit-int>) == ...` form
+        // valid across the #127 migration.
+        let viaInt = OpaqueClinikoID(42)
+        let viaString = OpaqueClinikoID("42")
+        #expect(viaInt == viaString)
+        #expect(viaInt.hashValue == viaString.hashValue)
+    }
+
     @Test("init(rawValue:) preserves the string verbatim")
     func rawValueInit_preservesString() {
         // `init(rawValue:)` is total over `String`. Production

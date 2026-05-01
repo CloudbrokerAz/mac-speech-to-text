@@ -72,7 +72,7 @@ final class PatientPickerViewRenderTests: XCTestCase {
 
     func test_picker_resultsPhase_rendersWithoutCrash() async throws {
         let patient = Patient(
-            id: 1,
+            id: "1",
             firstName: "Sample",
             lastName: "Patient",
             dateOfBirth: "1980-01-01",
@@ -113,6 +113,35 @@ final class PatientPickerViewRenderTests: XCTestCase {
 
     // MARK: - Appointment-pane phases
 
+    /// Regression pin for #127. The previous render path interpolated
+    /// `firstName`/`lastName` directly via `\(patient.firstName)`, which
+    /// would surface `Optional("...")` after the fields turned nullable
+    /// — visually broken AND a PHI-shaped string in the body's view
+    /// hierarchy. `Patient.displayName` owns the nil-safe composition;
+    /// this test exercises the partial-name and all-nil rows through
+    /// the same body access that the production picker uses.
+    func test_picker_resultsPhase_partialNames_rendersWithoutCrash() async throws {
+        let firstOnly = Patient(id: "2001", firstName: "Sample", lastName: nil)
+        let lastOnly = Patient(id: "2002", firstName: nil, lastName: "Subject")
+        let bothNil = Patient(id: "2003", firstName: nil, lastName: nil)
+        let viewModel = makeViewModel(
+            patientResult: .success([firstOnly, lastOnly, bothNil])
+        )
+        viewModel.updateQuery("partial")
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        let view = PatientPickerView(viewModel: viewModel)
+        XCTAssertNotNil(view.body)
+        if case .results(let list) = viewModel.searchPhase {
+            XCTAssertEqual(list.count, 3)
+            XCTAssertEqual(list[0].displayName, "Sample")
+            XCTAssertEqual(list[1].displayName, "Subject")
+            XCTAssertEqual(list[2].displayName, "Unnamed patient")
+        } else {
+            XCTFail("expected .results, got \(viewModel.searchPhase)")
+        }
+    }
+
     func test_picker_appointmentLoadedPhase_rendersWithoutCrash() async throws {
         let appointment = Appointment(
             id: 9000,
@@ -122,7 +151,7 @@ final class PatientPickerViewRenderTests: XCTestCase {
         let viewModel = makeViewModel(appointmentResult: .success([appointment]))
         let store = SessionStore()
         store.start(from: RecordingSession())
-        viewModel.selectPatient(Patient(id: 1, firstName: "S", lastName: "P"))
+        viewModel.selectPatient(Patient(id: "1", firstName: "S", lastName: "P"))
         try await Task.sleep(nanoseconds: 50_000_000)
 
         let view = PatientPickerView(viewModel: viewModel)

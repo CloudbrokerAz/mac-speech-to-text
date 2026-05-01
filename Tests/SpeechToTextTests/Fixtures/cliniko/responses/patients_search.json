@@ -1,21 +1,21 @@
 {
   "patients": [
     {
-      "id": 1001,
+      "id": "1001",
       "first_name": "Sample",
       "last_name": "Patient",
       "date_of_birth": "1980-01-15",
       "email": "sample.patient@example.test"
     },
     {
-      "id": 1002,
+      "id": "1002",
       "first_name": "Test",
       "last_name": "Person",
       "date_of_birth": "1992-07-04",
       "email": "test.person@example.test"
     },
     {
-      "id": 1003,
+      "id": "1003",
       "first_name": "Fixture",
       "last_name": "Subject",
       "date_of_birth": null,

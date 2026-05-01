@@ -2,8 +2,11 @@ import Foundation
 
 /// A type-tagged Cliniko identifier — patient, appointment, or note.
 ///
-/// Cliniko's wire shape for these resources is numeric (`Int`). The audit
-/// ledger and `SessionStore` need an opaque-but-typed handle that:
+/// Cliniko's wire shape for these resources is mixed: `Patient.id` is
+/// documented as `string($int64)` and decoded as `String` (#127);
+/// `Appointment.id` and `TreatmentNoteCreated.id` are still numeric
+/// (`Int`). The audit ledger and `SessionStore` need an opaque-but-typed
+/// handle that:
 ///
 /// 1. **Refuses free-form strings** at every migrated callsite.
 ///    `AuditRecord.init(patientID:)` accepts only `OpaqueClinikoID`, not
@@ -21,16 +24,19 @@ import Foundation
 ///    Pinned at the byte level by
 ///    `AuditStoreTests.line_pins_opaque_id_byte_shape`.
 /// 3. Round-trips through the `Int` ↔ `String` boundary in one place.
-///    Production code uses `init(_ int: Int)` at the Cliniko-response
-///    boundary (every `Patient.id` / `Appointment.id` / `created.id`
-///    site); `init(rawValue: String)` is reserved for Codable
-///    round-trip from `audit.jsonl` and for tests that want
-///    deterministic string literals.
+///    Production code uses `init(_ int: Int)` at numeric Cliniko-response
+///    boundaries (`Appointment.id`, `TreatmentNoteCreated.id`) and
+///    `init(_ string: String)` at the `Patient.id` boundary (#127);
+///    `init(rawValue: String)` is reserved for Codable round-trip from
+///    `audit.jsonl` and for tests that want deterministic string
+///    literals.
 ///
 /// **Issue #59.** Replaces the three bare-`String` ID fields on
-/// `AuditRecord` and the two on `ClinicalSession`. Wire-shape `Int`
-/// IDs on `Patient`, `Appointment`, and `TreatmentNotePayload` are
-/// deliberately preserved — those are what Cliniko's HTTP API speaks.
+/// `AuditRecord` and the two on `ClinicalSession`. Wire-shape IDs on
+/// `Appointment` and `TreatmentNotePayload` remain `Int` — those are
+/// what Cliniko's HTTP API speaks for those resources. `Patient.id`
+/// flipped to `String` in #127 to match Cliniko's documented
+/// `string($int64)` shape.
 ///
 /// **`RawRepresentable` rationale.** Required by the issue spec for
 /// symmetry with the predecessor `String`-typed fields and so the
@@ -55,21 +61,32 @@ import Foundation
 public struct OpaqueClinikoID: RawRepresentable, Sendable, Hashable {
     public let rawValue: String
 
-    /// Canonical construction at the Cliniko-response boundary. Use this
-    /// when you have a numeric `id` from a `Patient`, `Appointment`, or
+    /// Canonical construction at the numeric Cliniko-response boundary.
+    /// Use this when you have a numeric `id` from an `Appointment` or
     /// `TreatmentNoteCreated` and want to type-tag it before passing
     /// into `SessionStore` or `AuditRecord`.
     public init(_ int: Int) {
         self.rawValue = String(int)
     }
 
+    /// Canonical construction at the string-shaped Cliniko-response
+    /// boundary (`Patient.id` per Cliniko's documented `string($int64)`
+    /// shape — see #127). Use this when you have a `String` `id` from
+    /// a `Patient` and want to type-tag it before passing into
+    /// `SessionStore`. Distinct from `init(rawValue:)` so a contributor
+    /// reading the call site can tell production type-tagging apart
+    /// from Codable / test deterministic-literal wiring.
+    public init(_ string: String) {
+        self.rawValue = string
+    }
+
     /// String-form construction. **Reserved for `Codable` round-trip**
     /// (decoding from `audit.jsonl` or test fixtures) and test wiring
     /// that wants a deterministic literal. Production callsites must
-    /// use `init(_:Int)` at the Cliniko-response boundary —
-    /// `PatientPickerViewModel`, `TreatmentNoteExporter`, and the
-    /// `AuditRecord` construction in the exporter all do this. A
-    /// `String` value entering this initialiser at a non-Codable,
+    /// use `init(_:Int)` or `init(_:String)` at the Cliniko-response
+    /// boundary — `PatientPickerViewModel`, `TreatmentNoteExporter`,
+    /// and the `AuditRecord` construction in the exporter all do this.
+    /// A `String` value entering this initialiser at a non-Codable,
     /// non-test callsite is a #59 regression.
     public init(rawValue: String) {
         self.rawValue = rawValue

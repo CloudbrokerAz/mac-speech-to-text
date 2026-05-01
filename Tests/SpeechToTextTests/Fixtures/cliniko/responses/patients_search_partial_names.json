@@ -1,0 +1,37 @@
+{
+  "patients": [
+    {
+      "id": "2001",
+      "first_name": "Sample",
+      "last_name": null,
+      "date_of_birth": "1985-03-22",
+      "email": "first.only@example.test"
+    },
+    {
+      "id": "2002",
+      "first_name": null,
+      "last_name": "Subject",
+      "date_of_birth": null,
+      "email": null
+    },
+    {
+      "id": "2003",
+      "first_name": null,
+      "last_name": null,
+      "date_of_birth": null,
+      "email": null
+    },
+    {
+      "id": "2004",
+      "first_name": "Archived",
+      "last_name": "Row",
+      "date_of_birth": null,
+      "email": null,
+      "archived_at": "2020-01-01T00:00:00Z"
+    }
+  ],
+  "total_entries": 4,
+  "links": {
+    "self": "https://api.au1.cliniko.com/v1/patients?q%5B%5D=last_name%3A~example"
+  }
+}

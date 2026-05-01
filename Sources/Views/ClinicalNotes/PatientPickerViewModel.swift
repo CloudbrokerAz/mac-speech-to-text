@@ -194,11 +194,12 @@ final class PatientPickerViewModel: Identifiable {
         // confirmation surface (#14) can render a patient label
         // without re-fetching. The two never drift because
         // `setSelectedPatient(id:displayName:)` clears the name
-        // whenever the id is cleared.
-        let displayName = "\(patient.firstName) \(patient.lastName)".trimmingCharacters(in: .whitespaces)
+        // whenever the id is cleared. `Patient.displayName` (#127)
+        // owns the nil-safe composition — it falls back to
+        // "Unnamed patient" when both name fields are nil.
         sessionStore.setSelectedPatient(
             id: OpaqueClinikoID(patient.id),
-            displayName: displayName
+            displayName: patient.displayName
         )
         sessionStore.setSelectedAppointment(id: nil)
         selectedAppointmentID = nil
@@ -213,7 +214,7 @@ final class PatientPickerViewModel: Identifiable {
         let reference = now()
         do {
             let appointments = try await appointmentService.recentAndTodayAppointments(
-                forPatientID: String(patient.id),
+                forPatientID: patient.id,
                 reference: reference
             )
             // See `performSearch` for the cancel-guard rationale.
