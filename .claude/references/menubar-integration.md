@@ -78,28 +78,37 @@ KeyboardShortcuts.onKeyDown(for: .startRecording) { [weak self] in
 
 For Clinical Notes Mode the `#11` toggle is paired with a **second**
 dedicated hotkey, `clinicalNotesRecord` (#91), and a sibling
-**menu-bar item** "Start Clinical Note" (#92). The default
+**Home-tab trigger row** "Start Clinical Note" (#97 — supersedes the
+short-lived menu-bar item shipped in #92). The default
 `holdToRecord` / `toggleRecording` chord stays untouched: pure STT,
 glass overlay, text insertion. Both clinical surfaces post the same
-`.showRecordingModal` notification, which AppDelegate's existing
-observer handles by presenting `LiquidGlassRecordingModal`
+`.showRecordingModal` notification with `userInfo["clinicalMode"] =
+true`, which AppDelegate's existing observer handles by presenting
+`LiquidGlassRecordingModal` constructed with `clinicalMode: true`
 (auto-starts recording on present via the modal's `.task(id:)`).
 
 The clinical chord is **unbound by default** to avoid OS / browser /
-IDE conflicts on install; the menu-bar item provides a tap-target
+IDE conflicts on install; the Home-tab row provides a tap-target
 for discoverability and for hands-off-keyboard moments. Both are
 gated by the toggle and Cliniko credential presence: when either
-gate flips off,
-`KeyboardShortcuts.disable(.clinicalNotesRecord)` runs (chord side)
-and `MenuBarViewModel.canStartClinicalNote` returns false (menu
-side), so neither surface fires when prerequisites are missing. The
-Settings → Clinical Notes "Recording shortcut" row uses
-`ShortcutRecorderView`'s `validate:` closure to reject any chord
-already bound to `.holdToRecord` or `.toggleRecording`.
+gate flips off, `KeyboardShortcuts.disable(.clinicalNotesRecord)`
+runs (chord side) and the Home-tab row hides itself
+(`HomeSection.refreshClinicalNotesGate()`), so neither surface fires
+when prerequisites are missing. The Settings → Clinical Notes
+"Recording shortcut" row uses `ShortcutRecorderView`'s `validate:`
+closure to reject any chord already bound to `.holdToRecord` or
+`.toggleRecording`.
 
-`MenuBarViewModel.refreshState()` is called from `MenuBarView`'s
-`.task` on each menu open, so toggle / credential changes made
-elsewhere in the session are picked up without an app restart.
+`HomeSection.refreshClinicalNotesGate()` runs in the section's
+`.task` and `.onAppear`, so toggle / credential changes made
+elsewhere in the session are picked up the next time the user
+lands on Home.
+
+The macOS menu-bar dropdown itself is **kept ultra-minimal** — only
+"Open Speech to Text" (`,`) and "Quit" (`⌘Q`). The clinical-notes
+trigger lived there briefly under #92 but moved to MainView under
+#97 because doctors live in MainView (configuring or reviewing)
+rather than fishing for the system-tray icon.
 
 ---
 

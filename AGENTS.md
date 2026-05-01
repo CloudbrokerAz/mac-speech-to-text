@@ -260,17 +260,18 @@ on-device, session-only PHI, opt-in via Settings.
    Once on + Cliniko credentials present, Settings → Clinical Notes
    exposes a **dedicated "Recording shortcut"** row (`#91`) bound to
    `KeyboardShortcuts.Name.clinicalNotesRecord` (unbound by default),
-   and the menu bar grows a **"Start Clinical Note"** item (`#92`) as
-   the discoverability sibling. The default
+   and the **Home tab in MainView** grows a "Start Clinical Note"
+   trigger row (`#97`, supersedes the menu-bar item from `#92`)
+   alongside Hold-to-Record / Toggle-Recording. The default
    `holdToRecord` / `toggleRecording` chord stays pure STT for general
-   dictation; the new chord and menu item are the only production
+   dictation; the new chord and Home-tab row are the only production
    triggers for the clinical pipeline — both gates flip the shortcut
    off (`KeyboardShortcuts.disable(.clinicalNotesRecord)`) and hide
-   the menu item (`MenuBarViewModel.canStartClinicalNote` returns
-   false) so neither surface fires when prerequisites are missing.
+   the Home-tab row so neither surface fires when prerequisites are
+   missing.
 2. **Recording** runs unchanged (FluidAudio → `RecordingSession`).
    General dictation uses the existing chord. Clinical sessions use
-   `clinicalNotesRecord` or the "Start Clinical Note" menu item →
+   `clinicalNotesRecord` or the Home-tab "Start Clinical Note" row →
    `LiquidGlassRecordingModal` (auto-starts recording on present via
    the modal's existing `.task(id:)`).
 3. **Generate Notes** action on the recording modal hands the transcript to
