@@ -131,11 +131,12 @@ final class TreatmentNoteExporterTests: XCTestCase {
     /// hardcoded literal. This test would have failed against the previous
     /// `clinikoStatus: 201` hardcoding.
     ///
-    /// Lives alongside its XCTest siblings (rather than as a Swift Testing
-    /// `@Suite`) because `URLProtocolStub` is a process-wide singleton and
-    /// Swift Testing's `.serialized` trait is suite-local — adding a new
-    /// Swift Testing suite that stubs HTTP races against `ModelDownloaderTests`.
-    /// See the parallel comment in `ClinikoClientTests` for the full rationale.
+    /// Lives alongside its XCTest siblings for cohesion with the rest of
+    /// the exporter behaviour tests. (The historical motivation was a
+    /// `URLProtocolStub` cross-suite race; #87 fixed that with
+    /// per-installation dispatch, so this test could move to Swift Testing
+    /// without races — kept here only because the surrounding sibs haven't
+    /// migrated yet.)
     func test_export_audit_clinikoStatus_reflectsActualHTTPStatus_not201Literal() async throws {
         let session = makeSession { request in
             let body = Data("{\"id\":42}".utf8)

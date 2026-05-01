@@ -6,10 +6,9 @@ import XCTest
 /// `URLProtocolStub`. Scoped to what the picker UI cares about:
 /// query-item shape, decoded payload, error pass-through, cancellation.
 ///
-/// Why XCTest (and not Swift Testing): `URLProtocolStub` keeps a single
-/// process-wide responder. XCTest serialises test methods within a class
-/// by default; Swift Testing parallelises them, so two `@Test`s would
-/// race the responder. Refactor tracked in #30.
+/// Stays on XCTest for now; #87 made `URLProtocolStub` per-installation
+/// safe (Swift Testing's parallel suites no longer race the stub), so a
+/// future migration to Swift Testing is unblocked but not required.
 final class ClinikoPatientServiceTests: XCTestCase {
 
     override func tearDown() {
@@ -447,8 +446,10 @@ final class ClinikoPatientServiceTests: XCTestCase {
 }
 
 /// Counts how many times a URLProtocolStub responder is invoked. Mirrors
-/// the helper of the same name in `ClinikoClientTests` (kept private per
-/// file to dodge `URLProtocolStub` cross-suite races — see #30).
+/// the helper of the same name in `ClinikoClientTests`. (Was historically
+/// kept private per file to dodge `URLProtocolStub` cross-suite races;
+/// #87 fixed those, so consolidation into a shared test util is now safe
+/// — left split for now to keep this PR scoped to the stub itself.)
 private final class CallCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0

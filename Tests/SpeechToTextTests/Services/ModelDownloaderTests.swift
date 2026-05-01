@@ -7,13 +7,20 @@ import CryptoKit
 struct ModelDownloaderTests {
     // MARK: - Serialisation note
     //
-    // `.serialized` is load-bearing: `URLProtocolStub` keeps a single
-    // global `currentResponder`, and `URLProtocolStub.install` /
-    // `URLProtocolStub.reset` mutate it. Tests running in parallel
-    // would race — one's `defer { reset() }` would null the responder
-    // mid-flight in another test, falling through to the real network
-    // (HF, which 401s unauthenticated requests). Per-suite serialisation
-    // scopes the global cleanly.
+    // `.serialized` is no longer load-bearing for `URLProtocolStub`
+    // safety: as of #87, `URLProtocolStub` dispatches by a per-install
+    // header token and `URLProtocolStub.reset()` is a no-op, so a
+    // parallel suite cannot null the responder used by this one. It's
+    // kept on the suite anyway because each test mints a unique temp
+    // directory under `model-downloader-tests/` and serial execution
+    // makes failure traces easier to read when one of the integration
+    // assertions trips.
+    //
+    // The historical failure mode (`sizeMismatch(expected: 4, got: 0)`
+    // when another suite's `defer { reset() }` raced this one's
+    // `URLSession.download(for:)`) is regression-tested directly in
+    // `URLProtocolStubTests.test_concurrentInstallations_dispatchToOwnResponderOnly`
+    // and `URLProtocolStubTests.test_droppingOneInstallation_doesNotAffectOther`.
     // MARK: - Test scaffolding
 
     /// Per-test temp directory. Each test creates a fresh sub-folder so the

@@ -6,9 +6,9 @@ import XCTest
 /// payload decoding, the 7-day-back / 1-day-forward window definition, and
 /// error pass-through from `ClinikoClient`.
 ///
-/// Why XCTest (not Swift Testing): see `ClinikoPatientServiceTests` —
-/// `URLProtocolStub` is a process-wide singleton; XCTest serialises within
-/// a class while Swift Testing parallelises. Refactor tracked in #30.
+/// Stays on XCTest for now; #87 made `URLProtocolStub` per-installation
+/// safe (Swift Testing's parallel suites no longer race the stub), so a
+/// future migration to Swift Testing is unblocked but not required.
 final class ClinikoAppointmentServiceTests: XCTestCase {
 
     override func tearDown() {

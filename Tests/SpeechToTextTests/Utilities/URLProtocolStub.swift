@@ -2,8 +2,11 @@ import Foundation
 
 /// Thread-safe `URLProtocol` stub for testing network code without hitting the network.
 ///
-/// Install once per test, route all URL requests through the supplied closure, then call
-/// `reset()` in tearDown.
+/// Each `install(_:)` mints a unique installation token, registers the supplied responder
+/// in a token-keyed registry, and tags the returned `URLSessionConfiguration` with that
+/// token via `httpAdditionalHeaders[stubTokenHeader]`. Every request that flows through a
+/// session built from that configuration carries the header; `startLoading()` reads the
+/// header to dispatch back to the right responder.
 ///
 /// ```swift
 /// let config = URLProtocolStub.install { request in
@@ -19,78 +22,141 @@ import Foundation
 /// }
 /// let session = URLSession(configuration: config)
 /// // ...use session...
-/// URLProtocolStub.reset()
 /// ```
 ///
-/// `@unchecked Sendable` is safe because the only mutable static (`currentResponder`) is
-/// always accessed under `lock`. `nonisolated(unsafe)` is required for Swift 6 concurrency
-/// checking since `URLProtocol` callbacks do not come with actor isolation — SwiftLint's
+/// ## Concurrent suites are isolated (#87)
+///
+/// Earlier versions kept a single global `currentResponder` slot. Suites that ran in
+/// parallel (e.g. `ModelDownloaderTests` + Cliniko networking suites) would race: one
+/// suite's `defer { URLProtocolStub.reset() }` could null the slot mid-flight while
+/// another suite's request was still in motion, surfacing as a misleading
+/// `sizeMismatch(expected: 4, got: 0)` because the responder fell through to nothing.
+///
+/// The token-keyed registry makes that race impossible: each `install(_:)` writes to its
+/// own slot, and only `Installation.deinit` (RAII) ever removes a slot — the per-test
+/// `defer { URLProtocolStub.reset() }` pattern is now a documented no-op kept only so
+/// existing call sites keep compiling. New tests should prefer `installScoped(_:)` and
+/// let the handle's `deinit` clean up its slot.
+///
+/// ## Threading
+///
+/// `@unchecked Sendable` is safe because every access to the `responders` dict goes
+/// through `lock`. `nonisolated(unsafe)` is required for Swift 6 concurrency checking
+/// since `URLProtocol` callbacks come without actor isolation — SwiftLint's
 /// `nonisolated_unsafe_warning` custom rule calls these usages out for review.
 final class URLProtocolStub: URLProtocol, @unchecked Sendable {
     typealias Responder = @Sendable (URLRequest) throws -> (HTTPURLResponse, Data)
 
+    /// HTTP header name carrying the per-installation dispatch token. Tests should not
+    /// set this header on outgoing requests — `URLSessionConfiguration.httpAdditionalHeaders`
+    /// is responsible for stamping it on every request through a stub session, and a
+    /// per-request override would defeat the dispatch.
+    static let stubTokenHeader = "X-URLProtocolStub-Token"
+
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var currentResponder: Responder?
-    /// Generation token for the responder currently installed via
-    /// `installScoped(_:)` / `installScoped(routes:)`. `Installation.deinit`
-    /// clears `currentResponder` only when its captured token still matches —
-    /// stops a stale handle from clobbering a newer install. The closure-form
-    /// `install(_:)` clears the token (it has no RAII partner anyway).
-    nonisolated(unsafe) private static var currentInstallationToken: UUID?
+    nonisolated(unsafe) private static var responders: [String: Responder] = [:]
 
-    /// Install the stub as the first protocol class in a new `URLSessionConfiguration`.
-    /// Callers create a `URLSession` from the returned config; every request through
-    /// that session will be intercepted until `reset()` is called.
+    // MARK: - Installation
+
+    /// Install a responder; returns a `URLSessionConfiguration` tagged with a fresh
+    /// per-installation token. Every request through a session built from the returned
+    /// config will be intercepted and dispatched to `responder`.
+    ///
+    /// The responder slot persists for the test process lifetime (a few hundred bytes per
+    /// test, garbage-collected at process exit). Tests that want deterministic cleanup
+    /// should prefer `installScoped(_:)` instead.
     static func install(_ responder: @escaping Responder) -> URLSessionConfiguration {
-        lock.lock()
-        defer { lock.unlock() }
-        currentResponder = responder
-        currentInstallationToken = nil
-
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [URLProtocolStub.self] + (config.protocolClasses ?? [])
-        return config
+        let (configuration, _) = makeConfiguration(responder: responder)
+        return configuration
     }
 
-    /// Clear the current responder. Call from `tearDown` so tests don't leak state.
+    /// Routed install: dispatches each request to the first matching `Route`. The
+    /// single-closure `install(_:)` form remains available unchanged for tests that only
+    /// stub one endpoint.
+    static func install(routes: [Route]) -> URLSessionConfiguration {
+        install(makeRoutedResponder(routes))
+    }
+
+    /// RAII variant of `install(_:)`. Returns an `Installation` whose `deinit` removes
+    /// its responder from the registry. Always assign the return value to a `let` —
+    /// discarding it would let ARC tear the responder down before the test runs.
+    static func installScoped(_ responder: @escaping Responder) -> Installation {
+        let (configuration, token) = makeConfiguration(responder: responder)
+        return Installation(configuration: configuration, token: token)
+    }
+
+    /// RAII variant of `install(routes:)`. Same dispatch semantics, lifetime tied to the
+    /// returned handle. Always assign to a `let`.
+    static func installScoped(routes: [Route]) -> Installation {
+        let (configuration, token) = makeConfiguration(responder: makeRoutedResponder(routes))
+        return Installation(configuration: configuration, token: token)
+    }
+
+    /// **No-op kept for back-compat** with the pre-#87 `defer { URLProtocolStub.reset() }`
+    /// pattern. The per-installation registry makes per-test cleanup unnecessary, and
+    /// clearing the entire registry mid-test is the exact bug #87 fixed (a parallel
+    /// suite's reset would null another suite's responder mid-flight).
+    ///
+    /// Tests that genuinely want every responder gone can call `resetAll()` — but that
+    /// is dangerous in a parallel-suite test runner and should only be used at process
+    /// boundaries. Prefer `installScoped(_:)` for deterministic cleanup.
     static func reset() {
-        lock.lock()
-        defer { lock.unlock() }
-        currentResponder = nil
-        currentInstallationToken = nil
+        // Deliberately no-op. See doc comment.
     }
 
-    /// Internal: install with a generation token so `Installation.deinit` can
-    /// no-op if a newer install has already replaced this one.
-    fileprivate static func installWithToken(
-        _ responder: @escaping Responder,
-        token: UUID
-    ) -> URLSessionConfiguration {
+    /// Hard-clear the entire responder registry. Dangerous in a parallel-suite runner;
+    /// prefer `installScoped(_:)` for per-test cleanup. Exposed only so a future
+    /// process-level fixture (`@MainActor` `setUpAll` / `tearDownAll`) has an explicit
+    /// escape hatch when one is genuinely needed.
+    static func resetAll() {
         lock.lock()
         defer { lock.unlock() }
-        currentResponder = responder
-        currentInstallationToken = token
+        responders.removeAll()
+    }
+
+    // MARK: - Internals
+
+    private static func makeConfiguration(
+        responder: @escaping Responder
+    ) -> (URLSessionConfiguration, String) {
+        let token = UUID().uuidString
+        lock.lock()
+        responders[token] = responder
+        lock.unlock()
 
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [URLProtocolStub.self] + (config.protocolClasses ?? [])
-        return config
+        // Merge with any existing additional headers the caller might have set on a
+        // shared base config (none today, but defensive against future callers).
+        var headers: [AnyHashable: Any] = config.httpAdditionalHeaders ?? [:]
+        headers[stubTokenHeader] = token
+        config.httpAdditionalHeaders = headers
+        return (config, token)
     }
 
-    /// Internal: reset only if the installation token still matches. Lets a
-    /// stale `Installation.deinit` no-op when a later install has taken over.
-    fileprivate static func resetIfTokenMatches(_ token: UUID) {
+    fileprivate static func unregister(token: String) {
         lock.lock()
         defer { lock.unlock() }
-        guard currentInstallationToken == token else { return }
-        currentResponder = nil
-        currentInstallationToken = nil
+        responders.removeValue(forKey: token)
+    }
+
+    private static func responder(for request: URLRequest) -> Responder? {
+        guard let token = request.value(forHTTPHeaderField: stubTokenHeader) else { return nil }
+        lock.lock()
+        defer { lock.unlock() }
+        return responders[token]
     }
 
     // MARK: - URLProtocol overrides
 
+    /// Claim based on header *presence*, not registration. A request through a
+    /// stub-tagged session whose `Installation` has already deinit'd would
+    /// otherwise silently fall through to the real network — better to claim
+    /// it and let `startLoading()` surface the descriptive "no responder"
+    /// failure so the test author sees the lifetime bug at the point of harm.
+    /// Untagged requests (e.g. `URLSession.shared` traffic) are unaffected.
     override class func canInit(with request: URLRequest) -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        return currentResponder != nil
+        request.value(forHTTPHeaderField: stubTokenHeader) != nil
     }
 
     override class func canonicalRequest(for request: URLRequest) -> URLRequest {
@@ -98,11 +164,20 @@ final class URLProtocolStub: URLProtocol, @unchecked Sendable {
     }
 
     override func startLoading() {
-        Self.lock.lock()
-        let responder = Self.currentResponder
-        Self.lock.unlock()
-        guard let responder else {
-            client?.urlProtocol(self, didFailWithError: URLError(.cannotLoadFromNetwork))
+        guard let responder = Self.responder(for: request) else {
+            // (c) — fail loudly with a diagnostic so a future regression surfaces as
+            // "no responder for token X" rather than e.g. `sizeMismatch(expected: 4, got: 0)`
+            // from the request falling through to nothing.
+            let token = request.value(forHTTPHeaderField: Self.stubTokenHeader) ?? "<missing>"
+            let error = URLError(
+                .cannotLoadFromNetwork,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "URLProtocolStub: no responder registered for token \(token). "
+                        + "Did the Installation handle deinit before the request fired?"
+                ]
+            )
+            client?.urlProtocol(self, didFailWithError: error)
             return
         }
         do {
@@ -123,10 +198,9 @@ final class URLProtocolStub: URLProtocol, @unchecked Sendable {
 // MARK: - Routed installation + RAII handle
 
 extension URLProtocolStub {
-    /// One leg of a routed stub. The first `Route` in the array whose
-    /// `matches` returns true serves the request. If none match,
-    /// `install(routes:)` throws a descriptive `URLError` so a typo in a
-    /// test path fails loudly instead of silently returning a
+    /// One leg of a routed stub. The first `Route` in the array whose `matches` returns
+    /// true serves the request. If none match, `install(routes:)` throws a descriptive
+    /// `URLError` so a typo in a test path fails loudly instead of silently returning a
     /// `cannotLoadFromNetwork`.
     struct Route: Sendable {
         let matches: @Sendable (URLRequest) -> Bool
@@ -140,12 +214,11 @@ extension URLProtocolStub {
             self.respond = respond
         }
 
-        /// Convenience for the common HTTP method + URL path case (most
-        /// Cliniko service tests). Defaults to `GET`. The method and path
-        /// are normalized once at Route construction (uppercased / leading
-        /// slash enforced) so the per-request match is a pair of plain
-        /// string equality checks — also makes a missing leading slash in
-        /// the call site (`"v1/users"` vs `"/v1/users"`) a non-issue.
+        /// Convenience for the common HTTP method + URL path case (most Cliniko service
+        /// tests). Defaults to `GET`. The method and path are normalized once at Route
+        /// construction (uppercased / leading slash enforced) so the per-request match
+        /// is a pair of plain string equality checks — also makes a missing leading
+        /// slash in the call site (`"v1/users"` vs `"/v1/users"`) a non-issue.
         static func path(
             _ path: String,
             method: String = "GET",
@@ -163,26 +236,25 @@ extension URLProtocolStub {
         }
     }
 
-    /// RAII handle returned from `installScoped(_:)` / `installScoped(routes:)`.
-    /// On `deinit` the handle conditionally clears the stub — only if its
-    /// captured installation token is still current — so a stale handle that
-    /// outlives a newer install will no-op rather than nuke the active stub.
+    /// RAII handle returned from `installScoped(_:)` / `installScoped(routes:)`. On
+    /// `deinit` the handle removes only its own responder from the registry — it cannot
+    /// affect a parallel suite's installation.
     ///
-    /// Assign the return value to a `let`; discarding it would let ARC tear
-    /// the stub down before the test runs. `@unchecked Sendable` mirrors
-    /// `URLProtocolStub`; `deinit` may run on an arbitrary thread but only
-    /// touches lock-protected static state.
+    /// Assign the return value to a `let`; discarding it would let ARC tear the
+    /// responder down before the test runs. `@unchecked Sendable` mirrors
+    /// `URLProtocolStub`; `deinit` may run on an arbitrary thread but only touches
+    /// lock-protected static state.
     final class Installation: @unchecked Sendable {
         let configuration: URLSessionConfiguration
-        private let token: UUID
+        private let token: String
 
-        fileprivate init(configuration: URLSessionConfiguration, token: UUID) {
+        fileprivate init(configuration: URLSessionConfiguration, token: String) {
             self.configuration = configuration
             self.token = token
         }
 
         deinit {
-            URLProtocolStub.resetIfTokenMatches(token)
+            URLProtocolStub.unregister(token: token)
         }
     }
 
@@ -205,30 +277,5 @@ extension URLProtocolStub {
                 ]
             )
         }
-    }
-
-    /// Routed install: dispatches each request to the first matching `Route`.
-    /// The single-closure `install(_:)` form remains available unchanged for
-    /// tests that only stub one endpoint.
-    static func install(routes: [Route]) -> URLSessionConfiguration {
-        install(makeRoutedResponder(routes))
-    }
-
-    /// RAII variant of `install(_:)`. Returns an `Installation` whose `deinit`
-    /// calls `reset()` — drop the manual `tearDown { URLProtocolStub.reset() }`
-    /// when adopting this form. Always assign to a `let`; discarding the
-    /// return value would let ARC tear the stub down immediately.
-    static func installScoped(_ responder: @escaping Responder) -> Installation {
-        let token = UUID()
-        let configuration = installWithToken(responder, token: token)
-        return Installation(configuration: configuration, token: token)
-    }
-
-    /// RAII variant of `install(routes:)`. Same dispatch semantics, lifetime
-    /// tied to the returned handle. Always assign to a `let`.
-    static func installScoped(routes: [Route]) -> Installation {
-        let token = UUID()
-        let configuration = installWithToken(makeRoutedResponder(routes), token: token)
-        return Installation(configuration: configuration, token: token)
     }
 }

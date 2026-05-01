@@ -102,15 +102,11 @@ final class ClinikoClientTests: XCTestCase {
     /// 2xx is success, and the *specific* 2xx code must reach the caller
     /// rather than being smashed to a documented constant.
     ///
-    /// This test set lives in this XCTest file (rather than a separate
-    /// Swift Testing `@Suite`) on purpose: `URLProtocolStub` is a
-    /// process-wide singleton and Swift Testing's `.serialized` trait is
-    /// suite-local, so adding a second Swift Testing suite that stubs
-    /// HTTP triggers cross-suite races against `ModelDownloaderTests`
-    /// (the singleton's `currentResponder` gets clobbered mid-flight).
-    /// Reverting to the XCTest pattern keeps these alongside the rest of
-    /// the file and avoids the race surface until a process-wide
-    /// `URLProtocolStubGate` lands.
+    /// Lives in this XCTest file alongside the rest of `ClinikoClient`'s
+    /// behaviour tests for cohesion. (The historical reason was a
+    /// `URLProtocolStub` cross-suite race that made Swift Testing's
+    /// parallel suites unsafe; #87 fixed that with per-installation
+    /// dispatch, so future Cliniko tests can adopt Swift Testing freely.)
     func test_sendWithStatus_returnsActualStatusFromResponse() async throws {
         let session = makeSession { request in
             let body = try HTTPStubFixture.load("cliniko/responses/user.json")

@@ -5,6 +5,10 @@ import XCTest
 /// network-client tests.
 final class URLProtocolStubTests: XCTestCase {
     override func tearDown() {
+        // No-op since #87 — `URLProtocolStub.reset()` is a documented no-op
+        // because each `install(_:)` registers under its own token. The call
+        // is left here so anyone copying this teardown shape from older code
+        // sees that it's harmless rather than missing.
         URLProtocolStub.reset()
         super.tearDown()
     }
@@ -74,22 +78,163 @@ final class URLProtocolStubTests: XCTestCase {
         }
     }
 
-    func test_reset_clearsInterception() {
-        _ = URLProtocolStub.install { request in
-            guard let url = request.url else { throw URLError(.badURL) }
-            let response = HTTPURLResponse(
-                url: url,
-                statusCode: 200,
-                httpVersion: nil,
+    // MARK: - reset() is a no-op (#87)
+
+    /// `URLProtocolStub.reset()` is a documented no-op since #87 — the
+    /// per-installation registry makes "clear the global slot" both unnecessary
+    /// and unsafe (a parallel suite's `defer { reset() }` would have nuked
+    /// another suite's responder mid-flight). This test pins that behaviour so
+    /// a regression that re-introduces a global clear surfaces here, not as a
+    /// flaky cross-suite race in CI.
+    func test_reset_isNoOp_liveInstallationStillIntercepts() async throws {
+        let config = URLProtocolStub.install { request in
+            let response = try XCTUnwrap(HTTPURLResponse(
+                url: request.url ?? URL(string: "https://example.test")!,
+                statusCode: 204,
+                httpVersion: "HTTP/1.1",
                 headerFields: nil
-            )!
+            ))
             return (response, Data())
         }
+        let session = URLSession(configuration: config)
+
+        // Reset BEFORE the request fires — under pre-#87 semantics this would
+        // null the responder slot and the request would 500 / fail.
         URLProtocolStub.reset()
 
-        let request = URLRequest(url: URL(string: "https://example.test/")!)
-        XCTAssertFalse(URLProtocolStub.canInit(with: request),
-                       "canInit must return false after reset()")
+        let url = try XCTUnwrap(URL(string: "https://example.test/probe"))
+        let (_, response) = try await session.data(from: url)
+        XCTAssertEqual(
+            (response as? HTTPURLResponse)?.statusCode,
+            204,
+            "reset() must not affect a live installation; the per-installation registry"
+                + " keeps each install's responder under its own token"
+        )
+    }
+
+    /// A bare `URLRequest` with no `X-URLProtocolStub-Token` header must not be
+    /// claimed by `URLProtocolStub.canInit(with:)`, even when other
+    /// installations are alive in the registry. This is the property that lets
+    /// arbitrary `URLSession.shared` traffic in the test process pass through
+    /// untouched (only sessions built from `install()`'s configuration carry
+    /// the dispatch token).
+    func test_canInit_returnsFalseForRequestsWithoutToken() {
+        // A live registry entry — its token is not on `request` below. Use
+        // `withExtendedLifetime` rather than `defer { _ = installation }` —
+        // the latter is not honoured by Release-mode ARC, which is free to
+        // release `installation` immediately after the property read.
+        let installation = URLProtocolStub.installScoped { _ in
+            (HTTPURLResponse(), Data())
+        }
+        withExtendedLifetime(installation) {
+            let request = URLRequest(url: URL(string: "https://example.test/")!)
+            XCTAssertFalse(
+                URLProtocolStub.canInit(with: request),
+                "URLProtocolStub must only claim requests carrying its dispatch header,"
+                    + " so untagged URLSession traffic in the test process is unaffected"
+            )
+        }
+    }
+
+    // MARK: - Cross-suite isolation regression (#87)
+
+    /// The dispatch property at the heart of #87: two installations alive at
+    /// the same time each carry their own token, and each request lands on
+    /// the responder registered for *its* token regardless of which
+    /// installation came second.
+    ///
+    /// Pre-#87 this would have failed deterministically: both installations
+    /// shared a single global `currentResponder` slot, the second `install`
+    /// always clobbered the first, and both sessions' requests would have
+    /// landed on the second responder. The `async let` interleaves the
+    /// requests for stress (and to mimic the real race shape) but the
+    /// per-token dispatch is what the assertions actually pin.
+    func test_concurrentInstallations_dispatchToOwnResponderOnly() async throws {
+        let firstURL = try XCTUnwrap(URL(string: "https://first.test/probe"))
+        let secondURL = try XCTUnwrap(URL(string: "https://second.test/probe"))
+
+        let firstStub = URLProtocolStub.installScoped { request in
+            let response = try XCTUnwrap(HTTPURLResponse(
+                url: request.url ?? firstURL,
+                statusCode: 201,
+                httpVersion: "HTTP/1.1",
+                headerFields: nil
+            ))
+            return (response, Data("FIRST".utf8))
+        }
+        let secondStub = URLProtocolStub.installScoped { request in
+            let response = try XCTUnwrap(HTTPURLResponse(
+                url: request.url ?? secondURL,
+                statusCode: 202,
+                httpVersion: "HTTP/1.1",
+                headerFields: nil
+            ))
+            return (response, Data("SECOND".utf8))
+        }
+        let firstSession = URLSession(configuration: firstStub.configuration)
+        let secondSession = URLSession(configuration: secondStub.configuration)
+
+        // Interleave requests through both sessions concurrently. If the
+        // installations shared a global responder slot, results would be
+        // non-deterministic (whichever install ran most recently wins).
+        async let firstResult: (Data, URLResponse) = firstSession.data(from: firstURL)
+        async let secondResult: (Data, URLResponse) = secondSession.data(from: secondURL)
+        let (firstData, firstResponse) = try await firstResult
+        let (secondData, secondResponse) = try await secondResult
+
+        XCTAssertEqual((firstResponse as? HTTPURLResponse)?.statusCode, 201)
+        XCTAssertEqual(firstData, Data("FIRST".utf8))
+        XCTAssertEqual((secondResponse as? HTTPURLResponse)?.statusCode, 202)
+        XCTAssertEqual(secondData, Data("SECOND".utf8))
+    }
+
+    /// Companion to the concurrent-installations test. ARC-driven cleanup of
+    /// one installation (here: the inner installation's deinit at function
+    /// return) must not unregister another installation's responder — each
+    /// `Installation.deinit` knows only its own token, so it can only ever
+    /// remove its own slot from the registry. Pre-#87 the inner install
+    /// would have *replaced* the outer's `currentResponder` and the inner's
+    /// teardown would have left the outer's session pointing at nothing —
+    /// the exact `sizeMismatch(expected: 4, got: 0)` failure mode.
+    func test_droppingOneInstallation_doesNotAffectOther() async throws {
+        // Outer installation alive for the whole test.
+        let outerStub = URLProtocolStub.installScoped { request in
+            let response = try XCTUnwrap(HTTPURLResponse(
+                url: request.url ?? URL(string: "https://outer.test")!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: nil
+            ))
+            return (response, Data("outer-ok".utf8))
+        }
+        let outerSession = URLSession(configuration: outerStub.configuration)
+
+        // Inner installation lives only for the duration of `runInner`. When
+        // the function returns, ARC releases its `Installation` and the
+        // responder slot is unregistered — but only its slot, not the outer's.
+        try await runInner()
+
+        // After the inner installation deinit'd, outer must still intercept.
+        let url = try XCTUnwrap(URL(string: "https://outer.test/probe"))
+        let (data, response) = try await outerSession.data(from: url)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        XCTAssertEqual(data, Data("outer-ok".utf8))
+    }
+
+    private func runInner() async throws {
+        let innerStub = URLProtocolStub.installScoped { request in
+            let response = try XCTUnwrap(HTTPURLResponse(
+                url: request.url ?? URL(string: "https://inner.test")!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: nil
+            ))
+            return (response, Data("inner-ok".utf8))
+        }
+        let innerSession = URLSession(configuration: innerStub.configuration)
+        let url = try XCTUnwrap(URL(string: "https://inner.test/probe"))
+        let (data, _) = try await innerSession.data(from: url)
+        XCTAssertEqual(data, Data("inner-ok".utf8))
     }
 
     // MARK: - Fixture loading (not-found + edge cases)
@@ -319,80 +464,111 @@ final class URLProtocolStubTests: XCTestCase {
     // MARK: - RAII (`installScoped`)
 
     /// Exemplar for `URLProtocolStub.installScoped(_:)`. The returned handle's
-    /// `deinit` calls `reset()` (token-gated) when the handle goes out of
-    /// scope. We delegate to a separate async helper so the handle's lifetime
-    /// ends deterministically at the helper's return — `do { let x = … }`
-    /// blocks do NOT guarantee ARC release at the closing brace, so the
-    /// helper-function form is the reliable shape.
-    func test_installScoped_resetsOnHandleDeinit() async throws {
-        let probeURL = try XCTUnwrap(URL(string: "https://example.test/"))
-        let request = URLRequest(url: probeURL)
+    /// `deinit` removes its responder slot from the per-installation registry
+    /// (not a global "currentResponder" — see #87). We verify by:
+    ///   1. firing a request through the configuration's session while the
+    ///      handle is alive — expect 200,
+    ///   2. dropping the handle inside a helper so ARC actually releases it
+    ///      at function return,
+    ///   3. firing the same request again through the same (still-alive)
+    ///      session — expect the loud "no responder" failure that proves the
+    ///      registry slot was removed (rather than a silent network call).
+    func test_installScoped_unregistersResponderOnHandleDeinit() async throws {
+        let probeURL = try XCTUnwrap(URL(string: "https://example.test/probe"))
 
-        try await runWithScopedInstallation(probeRequest: request)
+        // Helper builds + returns a session whose configuration was tagged
+        // with an Installation that's released the moment the helper returns.
+        let session = try await runWithScopedInstallationReturningSession(probeURL: probeURL)
 
-        // The helper has returned, its `installation` local has been released,
-        // deinit ran, the token-gated reset cleared the responder.
-        XCTAssertFalse(
-            URLProtocolStub.canInit(with: request),
-            "Installation deinit must call URLProtocolStub.reset()"
-        )
+        // Handle has deinit'd; the session still carries the dispatch header
+        // but the registry slot is gone — startLoading() should surface the
+        // descriptive "no responder" URLError.
+        do {
+            _ = try await session.data(from: probeURL)
+            XCTFail("expected loud failure after Installation.deinit removed the responder slot")
+        } catch {
+            let nsError = error as NSError
+            XCTAssertTrue(
+                nsError.localizedDescription.contains("no responder registered for token"),
+                "expected the descriptive URLError from URLProtocolStub.startLoading; got \(nsError.localizedDescription)"
+            )
+        }
     }
 
-    private func runWithScopedInstallation(probeRequest: URLRequest) async throws {
-        let fallback = try XCTUnwrap(URL(string: "https://example.test"))
+    private func runWithScopedInstallationReturningSession(probeURL: URL) async throws -> URLSession {
         let installation = URLProtocolStub.installScoped { request in
             let response = try XCTUnwrap(HTTPURLResponse(
-                url: request.url ?? fallback,
+                url: request.url ?? probeURL,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: nil
+            ))
+            return (response, Data())
+        }
+        let session = URLSession(configuration: installation.configuration)
+
+        // Fire one successful request to prove the responder is wired up
+        // before the handle deinits.
+        let (_, response) = try await session.data(from: probeURL)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        return session
+        // installation released here at function return → deinit unregisters.
+    }
+
+    /// Stale `Installation` deinit must not affect a parallel installation's
+    /// responder. Pre-#87 this was a token-gated reset of a single shared
+    /// slot; under the per-installation registry it is automatic — each handle
+    /// only ever knows its own token and so can only ever remove its own
+    /// entry. This test pins the property by exercising the dispatch path.
+    func test_installScoped_droppingOneHandle_doesNotAffectAnother() async throws {
+        let firstURL = try XCTUnwrap(URL(string: "https://stale.test/first"))
+        let secondURL = try XCTUnwrap(URL(string: "https://stale.test/second"))
+
+        var firstHandle: URLProtocolStub.Installation? = URLProtocolStub.installScoped { request in
+            let response = try XCTUnwrap(HTTPURLResponse(
+                url: request.url ?? firstURL,
                 statusCode: 200,
                 httpVersion: nil,
                 headerFields: nil
             ))
             return (response, Data())
         }
+        // Explicit read so the compiler doesn't flag `firstHandle` as
+        // write-only — the test's whole point is the var-then-nil shape.
+        XCTAssertNotNil(firstHandle, "installScoped must return a handle")
 
-        // Stub is live while the handle is in scope.
-        XCTAssertTrue(URLProtocolStub.canInit(with: probeRequest))
-
-        let dataURL = try XCTUnwrap(URL(string: "https://example.test/"))
-        let session = URLSession(configuration: installation.configuration)
-        let (_, response) = try await session.data(from: dataURL)
-        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
-    }
-
-    /// Stale `Installation` deinit must NOT clobber a newer installation that
-    /// has already taken over the responder. The token-gating in
-    /// `Installation.deinit` is what makes `installScoped` safe even if a
-    /// caller accidentally keeps an old handle alive past the install of the
-    /// next one (e.g. captured in a Task).
-    func test_installScoped_staleHandleDeinit_doesNotClobberNewerInstall() throws {
-        let probeURL = try XCTUnwrap(URL(string: "https://example.test/"))
-        let probe = URLRequest(url: probeURL)
-        let responseURL = try XCTUnwrap(URL(string: "https://example.test"))
-
-        let firstResponse = try makeHTTPResponse(url: responseURL, statusCode: 200, httpVersion: nil)
-        let secondResponse = try makeHTTPResponse(url: responseURL, statusCode: 201, httpVersion: nil)
-
-        var firstHandle: URLProtocolStub.Installation? = URLProtocolStub.installScoped { _ in
-            (firstResponse, Data())
-        }
-        XCTAssertNotNil(firstHandle)
-
-        // A second `installScoped` takes over (different token).
-        let secondHandle = URLProtocolStub.installScoped { _ in
-            (secondResponse, Data())
+        let secondHandle = URLProtocolStub.installScoped { request in
+            let response = try XCTUnwrap(HTTPURLResponse(
+                url: request.url ?? secondURL,
+                statusCode: 201,
+                httpVersion: nil,
+                headerFields: nil
+            ))
+            return (response, Data())
         }
 
-        // Drop the first handle — its deinit's reset is token-gated, so it
-        // should observe a token mismatch and no-op rather than clearing
-        // the second handle's responder.
+        // Need to keep the second session reference around so we can make a
+        // request against it after the first handle goes away.
+        let secondSession = URLSession(configuration: secondHandle.configuration)
+
+        // `withExtendedLifetime` does not have an `async` overload, so use it
+        // inside a `defer` whose synchronous body runs `_fixLifetime` at scope
+        // exit. This is the only optimizer-respected lifetime extension that
+        // composes with `await`. Without it, the optimizer is free to release
+        // `secondHandle` after its last syntactic use (the property read on
+        // the previous line), which would let `Installation.deinit` race the
+        // in-flight request below.
+        defer { withExtendedLifetime(secondHandle) {} }
+
+        // Drop the first handle — its deinit removes only the first
+        // responder slot, leaving second's registry entry intact.
         firstHandle = nil
 
-        XCTAssertTrue(
-            URLProtocolStub.canInit(with: probe),
-            "Stale Installation.deinit must not reset a newer installation's responder"
+        let (_, response) = try await secondSession.data(from: secondURL)
+        XCTAssertEqual(
+            (response as? HTTPURLResponse)?.statusCode,
+            201,
+            "Dropping firstHandle must not unregister secondHandle's responder"
         )
-
-        // Touch the second handle so the optimizer cannot pre-deinit it.
-        _ = secondHandle.configuration
     }
 }
