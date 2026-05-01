@@ -48,6 +48,12 @@ public actor ClinikoPatientService: ClinikoPatientSearching {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
         let response: PatientSearchResponse = try await client.send(.patientSearch(query: trimmed))
-        return response.patients
+        // Filter out archived rows (#127). Cliniko's `q[]=last_name:~`
+        // filter does NOT exclude archived patients server-side, and
+        // archived rows commonly have stripped name fields — surfacing
+        // them confuses the picker UI and makes selection ambiguous
+        // (which Jane Doe?). Mirrors the reference impl in
+        // `epc-letter-generation`'s `ClinikoPatientService.toDomainModel`.
+        return response.patients.filter { $0.archivedAt == nil }
     }
 }

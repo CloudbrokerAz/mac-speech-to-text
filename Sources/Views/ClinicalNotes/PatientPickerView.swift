@@ -87,7 +87,7 @@ struct PatientPickerView: View {
             viewModel.selectPatient(patient)
         } label: {
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(patient.firstName) \(patient.lastName)")
+                Text(patient.displayName)
                     .font(.body)
                     .foregroundStyle(.primary)
                 HStack(spacing: 8) {

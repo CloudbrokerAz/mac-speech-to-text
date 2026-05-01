@@ -136,9 +136,10 @@ final class SessionStore {
 
     /// Set the Cliniko patient selection. The `OpaqueClinikoID` type
     /// tag (#59) means callers can't accidentally pass in a free-form
-    /// string — they must construct from a numeric `Patient.id` (the
-    /// Cliniko-response shape) or from a `rawValue` string with a
-    /// documented provenance (Codable round-trip, test wiring).
+    /// string — they must construct from a `String` `Patient.id` via
+    /// `OpaqueClinikoID(_:String)` (the Cliniko-response shape per
+    /// #127) or from a `rawValue` string with a documented provenance
+    /// (Codable round-trip, test wiring).
     ///
     /// `displayName` is captured by the picker (#9) at selection
     /// time so the export confirmation surface (#14) can render a

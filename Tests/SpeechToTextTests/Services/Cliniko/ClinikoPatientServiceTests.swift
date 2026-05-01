@@ -54,13 +54,164 @@ final class ClinikoPatientServiceTests: XCTestCase {
         let patients = try await service.searchPatients(query: "sample")
 
         XCTAssertEqual(patients.count, 3)
-        XCTAssertEqual(patients.first?.id, 1001)
+        XCTAssertEqual(patients.first?.id, "1001")
         XCTAssertEqual(patients.first?.firstName, "Sample")
         XCTAssertEqual(patients.first?.lastName, "Patient")
         XCTAssertEqual(patients.first?.dateOfBirth, "1980-01-15")
         XCTAssertEqual(patients.first?.email, "sample.patient@example.test")
         XCTAssertNil(patients.last?.dateOfBirth)
         XCTAssertNil(patients.last?.email)
+    }
+
+    /// Regression pin for #127. Cliniko returns `null` for `first_name`
+    /// and/or `last_name` on archived / contact-only / incomplete-record
+    /// rows. Earlier `Patient` declared both non-optional, so any
+    /// populated response containing one of these rows surfaced as
+    /// `ClinikoError.decoding` and the picker landed on
+    /// "unexpected response shape". Both the single-token URL path
+    /// (`q[]=last_name:~Doe`) and the multi-token path
+    /// (`q[]=first_name:~Jane&q[]=last_name:~Doe`) route through the
+    /// same `[Patient]` decode, so this test exercises the single-
+    /// token URL and the sibling below covers the multi-token URL.
+    func test_searchPatients_partialNames_singleTokenURL_decodesCleanly() async throws {
+        let captured = CapturedRequestBox()
+        let service = try makeService { request in
+            captured.set(request)
+            let body = try HTTPStubFixture.load(
+                "cliniko/responses/patients_search_partial_names.json"
+            )
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "https://example.test")!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (response, body)
+        }
+
+        let patients = try await service.searchPatients(query: "doe")
+
+        // Single-token URL — pin the wire shape for the regression.
+        let url = try XCTUnwrap(captured.value?.url)
+        let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        XCTAssertEqual(components.queryItems?.first?.value, "last_name:~doe")
+
+        // Archived row (id=2004) is filtered server-shape-side; the
+        // first three rows survive. Each row exercises a different
+        // null-name shape: only first_name, only last_name, both null.
+        XCTAssertEqual(patients.count, 3)
+        XCTAssertEqual(patients[0].id, "2001")
+        XCTAssertEqual(patients[0].firstName, "Sample")
+        XCTAssertNil(patients[0].lastName)
+        XCTAssertEqual(patients[1].id, "2002")
+        XCTAssertNil(patients[1].firstName)
+        XCTAssertEqual(patients[1].lastName, "Subject")
+        XCTAssertEqual(patients[2].id, "2003")
+        XCTAssertNil(patients[2].firstName)
+        XCTAssertNil(patients[2].lastName)
+        // Display-name fallback — the both-null row must render
+        // something the picker UI can display.
+        XCTAssertEqual(patients[2].displayName, "Unnamed patient")
+    }
+
+    /// Regression pin for #127 — same fixture, multi-token URL path.
+    /// `Jane Doe` → `q[]=first_name:~Jane&q[]=last_name:~Doe`.
+    func test_searchPatients_partialNames_multiTokenURL_decodesCleanly() async throws {
+        let captured = CapturedRequestBox()
+        let service = try makeService { request in
+            captured.set(request)
+            let body = try HTTPStubFixture.load(
+                "cliniko/responses/patients_search_partial_names.json"
+            )
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "https://example.test")!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (response, body)
+        }
+
+        let patients = try await service.searchPatients(query: "Jane Doe")
+
+        let url = try XCTUnwrap(captured.value?.url)
+        let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        let items = components.queryItems ?? []
+        XCTAssertEqual(items.count, 2)
+        XCTAssertEqual(items[0].value, "first_name:~Jane")
+        XCTAssertEqual(items[1].value, "last_name:~Doe")
+        // Same three surviving rows as the single-token path — both
+        // routes share the `[Patient]` decode.
+        XCTAssertEqual(patients.count, 3)
+    }
+
+    /// Archived rows are filtered out at the service layer (#127).
+    /// Cliniko's `q[]=last_name:~` filter does not exclude archived
+    /// patients server-side; surfacing them in the picker confuses
+    /// selection because their name fields are typically stripped.
+    /// This test pins the filter so a future "show archived" toggle
+    /// becomes an explicit choice rather than an accidental regression.
+    func test_searchPatients_filtersArchivedRows() async throws {
+        let service = try makeService { request in
+            let body = try HTTPStubFixture.load(
+                "cliniko/responses/patients_search_partial_names.json"
+            )
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "https://example.test")!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (response, body)
+        }
+
+        let patients = try await service.searchPatients(query: "row")
+
+        // Fixture has 4 rows — id=2004 is archived (`archived_at` is
+        // set). The service should drop it so only 3 reach the UI.
+        XCTAssertEqual(patients.count, 3)
+        XCTAssertFalse(patients.contains { $0.id == "2004" })
+    }
+
+    /// PHI guard for the partial-names path (#127). The fixture
+    /// deliberately does NOT round-trip through `.decoding` — that
+    /// covers the non-PHI structural log already pinned by
+    /// `test_searchPatients_malformedJSON_mapsToDecoding`. This test
+    /// instead asserts the surfaced `Patient` array's display strings
+    /// can be rendered by the picker without leaking the row IDs as
+    /// PHI-shaped tokens into Swift's reflection-based interpolation.
+    /// Specifically: the both-null row's `displayName` must be the
+    /// fallback string, never a Swift-reflection echo of `nil`.
+    func test_searchPatients_partialNames_displayNameNeverLeaksOptionalReflection() async throws {
+        let service = try makeService { request in
+            let body = try HTTPStubFixture.load(
+                "cliniko/responses/patients_search_partial_names.json"
+            )
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "https://example.test")!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (response, body)
+        }
+
+        let patients = try await service.searchPatients(query: "guard")
+
+        for patient in patients {
+            // Reflection-based interpolation of an Optional renders as
+            // `Optional("...")` or `nil`. The picker view-model used to
+            // build a display name with raw `\(patient.firstName)`,
+            // which would surface `Optional(...)` after the field
+            // turned nullable. `displayName` is the fix. Pin that the
+            // render string never carries that form.
+            XCTAssertFalse(patient.displayName.contains("Optional("),
+                           "displayName should never echo Swift's Optional reflection")
+            XCTAssertFalse(patient.displayName.contains("nil"),
+                           "displayName should never echo a literal nil")
+            XCTAssertFalse(patient.displayName.isEmpty,
+                           "displayName should always be non-empty (fallback covers all-nil rows)")
+        }
     }
 
     /// End-to-end pin (#101): a single-word query produces Cliniko's

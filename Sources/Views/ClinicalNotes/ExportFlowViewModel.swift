@@ -71,7 +71,9 @@ enum ExportFlowState: Sendable, Equatable {
 /// the actual SOAP body never lands here. The view renders "Subjective:
 /// 412 chars" not "Subjective: '...content...'".
 struct ExportSummary: Sendable, Equatable {
-    /// Patient ID (opaque Cliniko ID, `OpaqueClinikoID(_:Int)` form).
+    /// Patient ID (opaque Cliniko ID, `OpaqueClinikoID(_:String)` form
+    /// per Cliniko's documented `string($int64)` patient-id wire shape —
+    /// see #127).
     let patientID: OpaqueClinikoID
     /// Patient name for display. The picker captures this at
     /// selection time so the export sheet doesn't have to refetch.
@@ -368,9 +370,13 @@ final class ExportFlowViewModel: Identifiable {
             return
         }
         guard let patientIDInt = Int(summary.patientID.rawValue) else {
-            // Defensive — the picker constructs via OpaqueClinikoID(_:Int),
-            // so `intValue` should always succeed. This branch fires
-            // only for tampered Codable round-trips.
+            // Cliniko's documented `Patient.id` shape is `string($int64)`
+            // (#127). In practice every tenant emits a numeric literal
+            // and `TreatmentNoteExporter` still speaks `Int`, so this
+            // conversion succeeds for production rows. A non-numeric
+            // value reaches here only via a tampered Codable round-trip
+            // or a future Cliniko shape change — surface as
+            // `.patientIDMalformed` rather than crash.
             state = .failed(.sessionState(.patientIDMalformed))
             logger.error("ExportFlowViewModel: confirm blocked — patientID malformed")
             return
