@@ -148,22 +148,55 @@ struct ExportFlowViewModelTests {
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
         let deadline = Date().addingTimeInterval(timeout)
-        while true {
+        polling: while true {
             switch viewModel.state {
             case .failed, .succeeded:
                 return
             default:
                 // Check the deadline AFTER reading state so a transition
                 // landing on the very last loop iteration is not
-                // misreported as a timeout.
-                if Date() >= deadline { break }
+                // misreported as a timeout. `break polling` is a labelled
+                // break — `break` alone would only exit the switch and
+                // re-enter `while true` on the next iteration (Gemini
+                // review on PR #135).
+                if Date() >= deadline { break polling }
                 try await Task.sleep(for: .milliseconds(5))
             }
         }
-        Issue.record(
-            "waitForTerminal timed out after \(timeout)s; state=\(viewModel.state)",
-            sourceLocation: sourceLocation
-        )
+        // Final post-loop check picks up a transition that landed on
+        // the last iteration before the deadline tripped.
+        switch viewModel.state {
+        case .failed, .succeeded:
+            return
+        default:
+            Issue.record(
+                "waitForTerminal timed out after \(timeout)s; state=\(Self.structuralName(viewModel.state))",
+                sourceLocation: sourceLocation
+            )
+        }
+    }
+
+    /// Structural-only `ExportFlowState` case name for log
+    /// interpolation. Required because `.confirming(ExportSummary)`'s
+    /// payload contains `patientDisplayName`, and per AGENTS.md
+    /// §"Security / PHI" — and the project styleguide flagging PHI
+    /// leaks as blocking — even synthetic test logs must never
+    /// interpolate the full state. `ExportFailure` case names come
+    /// from `ExportFlowViewModel.caseName(_:)`, which is PHI-safe by
+    /// construction (`Sources/Views/ClinicalNotes/ExportFlowViewModel.swift`).
+    private static func structuralName(_ state: ExportFlowState) -> String {
+        switch state {
+        case .idle:
+            return ".idle"
+        case .confirming:
+            return ".confirming"
+        case .uploading:
+            return ".uploading"
+        case .succeeded:
+            return ".succeeded"
+        case .failed(let failure):
+            return ".failed(\(ExportFlowViewModel.caseName(failure)))"
+        }
     }
 
     // MARK: - Confirming state
@@ -178,7 +211,7 @@ struct ExportFlowViewModelTests {
             viewModel.enterConfirming()
 
             guard case .confirming(let summary) = viewModel.state else {
-                Issue.record("expected .confirming, got \(viewModel.state)")
+                Issue.record("expected .confirming, got \(Self.structuralName(viewModel.state))")
                 return
             }
             #expect(summary.patientID == OpaqueClinikoID(1001))
@@ -211,7 +244,7 @@ struct ExportFlowViewModelTests {
             if case .failed(.sessionState(.noActiveSession)) = viewModel.state {
                 // expected
             } else {
-                Issue.record("expected .failed(.sessionState(.noActiveSession)), got \(viewModel.state)")
+                Issue.record("expected .failed(.sessionState(.noActiveSession)), got \(Self.structuralName(viewModel.state))")
             }
         }
     }
@@ -230,7 +263,7 @@ struct ExportFlowViewModelTests {
             if case .failed(.sessionState(.noPatient)) = viewModel.state {
                 // expected
             } else {
-                Issue.record("expected .failed(.sessionState(.noPatient)), got \(viewModel.state)")
+                Issue.record("expected .failed(.sessionState(.noPatient)), got \(Self.structuralName(viewModel.state))")
             }
         }
     }
@@ -285,7 +318,7 @@ struct ExportFlowViewModelTests {
             try await self.waitForTerminal(viewModel)
 
             guard case .succeeded(let report) = viewModel.state else {
-                Issue.record("expected .succeeded, got \(viewModel.state)")
+                Issue.record("expected .succeeded, got \(Self.structuralName(viewModel.state))")
                 return
             }
             #expect(report.createdNoteID == OpaqueClinikoID(9876543))
@@ -323,7 +356,7 @@ struct ExportFlowViewModelTests {
             if case .failed(.sessionState(.appointmentIDMalformed)) = viewModel.state {
                 // expected
             } else {
-                Issue.record("expected .failed(.sessionState(.appointmentIDMalformed)), got \(viewModel.state)")
+                Issue.record("expected .failed(.sessionState(.appointmentIDMalformed)), got \(Self.structuralName(viewModel.state))")
             }
         }
     }
@@ -346,7 +379,7 @@ struct ExportFlowViewModelTests {
             if case .failed(.sessionState(.appointmentUnresolved)) = viewModel.state {
                 // expected
             } else {
-                Issue.record("expected .failed(.sessionState(.appointmentUnresolved)), got \(viewModel.state)")
+                Issue.record("expected .failed(.sessionState(.appointmentUnresolved)), got \(Self.structuralName(viewModel.state))")
             }
         }
     }
@@ -402,7 +435,7 @@ struct ExportFlowViewModelTests {
             if case .failed(.transport(.notConnectedToInternet)) = viewModel.state {
                 // expected
             } else {
-                Issue.record("expected .failed(.transport(.notConnectedToInternet)), got \(viewModel.state)")
+                Issue.record("expected .failed(.transport(.notConnectedToInternet)), got \(Self.structuralName(viewModel.state))")
             }
         }
     }
@@ -424,7 +457,7 @@ struct ExportFlowViewModelTests {
                 // expected — UI must NOT offer one-tap retry, the note
                 // may have landed on Cliniko's side.
             } else {
-                Issue.record("expected .failed(.responseUndecodable), got \(viewModel.state)")
+                Issue.record("expected .failed(.responseUndecodable), got \(Self.structuralName(viewModel.state))")
             }
         }
     }
@@ -452,7 +485,7 @@ struct ExportFlowViewModelTests {
             if case .failed(.rateLimited(let retryAfter)) = viewModel.state {
                 #expect(retryAfter == 5)
             } else {
-                Issue.record("expected .failed(.rateLimited), got \(viewModel.state)")
+                Issue.record("expected .failed(.rateLimited), got \(Self.structuralName(viewModel.state))")
             }
             // Countdown started — value should be set.
             #expect((viewModel.rateLimitCountdownRemaining ?? 0) > 0)
@@ -514,7 +547,7 @@ struct ExportFlowViewModelTests {
             if case .idle = viewModel.state {
                 // expected
             } else {
-                Issue.record("expected .idle, got \(viewModel.state)")
+                Issue.record("expected .idle, got \(Self.structuralName(viewModel.state))")
             }
         }
     }
@@ -616,7 +649,7 @@ struct ExportFlowViewModelTests {
 
             guard case .failed(let actual) = viewModel.state else {
                 Issue.record(
-                    "expected .failed(\(expected)), got \(viewModel.state)",
+                    "expected .failed(\(expected)), got \(Self.structuralName(viewModel.state))",
                     sourceLocation: sourceLocation
                 )
                 return
