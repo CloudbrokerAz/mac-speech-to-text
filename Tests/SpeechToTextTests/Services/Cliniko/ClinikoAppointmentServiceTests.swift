@@ -165,18 +165,28 @@ final class ClinikoAppointmentServiceTests: XCTestCase {
         // 4 rows, all decode. Each represents the same instant
         // (2026-04-25 09:00:00 UTC, AEST = UTC+10) modulo fractional
         // seconds.
-        XCTAssertEqual(appointments.count, 4)
-        let utcInstant = ISO8601DateFormatter().date(from: "2026-04-25T09:00:00Z")
-        let utcFractional = ISO8601DateFormatter().date(from: "2026-04-25T09:00:00Z")?
-            .addingTimeInterval(0.123)
         // 7001: +10:00 form (with colon) at 19:00 AEST = 09:00 UTC.
         // 7002: +1000 form (no colon) at 19:00 AEST = 09:00 UTC.
         // 7003: Z form with fractional seconds 09:00:00.123Z.
         // 7004: +10:00 form with fractional seconds 19:00:00.123+10:00.
+        XCTAssertEqual(appointments.count, 4)
+        let utcInstant = try XCTUnwrap(
+            ISO8601DateFormatter().date(from: "2026-04-25T09:00:00Z")
+        )
+        let utcFractionalReference = utcInstant.timeIntervalSinceReferenceDate + 0.123
+
         XCTAssertEqual(appointments.first { $0.id == "7001" }?.startsAt, utcInstant)
         XCTAssertEqual(appointments.first { $0.id == "7002" }?.startsAt, utcInstant)
-        XCTAssertEqual(appointments.first { $0.id == "7003" }?.startsAt, utcFractional)
-        XCTAssertEqual(appointments.first { $0.id == "7004" }?.startsAt, utcFractional)
+        // Fractional-second equality compares with a tolerance because
+        // `addingTimeInterval(0.123)` and direct ISO8601 fractional
+        // parse return values that differ by sub-microsecond
+        // floating-point representation drift. The tolerance is
+        // 1ms — well below the sub-second precision we care about
+        // semantically (it's a clinical note, not a financial trade).
+        let fractional7003 = try XCTUnwrap(appointments.first { $0.id == "7003" }?.startsAt)
+        let fractional7004 = try XCTUnwrap(appointments.first { $0.id == "7004" }?.startsAt)
+        XCTAssertEqual(fractional7003.timeIntervalSinceReferenceDate, utcFractionalReference, accuracy: 0.001)
+        XCTAssertEqual(fractional7004.timeIntervalSinceReferenceDate, utcFractionalReference, accuracy: 0.001)
     }
 
     // MARK: - Window definition + URL filters
@@ -252,9 +262,32 @@ final class ClinikoAppointmentServiceTests: XCTestCase {
                        "/v1/individual_appointments")
         // URL absoluteString is percent-encoded; the literal id must
         // appear as the value half of a single q[]=patient_id:=... item.
+        // Per RFC 3986, `/` is permitted unencoded in query values
+        // (only `?` and `#` terminate the query component), so
+        // URLComponents leaves it as-is on every macOS version. The
+        // safety property is that `=` and `&` ARE encoded, which is
+        // what stops a tampered id from smuggling a sibling filter.
         let absolute = url.absoluteString
-        XCTAssertTrue(absolute.contains("q%5B%5D=patient_id:%3Dweird%20id%2Fwith%2Fslashes"),
-                      "expected encoded id in q[]=patient_id value, got: \(absolute)")
+        XCTAssertTrue(absolute.contains("q%5B%5D=patient_id:%3Dweird%20id/with/slashes"),
+                      "expected encoded id (space → %20, `/` left as-is per RFC 3986) in q[]=patient_id value, got: \(absolute)")
+        // Critical: `=` and `&` from the input must be encoded so a
+        // tampered id can't introduce a sibling query parameter.
+        let captured2 = CapturedRequestBox()
+        let service2 = try makeService { request in
+            captured2.set(request)
+            let body = try HTTPStubFixture.load("cliniko/responses/patient_appointments.json")
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "https://example.test")!,
+                statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil
+            )!
+            return (response, body)
+        }
+        _ = try await service2.recentAndTodayAppointments(
+            forPatientID: "id&extra=evil", reference: Date()
+        )
+        let evilURL = try XCTUnwrap(captured2.value?.url)
+        XCTAssertTrue(evilURL.absoluteString.contains("id%26extra%3Devil"),
+                      "expected `&` and `=` percent-encoded so a tampered id can't smuggle a sibling filter, got: \(evilURL.absoluteString)")
     }
 
     // MARK: - Error mapping
