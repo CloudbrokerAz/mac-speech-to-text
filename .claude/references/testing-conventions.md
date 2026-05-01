@@ -116,15 +116,16 @@ Reference adopters:
 
 - `Tests/SpeechToTextTests/Services/ModelDownloaderTests.swift`
 - `Tests/SpeechToTextTests/Services/Cliniko/ClinikoStatusThreadingTests.swift`
-
-**Known gap:**
-`Tests/SpeechToTextTests/ViewModels/ExportFlowViewModelTests.swift` is
-also a Swift Testing `@Suite` that installs `URLProtocolStub`, but it
-is `@MainActor`-isolated and migrating it requires resolving the
-`@MainActor` × `@Sendable` interaction across 22 test bodies. Tracked
-as a follow-up to #85 — until the migration lands, the suite is
-protected only by its `.serialized` trait and remains a cross-suite
-race candidate against the gated suites above.
+- `Tests/SpeechToTextTests/ViewModels/ExportFlowViewModelTests.swift`
+  — `@MainActor`-isolated suite. The `@MainActor` × `@Sendable`
+  interaction is resolved by a local `runGated(responder:body:)`
+  helper that takes a `@MainActor @Sendable (URLSessionConfiguration)
+  async throws -> Void` closure. The gate's outer body runs off
+  `@MainActor`; the trailing closure hops back onto `@MainActor` so
+  the test can mutate the SwiftUI-bound `ExportFlowViewModel`
+  directly. Per #133 the suite no longer carries a `.serialized`
+  trait — the gate provides cross-suite mutual exclusion that
+  `.serialized` (which is suite-local) cannot.
 
 ---
 
