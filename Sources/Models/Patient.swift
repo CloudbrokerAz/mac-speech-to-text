@@ -107,8 +107,13 @@ public struct Patient: Decodable, Identifiable, Sendable {
     /// safety-disclaimer copy (#12). Localise via `String(localized:)`
     /// once the localisation strategy lands; tracked outside this issue.
     public var displayName: String {
+        // Trim each part so whitespace-only Cliniko values (e.g. `" "`,
+        // which a stripped-but-not-null field can carry) collapse to
+        // empty and fall through to the "Unnamed patient" fallback.
+        // Without trimming, the picker would render double spaces or
+        // a leading/trailing space when one part is whitespace-only.
         let parts = [firstName, lastName]
-            .compactMap { $0 }
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         return parts.isEmpty ? "Unnamed patient" : parts.joined(separator: " ")
     }

@@ -44,6 +44,34 @@ struct PatientTests {
         #expect(patient.displayName == "Unnamed patient")
     }
 
+    @Test("whitespace-only name fields fall back like nil")
+    func displayName_whitespaceOnly_fallback() {
+        // Cliniko can carry stripped-but-not-null fields as a single
+        // space or other whitespace. Without trimming, the picker
+        // would render `" "` or double-spaces depending on which side
+        // was stripped — both visually broken. The helper trims each
+        // part so whitespace-only collapses to empty and falls
+        // through to the fallback.
+        let bothWhitespace = Patient(id: "1", firstName: "   ", lastName: "\t\n")
+        #expect(bothWhitespace.displayName == "Unnamed patient")
+
+        let oneWhitespace = Patient(id: "2", firstName: " ", lastName: "Patient")
+        #expect(oneWhitespace.displayName == "Patient")
+    }
+
+    @Test("renders no leading/trailing space when one part is empty")
+    func displayName_noBoundarySpaces() {
+        // Belt-and-braces: ensure no callsite ever sees a leading or
+        // trailing space character even on the corner cases.
+        let firstOnly = Patient(id: "1", firstName: "Sample", lastName: nil)
+        #expect(!firstOnly.displayName.hasPrefix(" "))
+        #expect(!firstOnly.displayName.hasSuffix(" "))
+
+        let lastOnly = Patient(id: "1", firstName: nil, lastName: "Patient")
+        #expect(!lastOnly.displayName.hasPrefix(" "))
+        #expect(!lastOnly.displayName.hasSuffix(" "))
+    }
+
     @Test("empty first plus real last renders just the real one")
     func displayName_emptyFirst_realLast() {
         let patient = Patient(id: "1", firstName: "", lastName: "Patient")
