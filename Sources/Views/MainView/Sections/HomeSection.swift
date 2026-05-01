@@ -148,12 +148,16 @@ struct HomeSection: View {
             return .ignored
         }
         .onAppear {
-            // Reload settings on appear to ensure fresh state. The
-            // Clinical Notes trigger gate (#97) is refreshed by the
-            // `.task` modifier above — it re-fires on each appearance,
-            // so a duplicate `Task { await refreshClinicalNotesGate() }`
-            // here would be a redundant Keychain read with the same
-            // answer. Mirrors the single-source pattern in
+            // Reload settings on appear so the toggle-mode row
+            // (`if settings.ui.recordingMode == .toggle`) reflects
+            // changes made in other sections without an app restart.
+            settings = settingsService.load()
+            // The Clinical Notes trigger gate (#97) is refreshed by
+            // the `.task` modifier above — it re-fires on each
+            // appearance, so a duplicate
+            // `Task { await refreshClinicalNotesGate() }` here would
+            // be a redundant Keychain read with the same answer.
+            // Mirrors the single-source pattern in
             // `ClinicalNotesSection.refreshState`.
             // Set initial focus to microphone card if no permissions granted.
             // Defer through the runloop so SwiftUI's FocusBridge applies the
