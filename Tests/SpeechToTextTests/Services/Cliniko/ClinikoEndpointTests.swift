@@ -35,7 +35,7 @@ struct ClinikoEndpointTests {
         #expect(endpoint.resource == .patient)
     }
 
-    @Test("patientAppointments is a GET with id-template")
+    @Test("patientAppointments is a GET against /individual_appointments with no bound IDs in the template")
     func patientAppointmentsShape() {
         let endpoint = ClinikoEndpoint.patientAppointments(
             patientID: "12345",
@@ -43,7 +43,12 @@ struct ClinikoEndpointTests {
             to: Date(timeIntervalSince1970: 86_400)
         )
         #expect(endpoint.method == .get)
-        #expect(endpoint.pathTemplate == "/patients/:id/appointments")
+        // Path template flipped in #129. The patient id is no longer in
+        // the path; it lives in `q[]=patient_id:=...`. The template names
+        // the structural q[] keys present (`patient_id`, `starts_at`)
+        // without their values so logging at `privacy: .public` stays
+        // PHI-safe.
+        #expect(endpoint.pathTemplate == "/individual_appointments?q[]={patient_id}&q[]={starts_at}")
         // The bound id MUST NOT be in the template (PHI logging rule).
         #expect(!endpoint.pathTemplate.contains("12345"))
         #expect(endpoint.isIdempotent)
@@ -151,21 +156,34 @@ struct ClinikoEndpointTests {
         }
     }
 
-    @Test("patientAppointments URL embeds id + ISO8601 dates")
+    @Test("patientAppointments URL hits /individual_appointments with the full Cliniko filter set")
     func patientAppointmentsURL() {
         let from = Date(timeIntervalSince1970: 0)
         let to = Date(timeIntervalSince1970: 86_400)
         let url = ClinikoEndpoint.patientAppointments(patientID: "12345", from: from, to: to)
             .buildURL(against: baseURL)
-        let absolute = url?.absoluteString ?? ""
-        #expect(absolute.contains("/v1/patients/12345/appointments"))
-        #expect(absolute.contains("from="))
-        #expect(absolute.contains("to="))
-        // ISO8601 1970-01-01 / 1970-01-02 — exact format may include a "Z".
-        #expect(absolute.contains("1970-01-01T00%3A00%3A00Z") || absolute.contains("1970-01-01T00:00:00Z"))
+        let components = url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+        let items = components?.queryItems ?? []
+
+        #expect(components?.path == "/v1/individual_appointments")
+
+        // Pin every q[] / sort / order / per_page query item present (one
+        // assertion per filter so a regression names the missing one). The
+        // server-side q[]=cancelled_at:!? is what keeps cancelled rows
+        // off the picker; archived_at + did_not_arrive are filtered
+        // client-side post-decode (see ClinikoAppointmentService).
+        let qValues = items.filter { $0.name == "q[]" }.compactMap(\.value)
+        #expect(qValues.contains("patient_id:=12345"), "got \(qValues)")
+        #expect(qValues.contains("starts_at:>=1970-01-01T00:00:00Z"), "got \(qValues)")
+        #expect(qValues.contains("starts_at:<=1970-01-02T00:00:00Z"), "got \(qValues)")
+        #expect(qValues.contains("cancelled_at:!?"), "got \(qValues)")
+
+        #expect(items.first { $0.name == "sort" }?.value == "starts_at")
+        #expect(items.first { $0.name == "order" }?.value == "desc")
+        #expect(items.first { $0.name == "per_page" }?.value == "50")
     }
 
-    @Test("patientAppointments percent-encodes weird patient IDs")
+    @Test("patientAppointments percent-encodes weird patient IDs in the q[]=patient_id query value")
     func patientAppointmentsPercentEncodesID() {
         let url = ClinikoEndpoint.patientAppointments(
             patientID: "12 345/abc",
@@ -173,10 +191,30 @@ struct ClinikoEndpointTests {
             to: Date(timeIntervalSince1970: 1)
         ).buildURL(against: baseURL)
         let absolute = url?.absoluteString ?? ""
-        // Space → %20 and slash → %2F, so the id stays a single path
-        // segment between `/patients/` and `/appointments`.
-        #expect(absolute.contains("/v1/patients/12%20345%2Fabc/appointments"),
+
+        // Patient id moved into the q[]=patient_id:=... query value in
+        // #129. URLComponents percent-encodes only the characters that
+        // would actually break the URL — `=` → `%3D`, `&` → `%26`, ` `
+        // → `%20`, `?` → `%3F`. Per RFC 3986, `/` is permitted unencoded
+        // in query values (only `?` and `#` terminate the query
+        // component), so URLComponents leaves it as-is. The safety
+        // property we care about is that no character can introduce a
+        // sibling query parameter or smuggle filter syntax — `=` and
+        // `&` are both encoded, which is what protects us.
+        #expect(absolute.contains("q%5B%5D=patient_id:%3D12%20345/abc"),
                 "got \(absolute)")
+        // The path stays the static template — the id can't sneak back
+        // into a `/patients/<id>/` segment.
+        #expect(!absolute.contains("/v1/patients/"), "patient id leaked into path")
+        // Critical: `=` and `&` from the input ARE encoded.
+        let withSibling = ClinikoEndpoint.patientAppointments(
+            patientID: "id&extra=evil",
+            from: Date(timeIntervalSince1970: 0),
+            to: Date(timeIntervalSince1970: 1)
+        ).buildURL(against: baseURL)
+        let evilAbsolute = withSibling?.absoluteString ?? ""
+        #expect(evilAbsolute.contains("id%26extra%3Devil"),
+                "expected `&` and `=` to be percent-encoded so a tampered id can't smuggle a sibling filter, got: \(evilAbsolute)")
     }
 
     @Test("createTreatmentNote URL is /v1/treatment_notes")

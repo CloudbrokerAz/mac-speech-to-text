@@ -154,8 +154,9 @@ final class SessionStore {
 
     /// Set the Cliniko appointment selection. Same `OpaqueClinikoID`
     /// type-tag invariant as `setSelectedPatient(id:)` — the picker
-    /// constructs from the numeric `Appointment.id`; tests use
-    /// `init(rawValue:)` for deterministic literals.
+    /// constructs from the `String` `Appointment.id` via
+    /// `OpaqueClinikoID(_:String)` (the Cliniko-response shape per #129);
+    /// tests use `init(rawValue:)` for deterministic literals.
     func setSelectedAppointment(id: OpaqueClinikoID?) {
         guard active != nil else { return }
         active?.selectedAppointmentID = id

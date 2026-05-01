@@ -200,6 +200,13 @@ enum ExportFailure: Error, Sendable, Equatable {
         /// non-numeric Cliniko ID shape entered. Either way, we
         /// can't build the wire payload.
         case patientIDMalformed
+        /// The selected appointment's `OpaqueClinikoID.rawValue` could
+        /// not be parsed as `Int` — same class as `patientIDMalformed`
+        /// (#127), now applied to `Appointment.id` after #129 flipped
+        /// it to `String`. Without this guard, a malformed appointment
+        /// id would silently degrade the export to a general note,
+        /// losing the appointment linkage with no user-visible signal.
+        case appointmentIDMalformed
         /// `appointment` resolved to `.unset` — the practitioner
         /// hasn't chosen between "an appointment" and "no
         /// appointment". The confirm UI is gated on this; reaching
@@ -384,6 +391,22 @@ final class ExportFlowViewModel: Identifiable {
         guard let notes = sessionStore.active?.draftNotes else {
             state = .failed(.sessionState(.noDraftNotes))
             logger.error("ExportFlowViewModel: confirm blocked — no draft notes")
+            return
+        }
+
+        // Mirror the patientIDMalformed guard for the appointment
+        // boundary. Cliniko's `Appointment.id` is documented as
+        // `string($int64)` (post-#129); in practice every tenant emits
+        // numeric strings and `Int(rawValue)` succeeds. A non-numeric
+        // value reaches here only via a tampered Codable round-trip
+        // or a future Cliniko shape change — surface as
+        // `.appointmentIDMalformed` rather than silently degrading
+        // the export to a general note (which would lose the
+        // appointment linkage with no user-visible signal).
+        if case .appointment(let opaqueID) = summary.appointment,
+           Int(opaqueID.rawValue) == nil {
+            state = .failed(.sessionState(.appointmentIDMalformed))
+            logger.error("ExportFlowViewModel: confirm blocked — appointmentID malformed")
             return
         }
 
@@ -647,6 +670,7 @@ final class ExportFlowViewModel: Identifiable {
             case .noActiveSession: return "sessionState.noActiveSession"
             case .noPatient: return "sessionState.noPatient"
             case .patientIDMalformed: return "sessionState.patientIDMalformed"
+            case .appointmentIDMalformed: return "sessionState.appointmentIDMalformed"
             case .appointmentUnresolved: return "sessionState.appointmentUnresolved"
             case .noDraftNotes: return "sessionState.noDraftNotes"
             }

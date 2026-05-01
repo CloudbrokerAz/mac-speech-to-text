@@ -144,7 +144,7 @@ final class PatientPickerViewRenderTests: XCTestCase {
 
     func test_picker_appointmentLoadedPhase_rendersWithoutCrash() async throws {
         let appointment = Appointment(
-            id: 9000,
+            id: "9000",
             startsAt: Date(timeIntervalSince1970: 1_700_000_000),
             endsAt: Date(timeIntervalSince1970: 1_700_001_800)
         )

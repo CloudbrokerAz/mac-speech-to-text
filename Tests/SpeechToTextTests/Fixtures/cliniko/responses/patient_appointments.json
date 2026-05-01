@@ -1,23 +1,70 @@
 {
-  "appointments": [
+  "individual_appointments": [
     {
-      "id": 5001,
+      "id": "5001",
       "starts_at": "2026-04-25T09:00:00Z",
-      "ends_at": "2026-04-25T09:30:00Z"
+      "ends_at": "2026-04-25T09:30:00Z",
+      "notes": null,
+      "cancelled_at": null,
+      "archived_at": null,
+      "did_not_arrive": false,
+      "patient": {
+        "links": {
+          "self": "https://api.au1.cliniko.com/v1/patients/1001"
+        }
+      },
+      "appointment_type": {
+        "links": {
+          "self": "https://api.au1.cliniko.com/v1/appointment_types/4321"
+        }
+      },
+      "practitioner": {
+        "links": {
+          "self": "https://api.au1.cliniko.com/v1/practitioners/9001"
+        }
+      },
+      "attendees": {
+        "links": {
+          "self": "https://api.au1.cliniko.com/v1/individual_appointments/5001/attendees"
+        }
+      }
     },
     {
-      "id": 5002,
+      "id": "5002",
       "starts_at": "2026-04-22T14:15:00Z",
-      "ends_at": "2026-04-22T14:45:00Z"
+      "ends_at": "2026-04-22T14:45:00Z",
+      "notes": null,
+      "cancelled_at": null,
+      "archived_at": null,
+      "did_not_arrive": false,
+      "patient": {
+        "links": {
+          "self": "https://api.au1.cliniko.com/v1/patients/1001"
+        }
+      },
+      "appointment_type": {
+        "links": {
+          "self": "https://api.au1.cliniko.com/v1/appointment_types/4321"
+        }
+      },
+      "practitioner": {
+        "links": {
+          "self": "https://api.au1.cliniko.com/v1/practitioners/9001"
+        }
+      }
     },
     {
-      "id": 5003,
+      "id": "5003",
       "starts_at": "2026-04-19T08:00:00Z",
-      "ends_at": "2026-04-19T08:30:00Z"
+      "ends_at": "2026-04-19T08:30:00Z",
+      "notes": null,
+      "cancelled_at": null,
+      "archived_at": null,
+      "did_not_arrive": false
     }
   ],
   "total_entries": 3,
   "links": {
-    "self": "https://api.au1.cliniko.com/v1/patients/1001/appointments?from=2026-04-18T00:00:00Z&to=2026-04-26T00:00:00Z"
+    "self": "https://api.au1.cliniko.com/v1/individual_appointments?q%5B%5D=patient_id%3A%3D1001"
   }
 }

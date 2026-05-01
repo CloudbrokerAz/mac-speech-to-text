@@ -4,9 +4,11 @@ import Foundation
 ///
 /// Cliniko's wire shape for these resources is mixed: `Patient.id` is
 /// documented as `string($int64)` and decoded as `String` (#127);
-/// `Appointment.id` and `TreatmentNoteCreated.id` are still numeric
-/// (`Int`). The audit ledger and `SessionStore` need an opaque-but-typed
-/// handle that:
+/// `Appointment.id` is also documented as `string($int64)` and decoded
+/// as `String` (#129); `TreatmentNoteCreated.id` is still numeric
+/// (`Int`) per the Cliniko `treatment_notes` POST response shape.
+/// The audit ledger and `SessionStore` need an opaque-but-typed handle
+/// that:
 ///
 /// 1. **Refuses free-form strings** at every migrated callsite.
 ///    `AuditRecord.init(patientID:)` accepts only `OpaqueClinikoID`, not
@@ -25,18 +27,20 @@ import Foundation
 ///    `AuditStoreTests.line_pins_opaque_id_byte_shape`.
 /// 3. Round-trips through the `Int` ↔ `String` boundary in one place.
 ///    Production code uses `init(_ int: Int)` at numeric Cliniko-response
-///    boundaries (`Appointment.id`, `TreatmentNoteCreated.id`) and
-///    `init(_ string: String)` at the `Patient.id` boundary (#127);
-///    `init(rawValue: String)` is reserved for Codable round-trip from
-///    `audit.jsonl` and for tests that want deterministic string
-///    literals.
+///    boundaries (`TreatmentNoteCreated.id`) and `init(_ string: String)`
+///    at string-shaped boundaries (`Patient.id` per #127 and
+///    `Appointment.id` per #129); `init(rawValue: String)` is reserved
+///    for Codable round-trip from `audit.jsonl` and for tests that want
+///    deterministic string literals.
 ///
 /// **Issue #59.** Replaces the three bare-`String` ID fields on
-/// `AuditRecord` and the two on `ClinicalSession`. Wire-shape IDs on
-/// `Appointment` and `TreatmentNotePayload` remain `Int` — those are
-/// what Cliniko's HTTP API speaks for those resources. `Patient.id`
-/// flipped to `String` in #127 to match Cliniko's documented
-/// `string($int64)` shape.
+/// `AuditRecord` and the two on `ClinicalSession`. The wire-shape ID on
+/// `TreatmentNoteCreated` (and the `Int` field on
+/// `TreatmentNotePayload.appointmentID` / `.patientID` going OUT to
+/// Cliniko) remain `Int` — that's the request-side wire shape Cliniko
+/// expects for `POST /treatment_notes`. `Patient.id` (#127) and
+/// `Appointment.id` (#129) flipped to `String` to match Cliniko's
+/// documented `string($int64)` response shape on the read side.
 ///
 /// **`RawRepresentable` rationale.** Required by the issue spec for
 /// symmetry with the predecessor `String`-typed fields and so the

@@ -52,10 +52,12 @@ final class PatientPickerViewModel: Identifiable {
 
     private(set) var appointmentPhase: AppointmentPhase = .idle
 
-    /// Local mirror of `ClinicalSession.selectedAppointmentID`, kept as an
-    /// `Int?` for the picker UI. `nil` means "No appointment / general
-    /// note" (the post-recording note doesn't tie to an appointment).
-    private(set) var selectedAppointmentID: Int?
+    /// Local mirror of `ClinicalSession.selectedAppointmentID`, kept as a
+    /// `String?` for the picker UI (matches Cliniko's documented
+    /// `string($int64)` `Appointment.id` shape per #129). `nil` means
+    /// "No appointment / general note" (the post-recording note doesn't
+    /// tie to an appointment).
+    private(set) var selectedAppointmentID: String?
 
     // MARK: - Dependencies
 
@@ -223,6 +225,20 @@ final class PatientPickerViewModel: Identifiable {
                 return
             }
             appointmentPhase = .loaded(appointments)
+            // Pre-select the appointment most likely to be the one this
+            // recording is for — non-blocking, the user can still pick a
+            // different one (#129). Anchor on the recording's
+            // `startTime` so the heuristic answers "which slot was the
+            // doctor in when they pressed record?" rather than "which
+            // appointment is most recent". A slot containing
+            // `recordingStart` wins outright; otherwise the appointment
+            // nearest in time. Skip if the user already manually
+            // selected an appointment during the load (rare race).
+            if selectedAppointmentID == nil,
+               let recordingStart = sessionStore.active?.recordingSession.startTime,
+               let bestMatch = Appointment.mostLikelyMatch(in: appointments, for: recordingStart) {
+                selectAppointment(id: bestMatch.id)
+            }
         } catch let error as ClinikoError {
             // `.cancelled` from the service is only safe to swallow
             // when our local task was actually cancelled (the user
@@ -254,11 +270,18 @@ final class PatientPickerViewModel: Identifiable {
     }
 
     /// Select an appointment, or `nil` for "No appointment / general
-    /// note". Writes through to the session store, type-tagging the Int
-    /// into `OpaqueClinikoID` (#59) at the SessionStore boundary.
-    func selectAppointment(id: Int?) {
+    /// note". Writes through to the session store, type-tagging the
+    /// `String` into `OpaqueClinikoID` (#59 / #129) at the SessionStore
+    /// boundary via `OpaqueClinikoID(_:String)`.
+    func selectAppointment(id: String?) {
         selectedAppointmentID = id
-        sessionStore.setSelectedAppointment(id: id.map(OpaqueClinikoID.init))
+        // Disambiguate the `String`-shaped `init(_:String)` (canonical
+        // Cliniko-response boundary, #129) from `init(rawValue:)`
+        // (Codable / test-only). `id.map(OpaqueClinikoID.init)` would be
+        // ambiguous to the compiler given both inits share the same
+        // `String` shape; the explicit closure binds the unambiguous
+        // overload.
+        sessionStore.setSelectedAppointment(id: id.map { OpaqueClinikoID($0) })
     }
 
     /// Clear the entire selection state. Used by the host view when the
