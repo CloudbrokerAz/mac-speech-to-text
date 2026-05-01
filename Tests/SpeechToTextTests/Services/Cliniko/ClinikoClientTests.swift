@@ -95,84 +95,13 @@ final class ClinikoClientTests: XCTestCase {
     }
 
     // MARK: - sendWithStatus surfaces the actual 2xx code (#58)
-
-    /// Pin that `sendWithStatus(_:)` returns the observed HTTP status
-    /// alongside the decoded body. Today the audit ledger row is the
-    /// only consumer, but the contract belongs on the client itself: any
-    /// 2xx is success, and the *specific* 2xx code must reach the caller
-    /// rather than being smashed to a documented constant.
-    ///
-    /// This test set lives in this XCTest file (rather than a separate
-    /// Swift Testing `@Suite`) on purpose: `URLProtocolStub` is a
-    /// process-wide singleton and Swift Testing's `.serialized` trait is
-    /// suite-local, so adding a second Swift Testing suite that stubs
-    /// HTTP triggers cross-suite races against `ModelDownloaderTests`
-    /// (the singleton's `currentResponder` gets clobbered mid-flight).
-    /// Reverting to the XCTest pattern keeps these alongside the rest of
-    /// the file and avoids the race surface until a process-wide
-    /// `URLProtocolStubGate` lands.
-    func test_sendWithStatus_returnsActualStatusFromResponse() async throws {
-        let session = makeSession { request in
-            let body = try HTTPStubFixture.load("cliniko/responses/user.json")
-            // 200 — the documented status for /user.
-            let response = HTTPURLResponse(
-                url: request.url!,
-                statusCode: 200,
-                httpVersion: "HTTP/1.1",
-                headerFields: ["Content-Type": "application/json"]
-            )!
-            return (response, body)
-        }
-        let client = makeClient(session: session)
-
-        let (user, status): (UsersMeResponse, Int) = try await client.sendWithStatus(.usersMe)
-
-        XCTAssertEqual(status, 200)
-        XCTAssertEqual(user.id, 12345)
-    }
-
-    /// Pin the 201 path too so the exporter's audit row always reflects the
-    /// real status — would catch a regression that hardcoded `200` somewhere
-    /// in the success path.
-    func test_sendWithStatus_returns201WhenServerReturns201() async throws {
-        let session = makeSession { request in
-            let response = HTTPURLResponse(
-                url: request.url!,
-                statusCode: 201,
-                httpVersion: "HTTP/1.1",
-                headerFields: ["Content-Type": "application/json"]
-            )!
-            return (response, Data("{\"id\":42}".utf8))
-        }
-        let client = makeClient(session: session)
-
-        struct CreatedID: Decodable, Sendable, Equatable { let id: Int }
-        let (created, status): (CreatedID, Int) = try await client.sendWithStatus(
-            .createTreatmentNote(body: Data("{}".utf8))
-        )
-
-        XCTAssertEqual(status, 201)
-        XCTAssertEqual(created.id, 42)
-    }
-
-    /// `send(_:)` is now a thin forwarder over `sendWithStatus(_:)`. Pin
-    /// that it still drops the status cleanly — call sites that opt out of
-    /// the tuple shouldn't get a different value than they did before.
-    func test_send_stillDecodesBody_whenCallerIgnoresStatus() async throws {
-        let session = makeSession { request in
-            let body = try HTTPStubFixture.load("cliniko/responses/user.json")
-            let response = HTTPURLResponse(
-                url: request.url!,
-                statusCode: 200,
-                httpVersion: "HTTP/1.1",
-                headerFields: ["Content-Type": "application/json"]
-            )!
-            return (response, body)
-        }
-        let client = makeClient(session: session)
-        let user: UsersMeResponse = try await client.send(.usersMe)
-        XCTAssertEqual(user.id, 12345)
-    }
+    //
+    // The three tests that pin `sendWithStatus(_:)` for issue #58 live
+    // in `ClinikoStatusThreadingTests.swift` as a Swift Testing `@Suite`
+    // gated through `URLProtocolStubGate.shared.withGate(_:)`. They
+    // briefly lived in this XCTest file as a workaround for the
+    // cross-suite `URLProtocolStub` race; once issue #85 introduced
+    // the process-wide gate the migration was safe.
 
     // MARK: - Status mapping
 
