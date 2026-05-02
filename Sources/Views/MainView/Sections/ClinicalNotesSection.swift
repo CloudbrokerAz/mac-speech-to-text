@@ -441,8 +441,9 @@ struct ClinicalNotesSection: View {
             // rather not block save on our heuristic. The hint nudges the
             // practitioner; the orange triangle matches the warm-minimalism
             // colour story in `KeywordEditorSheet` for unsupported input.
-            let trimmedDraft = viewModel.contactEmailDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedDraft.isEmpty, !viewModel.isContactEmailDraftValid {
+            // VM owns the policy via `shouldShowContactEmailInvalidHint` so
+            // the trim + validity rules live in one place (DRY — Gemini #137).
+            if viewModel.shouldShowContactEmailInvalidHint {
                 Label("That doesn't look like a valid email address", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.orange)
@@ -672,12 +673,26 @@ final class ClinicalNotesSectionViewModel {
     /// orange-warning hint, never to block save. A malformed entry still
     /// stores and emits in the UA — at worst Cliniko will eventually flag
     /// the integration owner about it.
+    ///
+    /// Empty / whitespace-only is treated as "unset" (returns `true` — not
+    /// invalid). Pair with `shouldShowContactEmailInvalidHint` to drive UI
+    /// — that combined property is what the view binds to so the hint logic
+    /// lives in one place.
     var isContactEmailDraftValid: Bool {
         let trimmed = contactEmailDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return true } // empty = unset, not invalid
         let parts = trimmed.split(separator: "@", omittingEmptySubsequences: false)
         guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { return false }
         return parts[1].contains(".")
+    }
+
+    /// Drives the orange-triangle warning under the contact-email field.
+    /// Combines "user has typed something" + "it doesn't look valid", so
+    /// the view doesn't need to re-trim or re-check (DRY — keeps the
+    /// hint policy in the VM where the format rule lives).
+    var shouldShowContactEmailInvalidHint: Bool {
+        let trimmed = contactEmailDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && !isContactEmailDraftValid
     }
 
     private(set) var credentialState: CredentialLoadState = .unknown
