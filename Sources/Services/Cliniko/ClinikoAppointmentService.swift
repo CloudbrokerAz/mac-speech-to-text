@@ -112,8 +112,46 @@ public actor ClinikoAppointmentService: ClinikoAppointmentLoading {
         // shard `+10:00` and `+1000` offsets that the default
         // `.iso8601` strategy mishandles — see
         // `ClinikoDateParser` for the four-pass cascade.
-        let domain = try response.individualAppointments.map { dto in
-            try dto.toDomainModel(parser: parser)
+        //
+        // Sibling structural log for `.dateMalformed` (#131): the
+        // `ClinikoClient` kind-tag log at the `JSONDecoder` boundary
+        // cannot fire here because the throw happens AFTER the
+        // decoder already succeeded. Without this catch, a date-parse
+        // failure would surface to the picker with no `OSLog`
+        // breadcrumb at all. The catch is narrowed to
+        // `.dateMalformed` specifically so the case name is a
+        // structural-known constant (no `String(describing: error)`,
+        // forbidden by `Sources/Services/Cliniko/AGENTS.md` §"PHI in
+        // logs"); `batchCount` is a row count, never an identifier;
+        // `pathTemplate` is `/individual_appointments?q[]={…}` —
+        // structural by design. Re-throw preserves the existing
+        // surface for `PatientPickerViewModel`.
+        //
+        // **Future-proofing**: today, `toDomainModel` only re-throws
+        // from the `parser.parse(startsAt)` call (the `endsAt` parse
+        // is locally swallowed + structurally logged), and the parser
+        // only throws `.dateMalformed`. So narrow-catch is provably
+        // exhaustive against the actual throw set. If a future PR adds
+        // a new throw site to `toDomainModel`, decide *in that PR*
+        // whether to widen this catch — and if so, whether to mirror
+        // `ExportFlowViewModel.caseName(_:)` here for a structural
+        // case name, or add a parallel `ClinikoClient`-side log path.
+        // Do NOT widen pre-emptively to a `let error as ClinikoError`
+        // form: that would re-introduce `String(describing: error)` /
+        // `error.description` interpolation against the AGENTS rule.
+        let domain: [Appointment]
+        do {
+            domain = try response.individualAppointments.map { dto in
+                try dto.toDomainModel(parser: parser)
+            }
+        } catch ClinikoError.dateMalformed {
+            let pathTemplate = ClinikoEndpoint
+                .patientAppointments(patientID: patientID, from: from, to: to)
+                .pathTemplate
+            logger.error(
+                "ClinikoAppointmentService: appointment date parse failed kind=dateMalformed batchCount=\(response.individualAppointments.count, privacy: .public) path=\(pathTemplate, privacy: .public)"
+            )
+            throw ClinikoError.dateMalformed
         }
         // Defensive client-side filter + sort. The server-side
         // `q[]=cancelled_at:!?` should already exclude cancelled rows,

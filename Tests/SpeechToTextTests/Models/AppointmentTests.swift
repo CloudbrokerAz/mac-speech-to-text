@@ -124,7 +124,7 @@ struct AppointmentTests {
         #expect(domain.endsAt == nil)
     }
 
-    @Test("DTO startsAt parse failure throws ClinikoError.decoding")
+    @Test("DTO startsAt parse failure throws ClinikoError.dateMalformed")
     func dto_startsAt_failureThrows() {
         let dto = ClinikoAppointmentDTO(
             id: "5001",
@@ -136,11 +136,12 @@ struct AppointmentTests {
 
         do {
             _ = try dto.toDomainModel(parser: ClinikoDateParser())
-            Issue.record("expected ClinikoError.decoding to throw")
-        } catch ClinikoError.decoding(let typeName) {
-            #expect(typeName == "Date")
+            Issue.record("expected ClinikoError.dateMalformed to throw")
+        } catch ClinikoError.dateMalformed {
+            // Pass — the DTO surfaces the parser's typed error
+            // unchanged so the service layer can branch on it (#131).
         } catch {
-            Issue.record("expected ClinikoError.decoding, got \(error)")
+            Issue.record("expected ClinikoError.dateMalformed, got \(error)")
         }
     }
 
@@ -376,15 +377,18 @@ struct ClinikoDateParserTests {
         #expect(abs(diff) < 0.001)
     }
 
-    @Test("throws ClinikoError.decoding on a malformed input")
+    @Test("throws ClinikoError.dateMalformed on a malformed input")
     func throws_onMalformed() {
         do {
             _ = try ClinikoDateParser().parse("definitely not a date")
             Issue.record("expected throw")
-        } catch ClinikoError.decoding(let typeName) {
-            #expect(typeName == "Date")
+        } catch ClinikoError.dateMalformed {
+            // Pass — `.dateMalformed` (#131) replaced
+            // `.decoding(typeName: "Date")` to keep date-parse
+            // failures distinguishable from `Decodable`-machinery
+            // failures in the typed `ClinikoError` set.
         } catch {
-            Issue.record("expected ClinikoError.decoding, got \(error)")
+            Issue.record("expected ClinikoError.dateMalformed, got \(error)")
         }
     }
 
@@ -392,16 +396,22 @@ struct ClinikoDateParserTests {
     func errorDescription_doesNotEchoInput() {
         // The input here would be PHI-adjacent in a real call (an
         // appointment's start time + a known patient context). The
-        // parser must throw a typed error whose `localizedDescription`
-        // names the type only — never the value.
+        // parser must throw a typed error whose surface (description)
+        // carries no payload at all — `.dateMalformed` has no
+        // associated value, so this is enforced by the type system,
+        // but the test also pins the description text in case a
+        // future maintainer adds a payload + threads it into the
+        // string.
         let leakyInput = "2026-04-25T19:00:00.SHOULD-NOT-LEAK"
         do {
             _ = try ClinikoDateParser().parse(leakyInput)
             Issue.record("expected throw")
         } catch let error {
-            let surface = error.localizedDescription
+            let surface = (error as? ClinikoError)?.description ?? error.localizedDescription
             #expect(!surface.contains("SHOULD-NOT-LEAK"),
                     "PHI sentinel leaked through error: \(surface)")
+            #expect(!surface.contains("2026"),
+                    "Year leaked through error: \(surface)")
         }
     }
 }

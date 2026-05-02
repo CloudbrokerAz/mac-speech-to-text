@@ -22,6 +22,13 @@ struct ClinikoErrorTests {
             .transport(.timedOut),
             .cancelled,
             .decoding(typeName: "Foo"),
+            // `.dateMalformed` and `.decoding(typeName: "Date")` are
+            // deliberately distinct cases (#131). Pinning that the
+            // Equatable witness treats them as such guards the split
+            // — a future regression that re-merged them under
+            // `.decoding(typeName: "Date")` would silently pass any
+            // test that only enumerates structural distinctness.
+            .dateMalformed,
             .nonHTTPResponse
         ]
         for (index, lhs) in cases.enumerated() {
@@ -88,5 +95,78 @@ struct ClinikoErrorTests {
         let error = ClinikoError.notFound(resource: .appointment)
         #expect(error.description.contains("appointment"))
         #expect(error.description.contains("404"))
+    }
+
+    @Test("dateMalformed description carries no payload")
+    func dateMalformedDescriptionStructural() {
+        // `.dateMalformed` has no associated value (#131), so the
+        // description is necessarily a fixed string. Pin that:
+        //
+        // 1. it is non-empty (a future contributor flipping it to
+        //    `""` would silently kill the user-facing copy);
+        // 2. it does NOT contain anything that looks like a date
+        //    (a future maintainer who adds a `dateMalformed(input:)`
+        //    associated value AND wires it into description would
+        //    re-introduce the PHI leak this case was created to
+        //    prevent — see issue #131).
+        let text = ClinikoError.dateMalformed.description
+        #expect(!text.isEmpty)
+        // PHI sentinel substrings — anything resembling an ISO8601
+        // datetime offset must NOT appear. These are the exact shapes
+        // `ClinikoDateParser` was created in #129 to handle and that
+        // a regression would most plausibly leak.
+        #expect(!text.contains("+10:00"))
+        #expect(!text.contains("+1000"))
+        #expect(!text.contains("Z"))           // ISO8601 UTC marker
+    }
+
+    @Test("dateMalformed has zero associated values (structural payload-emptiness pin)")
+    func dateMalformedHasNoAssociatedValues() {
+        // Cosmetic checks on `description` (above) catch a regression
+        // that adds `dateMalformed(input: String)` AND threads the
+        // input into the description text. They DO NOT catch a
+        // regression that adds the payload but cleans up the
+        // description — the leak would still happen at any call site
+        // doing `\(error)` (which goes through `String(describing:)`
+        // and renders the associated values verbatim, e.g.
+        // `"dateMalformed(input: \"2026-04-25T19:00:00+10:00\")"`).
+        //
+        // Pin the structural invariant directly via reflection: the
+        // case must have zero children. This catches the payload
+        // addition itself, regardless of any cosmetic mitigation,
+        // and would force a future maintainer to delete this test
+        // (which is a far more visible signal than a silent leak).
+        // See `Sources/Services/Cliniko/ClinikoError.swift` doc-comment
+        // on `.dateMalformed` for the PHI rationale.
+        let mirror = Mirror(reflecting: ClinikoError.dateMalformed)
+        #expect(mirror.children.isEmpty,
+                "ClinikoError.dateMalformed must remain payload-free (#131 PHI invariant)")
+    }
+
+    @Test("ClinikoError case count is pinned at 11")
+    func clinikoErrorCaseCount() {
+        // Pin the case count so accidental additions or deletions
+        // are deliberate. `ClinikoError` is not `CaseIterable` (it
+        // can't be — several cases carry associated values), so this
+        // is the cheapest structural enforcement available. Same
+        // pattern as `resourceCaseCount` above. Combined with the
+        // `equatableDistinguishesCases` test, this guards both
+        // directions of regression: case removal (count drops),
+        // case addition (count rises and the new case is missing
+        // from the equatable enumeration).
+        let cases: [ClinikoError] = [
+            .unauthenticated,
+            .forbidden,
+            .notFound(resource: .patient),
+            .validation(fields: [:]),
+            .rateLimited(retryAfter: nil),
+            .server(status: 500),
+            .transport(.timedOut),
+            .cancelled,
+            .decoding(typeName: "Foo"),
+            .dateMalformed,
+            .nonHTTPResponse
+        ]
+        #expect(cases.count == 11)
     }
 }

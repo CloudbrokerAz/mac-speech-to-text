@@ -76,7 +76,7 @@ struct ClinikoAppointmentDTO: Decodable, Sendable {
     }
 
     /// Map this wire-shape DTO into the presentation-shaped domain model.
-    /// Throws `ClinikoError.decoding(typeName: "Date")` if `startsAt` is
+    /// Throws `ClinikoError.dateMalformed` (#131) if `startsAt` is
     /// malformed; `endsAt` failure degrades to `nil` because Cliniko has
     /// been observed emitting incomplete end times on edge appointment
     /// types and the picker can render without one. The degradation is
