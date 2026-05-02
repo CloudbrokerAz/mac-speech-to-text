@@ -223,7 +223,15 @@ struct PatientPickerView: View {
         .padding(8)
     }
 
-    private func humanReadable(_ error: ClinikoError) -> String {
+    // `cyclomatic_complexity` silenced (trailing-line annotation)
+    // because `ClinikoError` now has 11 cases (#131 added
+    // `.dateMalformed`). Splitting the switch would just push it
+    // elsewhere — the picker's UX-copy table belongs colocated with
+    // the picker, and `notFoundMessage(for:)` already extracts the
+    // one sub-switch that benefits from extraction. Same trade-off
+    // and same annotation as `ExportFlowView.failureTitle` /
+    // `failureDetail`.
+    private func humanReadable(_ error: ClinikoError) -> String { // swiftlint:disable:this cyclomatic_complexity
         switch error {
         case .unauthenticated:
             return "Cliniko didn't accept the API key. Open Settings to update it."
@@ -251,6 +259,14 @@ struct PatientPickerView: View {
             // change or a bug on our side — the user can't fix it, but
             // they can report it so we know to ship a fix.
             return "Cliniko returned an unexpected response shape. "
+                + "If this persists, please report it."
+        case .dateMalformed:
+            // `.dateMalformed` (#131) is the date-format-specific
+            // sibling of `.decoding`. Tailored copy so a future report
+            // distinguishes "Cliniko changed an envelope" from
+            // "Cliniko shipped a new offset variant we don't parse"
+            // — different remediation, same surface.
+            return "Cliniko returned an unexpected date format. "
                 + "If this persists, please report it."
         case .nonHTTPResponse:
             return "Cliniko returned an unexpected response."

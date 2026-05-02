@@ -19,14 +19,18 @@ import Foundation
 ///
 /// The parser tries each path in order — fractional ISO → bare ISO →
 /// `DateFormatter` for `+HHMM` shapes — and throws
-/// `ClinikoError.decoding(typeName: "Date")` if every parse fails. The
-/// thrown error never carries the input string so PHI-adjacent
-/// timestamps (an appointment time + a known patient context) cannot
-/// leak through `localizedDescription`.
+/// `ClinikoError.dateMalformed` if every parse fails (#131; previously
+/// `.decoding(typeName: "Date")`, which conflated date-parse failures
+/// with `Decodable`-machinery failures). The thrown error carries no
+/// payload at all, so PHI-adjacent timestamps (an appointment time +
+/// a known patient context) cannot leak through `description`.
 ///
-/// PHI: the parser does not log. The caller (`ClinikoAppointmentDTO.toDomainModel`)
-/// catches and re-throws via the typed `ClinikoError` set; the client
-/// emits its kind-tag log without the value.
+/// PHI: the parser does not log. The caller
+/// (`ClinikoAppointmentDTO.toDomainModel`) propagates the typed
+/// `ClinikoError`; `ClinikoAppointmentService` emits a sibling
+/// structural log because the `JSONDecoder`-boundary kind-tag log in
+/// `ClinikoClient` cannot fire — `.dateMalformed` is thrown after the
+/// decoder has already succeeded.
 struct ClinikoDateParser: Sendable {
 
     /// Parse an ISO8601 datetime string into `Date`. Tries:
@@ -47,7 +51,12 @@ struct ClinikoDateParser: Sendable {
         if let date = Self.iso8601Fractional.date(from: input) { return date }
         if let date = Self.basicOffsetPlain.date(from: input) { return date }
         if let date = Self.basicOffsetFractional.date(from: input) { return date }
-        throw ClinikoError.decoding(typeName: "Date")
+        // PHI: never include `input` in the thrown value — the failed
+        // string is PHI-adjacent (an appointment time + a known patient
+        // context). `ClinikoError.dateMalformed` is intentionally
+        // payload-free; do not reshape it without re-reading the
+        // doc-comment on the case.
+        throw ClinikoError.dateMalformed
     }
 
     // MARK: - Formatters

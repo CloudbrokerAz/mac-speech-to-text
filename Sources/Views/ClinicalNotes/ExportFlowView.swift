@@ -362,11 +362,13 @@ struct ExportFlowView: View {
 
     // MARK: - Failure copy
 
-    /// Exhaustive enum switch over `ExportFailure` — 12 cases.
+    /// Exhaustive enum switch over `ExportFailure` — 13 cases.
     /// `cyclomatic_complexity` silenced (trailing-line annotation)
     /// because splitting would require a parallel "kind" enum and
     /// lose the direct mapping from failure case to user-facing
-    /// copy.
+    /// copy. `.dateMalformed` (#131) shares the title with `.decoding`
+    /// — the practitioner can't action the difference; the split
+    /// exists for log triage, not UX.
     private func failureTitle(_ reason: ExportFailure) -> String { // swiftlint:disable:this cyclomatic_complexity
         switch reason {
         case .unauthenticated:
@@ -389,7 +391,7 @@ struct ExportFlowView: View {
             return "Couldn't build the request"
         case .cancelled:
             return "Export cancelled"
-        case .decoding:
+        case .decoding, .dateMalformed:
             return "Couldn't read Cliniko's response"
         case .sessionState:
             return "Session state expired"
@@ -421,7 +423,10 @@ struct ExportFlowView: View {
             return "An internal error built the request. Copy the note to your clipboard and try again."
         case .cancelled:
             return "Dismissed by user. Re-open the export flow to try again."
-        case .decoding:
+        case .decoding, .dateMalformed:
+            // `.dateMalformed` (#131) folds into `.decoding`'s UX
+            // bucket — same affordance, same copy. Triage difference
+            // is in `caseName(_:)` / structural logs only.
             return "Cliniko's response was malformed. Try again or copy to clipboard."
         case .sessionState(.noActiveSession):
             return "The session expired. Cancel and re-record."
@@ -484,7 +489,7 @@ struct ExportFlowView: View {
                 FailureAction(title: "Cancel", kind: .dismiss, identifier: "exportFlow.failed.cancel", isPrimary: false),
                 FailureAction(title: "Retry", kind: .retry, identifier: "exportFlow.failed.retry", isPrimary: true)
             ]
-        case .server, .validation, .decoding, .requestEncodeFailed:
+        case .server, .validation, .decoding, .dateMalformed, .requestEncodeFailed:
             return [
                 FailureAction(title: "Cancel", kind: .dismiss, identifier: "exportFlow.failed.cancel", isPrimary: false),
                 FailureAction(title: "Retry", kind: .retry, identifier: "exportFlow.failed.retry", isPrimary: true)

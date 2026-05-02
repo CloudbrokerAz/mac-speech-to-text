@@ -581,6 +581,10 @@ struct ExportFlowViewModelTests {
         #expect(ExportFlowViewModel.translate(ClinikoError.transport(.timedOut)) == .transport(.timedOut))
         #expect(ExportFlowViewModel.translate(ClinikoError.cancelled) == .cancelled)
         #expect(ExportFlowViewModel.translate(ClinikoError.decoding(typeName: "X")) == .decoding(typeName: "X"))
+        // `.dateMalformed` (#131) gets a dedicated mirror in
+        // `ExportFailure` so log triage can distinguish a Cliniko
+        // schema shift from an unhandled date-offset variant.
+        #expect(ExportFlowViewModel.translate(ClinikoError.dateMalformed) == .dateMalformed)
         #expect(ExportFlowViewModel.translate(ClinikoError.nonHTTPResponse) == .transport(.unknown))
     }
 

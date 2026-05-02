@@ -51,6 +51,19 @@ public enum ClinikoError: Error, Sendable, Equatable, CustomStringConvertible {
     /// be PHI-adjacent in some payloads).
     case decoding(typeName: String)
 
+    /// An ISO8601 datetime field decoded as `String` from a Cliniko
+    /// payload could not be parsed by `ClinikoDateParser` (#131, split
+    /// from #129). Distinct from `.decoding(typeName:)`, which signals a
+    /// `Decodable`-machinery failure (wrong envelope shape, missing
+    /// required field, type mismatch). Carries no payload — the failed
+    /// input is PHI-adjacent (an appointment time + a known patient
+    /// context) and must not surface in `description` or `OSLog`.
+    /// A surfaced `.dateMalformed` is the third bite of the same
+    /// `+10:00` / `+1000` / fractional-seconds gotcha that the parser
+    /// in #129 closed off; treat it as a signal to extend the
+    /// four-pass cascade in `ClinikoDateParser`.
+    case dateMalformed
+
     /// `URLSession` returned a `URLResponse` that wasn't an
     /// `HTTPURLResponse`. Defensive against custom URLProtocols (e.g.
     /// `file://`) and never expected against real Cliniko traffic.
@@ -85,6 +98,7 @@ public enum ClinikoError: Error, Sendable, Equatable, CustomStringConvertible {
         case .transport(let code): return "Cliniko: transport error (URLError code \(code.rawValue))"
         case .cancelled: return "Cliniko: request cancelled"
         case .decoding(let typeName): return "Cliniko: failed to decode \(typeName)"
+        case .dateMalformed: return "Cliniko: date parse failed"
         case .nonHTTPResponse: return "Cliniko: non-HTTP response"
         }
     }

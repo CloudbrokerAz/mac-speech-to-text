@@ -180,6 +180,17 @@ enum ExportFailure: Error, Sendable, Equatable {
     /// `ClinikoError.decoding` for non-treatment-note endpoints
     /// (defensive; the export path uses `responseUndecodable`).
     case decoding(typeName: String)
+    /// `ClinikoError.dateMalformed` (#131) — an ISO8601 datetime
+    /// field decoded as `String` from a Cliniko payload could not be
+    /// parsed by `ClinikoDateParser`. Surfaced separately from
+    /// `.decoding` so triage can distinguish a Cliniko schema /
+    /// envelope shift (`.decoding`) from a date-format gotcha
+    /// (`.dateMalformed`, the same `+10:00` / `+1000` / fractional
+    /// family closed off in #129). Renders as a tailored "unexpected
+    /// date format" copy in the picker; in the export flow the
+    /// affordance is identical to `.decoding` (no one-tap retry; copy
+    /// + report).
+    case dateMalformed
     /// Pre-flight invariant violation: the active session lost its
     /// patient or selection state between the confirm tap and the
     /// POST. UI shows "Re-select patient and try again" and
@@ -610,11 +621,11 @@ final class ExportFlowViewModel: Identifiable {
     /// match before the `ClinikoError` arm to avoid a wider catch.
     ///
     /// `cyclomatic_complexity` is silenced on this switch (see
-    /// trailing-comment annotation) because `ClinikoError` has 10
-    /// cases and `TreatmentNoteExporter.Failure` adds two more —
-    /// splitting the function would push the same switch elsewhere
-    /// and break the colocation that makes the translation table
-    /// easy to read.
+    /// trailing-comment annotation) because `ClinikoError` has 11
+    /// cases (`.dateMalformed` added in #131) and
+    /// `TreatmentNoteExporter.Failure` adds two more — splitting the
+    /// function would push the same switch elsewhere and break the
+    /// colocation that makes the translation table easy to read.
     static func translate(_ error: Error) -> ExportFailure { // swiftlint:disable:this cyclomatic_complexity
         if let exporterFailure = error as? TreatmentNoteExporter.Failure {
             switch exporterFailure {
@@ -633,6 +644,7 @@ final class ExportFlowViewModel: Identifiable {
             case .transport(let code): return .transport(code)
             case .cancelled: return .cancelled
             case .decoding(let typeName): return .decoding(typeName: typeName)
+            case .dateMalformed: return .dateMalformed
             case .nonHTTPResponse: return .transport(.unknown)
             }
         }
@@ -665,6 +677,7 @@ final class ExportFlowViewModel: Identifiable {
         case .requestEncodeFailed: return "requestEncodeFailed"
         case .cancelled: return "cancelled"
         case .decoding: return "decoding"
+        case .dateMalformed: return "dateMalformed"
         case .sessionState(let inner):
             switch inner {
             case .noActiveSession: return "sessionState.noActiveSession"
