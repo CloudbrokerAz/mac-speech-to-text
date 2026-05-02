@@ -20,15 +20,6 @@ import os.log
 ///   (anything from another framework that might embed PHI) are **never**
 ///   logged.
 public actor ClinikoClient {
-    /// Default `User-Agent`. Mirrors `ClinikoAuthProbe.defaultUserAgent`
-    /// — Cliniko requires the header to be non-empty and include a contact
-    /// reference. We use the public repo URL so Cliniko ops can reach the
-    /// project for abuse / incident.
-    public static var defaultUserAgent: String {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
-        return "mac-speech-to-text/\(version) (https://github.com/CloudbrokerAz/mac-speech-to-text)"
-    }
-
     /// Default JSON decoder: snake_case → camelCase + ISO8601 dates. Suitable
     /// for the documented Cliniko response shapes; consumers can supply a
     /// custom decoder for endpoints that need different strategies.
@@ -80,7 +71,15 @@ public actor ClinikoClient {
 
     private let credentials: ClinikoCredentials
     private let session: URLSession
-    private let userAgent: String
+    /// `@Sendable () -> String` so the UA is resolved per request rather
+    /// than frozen at init. The doctor edits their contact email in the
+    /// Clinical Notes settings UI (#89); the default provider reads
+    /// `ClinikoCredentialStore.contactEmailUserDefaultsKey` from
+    /// `UserDefaults.standard`, so an email change takes effect on the
+    /// next request without re-instantiating this client (which is shared
+    /// across `ClinikoPatientService`, `ClinikoAppointmentService`, and
+    /// `TreatmentNoteExporter`).
+    private let userAgentProvider: @Sendable () -> String
     private let retryPolicy: RetryPolicy
     private let decoder: JSONDecoder
     private let logger = Logger(subsystem: "com.speechtotext", category: "ClinikoClient")
@@ -105,15 +104,34 @@ public actor ClinikoClient {
     public init(
         credentials: ClinikoCredentials,
         session: URLSession = .shared,
-        userAgent: String = ClinikoClient.defaultUserAgent,
+        userAgentProvider: @escaping @Sendable () -> String = ClinikoUserAgent.defaultProvider(),
         retryPolicy: RetryPolicy = .default,
         decoder: JSONDecoder = ClinikoClient.defaultDecoder
     ) {
         self.credentials = credentials
         self.session = session
-        self.userAgent = userAgent
+        self.userAgentProvider = userAgentProvider
         self.retryPolicy = retryPolicy
         self.decoder = decoder
+    }
+
+    /// Convenience init for tests that pin a specific `User-Agent` string.
+    /// Wraps the literal in a `@Sendable` closure so call sites that don't
+    /// care about runtime UA reconfiguration stay terse.
+    public init(
+        credentials: ClinikoCredentials,
+        session: URLSession = .shared,
+        userAgent: String,
+        retryPolicy: RetryPolicy = .default,
+        decoder: JSONDecoder = ClinikoClient.defaultDecoder
+    ) {
+        self.init(
+            credentials: credentials,
+            session: session,
+            userAgentProvider: { userAgent },
+            retryPolicy: retryPolicy,
+            decoder: decoder
+        )
     }
 
     // MARK: - Public API
@@ -340,7 +358,7 @@ public actor ClinikoClient {
         var request = URLRequest(url: url)
         request.httpMethod = endpoint.method.rawValue
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(userAgentProvider(), forHTTPHeaderField: "User-Agent")
         request.setValue(credentials.basicAuthHeaderValue, forHTTPHeaderField: "Authorization")
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         if let body = endpoint.body {

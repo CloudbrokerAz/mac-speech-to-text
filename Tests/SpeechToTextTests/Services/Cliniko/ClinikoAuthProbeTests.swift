@@ -59,13 +59,72 @@ final class ClinikoAuthProbeTests: XCTestCase {
         XCTAssertEqual(decoded, "MS-test-au1:", "Cliniko Basic auth: API key as username + empty password")
     }
 
-    func test_defaultUserAgent_includesAppNameAndContactReference() {
-        // Pins the User-Agent shape required by `.claude/references/cliniko-api.md`:
-        // app name + version + a contact reference (we use the public repo URL).
-        let ua = ClinikoAuthProbe.defaultUserAgent
+    // MARK: - User-Agent shape
+
+    func test_userAgent_emailFormUsedWhenContactEmailConfigured() {
+        // AC item 1 of #89: when the practitioner has set a contact email
+        // in Clinical Notes settings, the UA emits the canonical Cliniko
+        // `APP_VENDOR_NAME (APP_VENDOR_EMAIL)` form (matches the docs
+        // example + the `epc-letter-generation` reference integration).
+        let ua = ClinikoUserAgent.make(contactEmail: "doctor@example.test")
+        XCTAssertEqual(ua, "mac-speech-to-text (doctor@example.test)")
+    }
+
+    func test_userAgent_fallbackUsedWhenContactEmailMissing() {
+        // Fallback contract: until the doctor sets an email, we must still
+        // emit a non-empty UA carrying app name + a contact reference, so
+        // the structural pinning in `.claude/references/cliniko-api.md`
+        // and Cliniko's docs-required name+contact rule both stay
+        // satisfied.
+        let ua = ClinikoUserAgent.make(contactEmail: nil)
         XCTAssertTrue(ua.hasPrefix("mac-speech-to-text/"), "got \(ua)")
         XCTAssertTrue(ua.contains("github.com/CloudbrokerAz/mac-speech-to-text"),
-                      "User-Agent must embed a contact reference; got \(ua)")
+                      "fallback User-Agent must embed a contact reference; got \(ua)")
+    }
+
+    func test_userAgent_whitespaceOnlyEmailTreatedAsMissing() {
+        // Defensive: a whitespace-only saved value must not produce
+        // `"mac-speech-to-text ()"`. We treat it as unset and fall back.
+        let ua = ClinikoUserAgent.make(contactEmail: "   \t  ")
+        XCTAssertTrue(ua.contains("github.com/CloudbrokerAz/mac-speech-to-text"),
+                      "whitespace-only email must trigger the URL fallback; got \(ua)")
+    }
+
+    func test_userAgent_trimsLeadingAndTrailingWhitespace() {
+        // The UI commit binding trims, but the helper trims defensively too
+        // so a programmatic caller can't accidentally emit
+        // `"mac-speech-to-text ( doctor@example.test )"`.
+        let ua = ClinikoUserAgent.make(contactEmail: "  doctor@example.test  ")
+        XCTAssertEqual(ua, "mac-speech-to-text (doctor@example.test)")
+    }
+
+    func test_defaultProvider_readsContactEmailFromUserDefaultsLive() throws {
+        // Pins the read-per-request behaviour: a contact-email update in
+        // `UserDefaults` must propagate to the next provider() call without
+        // reseating the closure. This is the load-bearing property that
+        // lets the shared ClinikoClient/AuthProbe instances pick up a
+        // settings change without re-instantiation (see #89 plan).
+        //
+        // Uses a per-test `UserDefaults` suite (NOT `.standard`) so this
+        // test does not race `SessionStoreTests.lifecycle_doesNotTouchUserDefaults`
+        // — that test snapshots `UserDefaults.standard.dictionaryRepresentation()`
+        // and would flake if a parallel test mutated the shared suite mid-window.
+        let suiteName = "ClinikoUserAgentTests-\(UUID().uuidString)"
+        let suite = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { suite.removePersistentDomain(forName: suiteName) }
+        let key = ClinikoCredentialStore.contactEmailUserDefaultsKey
+
+        suite.set("first@example.test", forKey: key)
+        let provider = ClinikoUserAgent.defaultProvider(userDefaults: suite)
+        XCTAssertEqual(provider(), "mac-speech-to-text (first@example.test)")
+
+        suite.set("second@example.test", forKey: key)
+        XCTAssertEqual(provider(), "mac-speech-to-text (second@example.test)",
+                       "provider must re-read UserDefaults each call so a settings change propagates without re-instantiation")
+
+        suite.removeObject(forKey: key)
+        XCTAssertTrue(provider().contains("github.com/CloudbrokerAz/mac-speech-to-text"),
+                      "clearing the email must fall back to URL form; got \(provider())")
     }
 
     func test_ping_succeedsOn200() async throws {

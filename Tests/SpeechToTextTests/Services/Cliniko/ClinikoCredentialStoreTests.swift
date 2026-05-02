@@ -183,6 +183,85 @@ struct ClinikoCredentialStoreTests {
         #expect(storedShard == "uk2", "shard must be retained when Keychain delete fails")
     }
 
+    // MARK: - Contact email (#89)
+
+    @Test("loadContactEmail returns nil when nothing is stored")
+    func loadContactEmailEmpty() {
+        let store = makeStore()
+        #expect(store.loadContactEmail() == nil)
+    }
+
+    @Test("updateContactEmail + loadContactEmail round-trip")
+    func contactEmailRoundTrip() {
+        let userDefaults = makeUserDefaults()
+        let store = makeStore(userDefaults: userDefaults)
+
+        store.updateContactEmail("doctor@example.test")
+        #expect(store.loadContactEmail() == "doctor@example.test")
+        #expect(userDefaults.string(forKey: ClinikoCredentialStore.contactEmailUserDefaultsKey)
+                == "doctor@example.test")
+    }
+
+    @Test("updateContactEmail trims whitespace before storing")
+    func contactEmailTrims() {
+        let userDefaults = makeUserDefaults()
+        let store = makeStore(userDefaults: userDefaults)
+
+        store.updateContactEmail("  doctor@example.test  \n")
+        #expect(store.loadContactEmail() == "doctor@example.test")
+    }
+
+    @Test("updateContactEmail with nil clears the stored value")
+    func contactEmailNilClears() {
+        let userDefaults = makeUserDefaults()
+        let store = makeStore(userDefaults: userDefaults)
+
+        store.updateContactEmail("doctor@example.test")
+        store.updateContactEmail(nil)
+        #expect(store.loadContactEmail() == nil)
+        #expect(userDefaults.object(forKey: ClinikoCredentialStore.contactEmailUserDefaultsKey) == nil)
+    }
+
+    @Test("updateContactEmail with whitespace-only clears the stored value")
+    func contactEmailWhitespaceClears() {
+        let userDefaults = makeUserDefaults()
+        let store = makeStore(userDefaults: userDefaults)
+
+        store.updateContactEmail("doctor@example.test")
+        store.updateContactEmail("   \t\n  ")
+        // Whitespace-only must be treated the same as nil — otherwise the
+        // UA builder would emit `"mac-speech-to-text (   )"`.
+        #expect(store.loadContactEmail() == nil)
+    }
+
+    @Test("static loadContactEmail(from:) reads the same key as the instance method")
+    func contactEmailStaticReadMatchesInstance() {
+        let userDefaults = makeUserDefaults()
+        let store = makeStore(userDefaults: userDefaults)
+
+        store.updateContactEmail("ops@example.test")
+        // The static convenience is what `ClinikoUserAgent.defaultProvider()`
+        // calls — it must agree with the instance method that the UI uses
+        // to write, otherwise the UA would diverge from what the user typed.
+        #expect(ClinikoCredentialStore.loadContactEmail(from: userDefaults) == "ops@example.test")
+    }
+
+    @Test("deleteCredentials does NOT clear the contact email")
+    func deleteCredentialsPreservesContactEmail() async throws {
+        // The contact email is a preference about who Cliniko should contact,
+        // not material tied to the API key. Rotating credentials shouldn't
+        // make the doctor re-enter their own contact.
+        let userDefaults = makeUserDefaults()
+        let store = makeStore(userDefaults: userDefaults)
+        try await store.saveCredentials(apiKey: "k", shard: .au1)
+        store.updateContactEmail("doctor@example.test")
+
+        try await store.deleteCredentials()
+
+        #expect(store.loadContactEmail() == "doctor@example.test",
+                "contact email should survive credential removal")
+    }
+
     // MARK: - Service / account constants are pinned
 
     @Test("service + account constants match the Cliniko reference doc")
@@ -190,6 +269,7 @@ struct ClinikoCredentialStoreTests {
         #expect(ClinikoCredentialStore.serviceName == "com.speechtotext.cliniko")
         #expect(ClinikoCredentialStore.apiKeyAccount == "api_key")
         #expect(ClinikoCredentialStore.shardUserDefaultsKey == "cliniko.shard")
+        #expect(ClinikoCredentialStore.contactEmailUserDefaultsKey == "cliniko.contactEmail")
     }
 
     // MARK: - SecureStore failure surfacing

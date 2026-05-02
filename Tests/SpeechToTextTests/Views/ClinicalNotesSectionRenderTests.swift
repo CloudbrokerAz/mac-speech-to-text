@@ -174,6 +174,65 @@ final class ClinicalNotesSectionRenderTests: XCTestCase {
         )
     }
 
+    // MARK: - #89 Contact email field
+
+    func test_contactEmailField_isPresent() throws {
+        let viewModel = makeViewModel()
+        let view = ClinicalNotesSection(
+            viewModel: viewModel,
+            settingsService: makeSettingsService()
+        )
+        XCTAssertNoThrow(
+            try view.inspect().find(viewWithAccessibilityIdentifier: "clinicalNotesSection.contactEmailField")
+        )
+    }
+
+    func test_contactEmailField_invalidHintHiddenForEmptyDraft() throws {
+        let viewModel = makeViewModel()
+        viewModel.contactEmailDraft = ""
+        let view = ClinicalNotesSection(
+            viewModel: viewModel,
+            settingsService: makeSettingsService()
+        )
+        XCTAssertThrowsError(
+            try view.inspect().find(viewWithAccessibilityIdentifier: "clinicalNotesSection.contactEmailField.invalidHint"),
+            "Empty input is unset, not invalid — the hint should not appear"
+        )
+    }
+
+    func test_contactEmailField_invalidHintAppearsForMalformedInput() throws {
+        let viewModel = makeViewModel()
+        viewModel.contactEmailDraft = "not-an-email"
+        let view = ClinicalNotesSection(
+            viewModel: viewModel,
+            settingsService: makeSettingsService()
+        )
+        XCTAssertNoThrow(
+            try view.inspect().find(viewWithAccessibilityIdentifier: "clinicalNotesSection.contactEmailField.invalidHint")
+        )
+    }
+
+    func test_contactEmailDraft_persistsThroughCredentialStore() async throws {
+        let userDefaults = makeUserDefaults()
+        let store = ClinikoCredentialStore(
+            secureStore: InMemorySecureStore(),
+            userDefaults: userDefaults
+        )
+        let probe = ClinikoAuthProbe(session: .shared)
+        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: probe)
+
+        viewModel.contactEmailDraft = "doctor@example.test"
+
+        // The didSet writes through synchronously via the nonisolated update.
+        XCTAssertEqual(store.loadContactEmail(), "doctor@example.test")
+
+        // Refresh hydrates the draft back from the store.
+        viewModel.contactEmailDraft = "stale"
+        await viewModel.refreshState()
+        XCTAssertEqual(viewModel.contactEmailDraft, "doctor@example.test",
+                       "refreshState should reload the persisted email, replacing any unsaved local draft")
+    }
+
     // MARK: - #91 Conflict-guard validator
 
     /// The validator is a pure function over an explicit "bound chords" list.

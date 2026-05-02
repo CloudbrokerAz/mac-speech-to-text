@@ -42,22 +42,31 @@ public enum ClinikoAuthProbeError: Error, Sendable, Equatable, CustomStringConve
 /// the response body is non-PHI. Logs still avoid the response body and any
 /// URL details — only the structural status / error case is emitted.
 public actor ClinikoAuthProbe {
-    /// Default `User-Agent` exposed for tests. Cliniko requires the header to
-    /// be non-empty and to embed a contact reference per their docs (see
-    /// `.claude/references/cliniko-api.md`); we publish the app version plus
-    /// the public repository URL so Cliniko ops can reach the project on
-    /// abuse / incident.
-    public static var defaultUserAgent: String {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
-        return "mac-speech-to-text/\(version) (https://github.com/CloudbrokerAz/mac-speech-to-text)"
+    private let session: URLSession
+    /// `@Sendable () -> String` so the UA is resolved per request rather
+    /// than frozen at init. The doctor edits their contact email in the
+    /// Clinical Notes settings UI (#89); the default provider reads
+    /// `ClinikoCredentialStore.contactEmailUserDefaultsKey` from
+    /// `UserDefaults.standard`, so an email change takes effect on the
+    /// next probe without re-instantiating the actor.
+    private let userAgentProvider: @Sendable () -> String
+
+    public init(
+        session: URLSession = .shared,
+        userAgentProvider: @escaping @Sendable () -> String = ClinikoUserAgent.defaultProvider()
+    ) {
+        self.session = session
+        self.userAgentProvider = userAgentProvider
     }
 
-    private let session: URLSession
-    private let userAgent: String
-
-    public init(session: URLSession = .shared, userAgent: String? = nil) {
-        self.session = session
-        self.userAgent = userAgent ?? Self.defaultUserAgent
+    /// Convenience init for tests that pin a specific `User-Agent` string.
+    /// Wraps the literal in a `@Sendable` closure so call sites that don't
+    /// care about runtime UA reconfiguration stay terse.
+    public init(
+        session: URLSession = .shared,
+        userAgent: String
+    ) {
+        self.init(session: session, userAgentProvider: { userAgent })
     }
 
     /// Issue `GET /user` against Cliniko using `credentials`. Returns
@@ -68,7 +77,7 @@ public actor ClinikoAuthProbe {
         var request = URLRequest(url: credentials.baseURL.appendingPathComponent("user"))
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(userAgentProvider(), forHTTPHeaderField: "User-Agent")
         request.setValue(credentials.basicAuthHeaderValue, forHTTPHeaderField: "Authorization")
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
 
