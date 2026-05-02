@@ -18,14 +18,35 @@ and the [official Cliniko API docs](https://docs.api.cliniko.com/).
   - `SecureStore` service identifier: `"com.speechtotext.cliniko"`.
   - Account: `"api_key"`.
   - Accessibility: `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` (no iCloud sync).
-- **Shard / subdomain** (non-secret): stored in `UserDefaults`.
+- **Shard / subdomain** (non-secret): stored in `UserDefaults` under
+  `cliniko.shard`.
   - Example values: `au1`, `au2`, `au3`, `au4`, `uk1`, `uk2`, `ca1`, `us1`.
   - Used to build the base URL: `https://api.{shard}.cliniko.com/v1`.
+- **Contact email** (non-secret, #89): stored in `UserDefaults` under
+  `cliniko.contactEmail`. The practitioner enters this in the Clinical
+  Notes settings UI; `ClinikoUserAgent.defaultProvider()` reads it on every
+  request to build the `User-Agent`. Not in Keychain — it's a contact
+  reference Cliniko ops can reach the integration owner on, not
+  authentication material.
 - **Auth scheme**: HTTP Basic with `"{api_key}:"` (the empty password is
   deliberate — Cliniko uses the API key as the username).
 - **Required headers** (per Cliniko docs):
-  - `User-Agent: mac-speech-to-text/<version> (contact@example.test)` —
-    Cliniko requires a contact email; plumb through a setting if needed.
+  - `User-Agent`: built by [`ClinikoUserAgent.make(contactEmail:)`](../../Sources/Services/Cliniko/ClinikoUserAgent.swift).
+    Cliniko requires "a name and valid contact email" or they reserve the
+    right to auto-block. Two emitted shapes:
+    - **Configured (preferred):** `mac-speech-to-text (user@example.test)`
+      — matches Cliniko's docs example + the sibling `epc-letter-generation`
+      reference. The practitioner enters their own email in
+      Clinical Notes settings (#89); it lives in `UserDefaults` under
+      `cliniko.contactEmail` and is read per-request via
+      `ClinikoUserAgent.defaultProvider()`, so a settings change takes
+      effect on the next request without re-instantiating `ClinikoClient`
+      / `ClinikoAuthProbe`.
+    - **Fallback (no email yet):**
+      `mac-speech-to-text/<version> (https://github.com/CloudbrokerAz/mac-speech-to-text)`.
+      Keeps the structural name + contact-reference contract satisfied
+      until the doctor sets an email; the latent auto-block risk only
+      applies in the un-configured window.
   - `Accept: application/json`.
 
 ---
@@ -132,5 +153,6 @@ Every successful export writes a metadata-only line to
 - `Sources/Services/Cliniko/ClinikoClient.swift` — actor + URLSession.
 - `Sources/Services/Cliniko/ClinikoEndpoint.swift` — endpoint enum.
 - `Sources/Services/Cliniko/ClinikoError.swift` — typed errors.
+- `Sources/Services/Cliniko/ClinikoUserAgent.swift` — `User-Agent` builder + provider closure (#89).
 - `Sources/Services/Cliniko/AuditStore.swift` — metadata-only audit log.
 - `Tests/SpeechToTextTests/Fixtures/cliniko/` — request + response goldens.

@@ -27,6 +27,14 @@ public actor ClinikoCredentialStore {
     /// `UserDefaults` key for the shard rawValue. Non-PHI structural value.
     public static let shardUserDefaultsKey = "cliniko.shard"
 
+    /// `UserDefaults` key for the practitioner's contact email used in the
+    /// `User-Agent` header sent to Cliniko (issue #89). Non-secret, doctor
+    /// configurable from the Clinical Notes settings UI; lives alongside the
+    /// shard rather than in Keychain because it is not authentication
+    /// material — it is the contact reference Cliniko's docs require so they
+    /// can reach the integration owner about abuse / incident.
+    public static let contactEmailUserDefaultsKey = "cliniko.contactEmail"
+
     /// Errors surfaced from this store. Cases are semantic — callers can
     /// pattern-match on the operation that failed and inspect the wrapped
     /// `SecureStore` failure when they need the underlying `OSStatus`. This
@@ -146,6 +154,45 @@ public actor ClinikoCredentialStore {
     /// from the picker should not require an actor hop / `Task`.
     public nonisolated func updateShard(_ shard: ClinikoShard) {
         userDefaults.set(shard.rawValue, forKey: Self.shardUserDefaultsKey)
+    }
+
+    /// Returns the persisted contact email used in the Cliniko `User-Agent`
+    /// header, or `nil` if unset / empty after trim. Marked `nonisolated`
+    /// because the UA builder (called from inside `ClinikoClient` /
+    /// `ClinikoAuthProbe` actors per request) must read it without an actor
+    /// hop. Returning `nil` for whitespace-only input keeps the UA shape
+    /// rule "if you set an email, you get the email form" honest.
+    public nonisolated func loadContactEmail() -> String? {
+        return Self.loadContactEmail(from: userDefaults)
+    }
+
+    /// Static convenience for callers that need the contact email without
+    /// holding a `ClinikoCredentialStore` reference — used by
+    /// `ClinikoUserAgent.defaultProvider()` so the UA-builder path doesn't
+    /// instantiate a Keychain handle just to read a `UserDefaults` string.
+    /// Returns `nil` if unset or whitespace-only after trim.
+    public static func loadContactEmail(from userDefaults: UserDefaults) -> String? {
+        let raw = userDefaults.string(forKey: contactEmailUserDefaultsKey)
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Persist the practitioner's contact email. Pass `nil` (or whitespace-
+    /// only) to clear. Trims input. Marked `nonisolated` for the same reason
+    /// as `loadContactEmail` — the settings TextField commit binding stays
+    /// synchronous.
+    ///
+    /// Not cleared by `deleteCredentials`: the email is a preference about
+    /// who Cliniko should contact, not material tied to the API key. A
+    /// doctor who rotates their key shouldn't have to re-enter their own
+    /// contact.
+    public nonisolated func updateContactEmail(_ email: String?) {
+        let trimmed = email?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty {
+            userDefaults.removeObject(forKey: Self.contactEmailUserDefaultsKey)
+        } else {
+            userDefaults.set(trimmed, forKey: Self.contactEmailUserDefaultsKey)
+        }
     }
 
     /// Delete every Cliniko credential and forget the shard. The Keychain

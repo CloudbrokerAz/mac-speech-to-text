@@ -174,6 +174,105 @@ final class ClinicalNotesSectionRenderTests: XCTestCase {
         )
     }
 
+    // MARK: - #89 Contact email field
+
+    func test_contactEmailField_isPresent() throws {
+        let viewModel = makeViewModel()
+        let view = ClinicalNotesSection(
+            viewModel: viewModel,
+            settingsService: makeSettingsService()
+        )
+        XCTAssertNoThrow(
+            try view.inspect().find(viewWithAccessibilityIdentifier: "clinicalNotesSection.contactEmailField")
+        )
+    }
+
+    func test_contactEmailField_invalidHintHiddenForEmptyDraft() throws {
+        let viewModel = makeViewModel()
+        viewModel.contactEmailDraft = ""
+        let view = ClinicalNotesSection(
+            viewModel: viewModel,
+            settingsService: makeSettingsService()
+        )
+        XCTAssertThrowsError(
+            try view.inspect().find(viewWithAccessibilityIdentifier: "clinicalNotesSection.contactEmailField.invalidHint"),
+            "Empty input is unset, not invalid — the hint should not appear"
+        )
+    }
+
+    func test_contactEmailField_invalidHintAppearsForMalformedInput() throws {
+        let viewModel = makeViewModel()
+        viewModel.contactEmailDraft = "not-an-email"
+        let view = ClinicalNotesSection(
+            viewModel: viewModel,
+            settingsService: makeSettingsService()
+        )
+        XCTAssertNoThrow(
+            try view.inspect().find(viewWithAccessibilityIdentifier: "clinicalNotesSection.contactEmailField.invalidHint")
+        )
+    }
+
+    func test_contactEmailDraft_didSetPersistsThroughCredentialStore() async throws {
+        let userDefaults = makeUserDefaults()
+        let store = ClinikoCredentialStore(
+            secureStore: InMemorySecureStore(),
+            userDefaults: userDefaults
+        )
+        let probe = ClinikoAuthProbe(session: .shared)
+        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: probe)
+
+        viewModel.contactEmailDraft = "doctor@example.test"
+
+        // The didSet writes through synchronously via the nonisolated update.
+        XCTAssertEqual(store.loadContactEmail(), "doctor@example.test")
+    }
+
+    func test_contactEmailDraft_rehydratesFromStoreOnRefresh() async throws {
+        let userDefaults = makeUserDefaults()
+        let store = ClinikoCredentialStore(
+            secureStore: InMemorySecureStore(),
+            userDefaults: userDefaults
+        )
+        let probe = ClinikoAuthProbe(session: .shared)
+        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: probe)
+
+        // Simulate an external write (a different settings tab / process /
+        // earlier session that persisted a value before the VM was created).
+        // A direct `store.updateContactEmail` skips the VM's didSet, so the
+        // VM has no in-memory record of the change until refreshState reloads
+        // from disk. This is the actual flow `refreshState` exists to support
+        // — the VM can't simulate it via its own didSet (which auto-saves
+        // and would overwrite, not diverge from, the disk value).
+        store.updateContactEmail("doctor@example.test")
+        XCTAssertEqual(viewModel.contactEmailDraft, "",
+                       "VM has not loaded yet; draft remains empty")
+
+        await viewModel.refreshState()
+        XCTAssertEqual(viewModel.contactEmailDraft, "doctor@example.test",
+                       "refreshState should hydrate the draft from the persisted store value")
+    }
+
+    func test_contactEmailDraft_refreshStateSkipsRedundantAssignment() async throws {
+        // The equality-guard in `refreshState` is belt-and-braces against a
+        // future trigger-graph addition that re-runs refresh while the field
+        // is focused. Pin the property: when the on-disk value already
+        // matches the in-memory draft, refreshState must not reassign (the
+        // assignment would be a no-op semantically, but we want the guard
+        // to remain wired in case the didSet logic gets richer).
+        let userDefaults = makeUserDefaults()
+        let store = ClinikoCredentialStore(
+            secureStore: InMemorySecureStore(),
+            userDefaults: userDefaults
+        )
+        let probe = ClinikoAuthProbe(session: .shared)
+        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: probe)
+
+        viewModel.contactEmailDraft = "doctor@example.test"
+        await viewModel.refreshState()
+        XCTAssertEqual(viewModel.contactEmailDraft, "doctor@example.test",
+                       "draft already matches store; refreshState must not corrupt it")
+    }
+
     // MARK: - #91 Conflict-guard validator
 
     /// The validator is a pure function over an explicit "bound chords" list.

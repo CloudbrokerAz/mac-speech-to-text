@@ -83,7 +83,10 @@ actor TreatmentNoteExporter {
 
     /// Marketing version for the active build, with a deterministic
     /// fallback when running outside an `.app` bundle (i.e. during
-    /// `swift test`). Mirrors `ClinikoClient.defaultUserAgent`.
+    /// `swift test`). Same `CFBundleShortVersionString` lookup the
+    /// `ClinikoUserAgent` fallback path uses, kept in lockstep so the
+    /// audit-ledger row's `app_version` matches what Cliniko sees in the
+    /// `User-Agent` header for the unconfigured-email case.
     static var defaultAppVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
     }

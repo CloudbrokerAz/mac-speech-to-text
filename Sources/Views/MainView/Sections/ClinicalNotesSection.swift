@@ -73,6 +73,8 @@ struct ClinicalNotesSection: View {
 
                 shardPickerSection
 
+                contactEmailEntrySection
+
                 actionButtons
 
                 if let message = viewModel.statusMessage {
@@ -408,6 +410,53 @@ struct ClinicalNotesSection: View {
         }
     }
 
+    // MARK: - Contact Email Entry (#89)
+
+    /// Editable email used in the Cliniko `User-Agent` header. Cliniko's
+    /// docs require a contact reference Cliniko ops can reach the
+    /// integration owner on; storing it as a settings value rather than
+    /// hardcoding it lets each practitioner publish their own address.
+    /// The value persists on every keystroke via the VM's `didSet` — no
+    /// explicit "save" gesture, mirroring how `selectedShard` commits
+    /// inline.
+    private var contactEmailEntrySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Contact email")
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundStyle(.secondary)
+
+            TextField(
+                "you@yourclinic.example",
+                text: $viewModel.contactEmailDraft
+            )
+            .textFieldStyle(.roundedBorder)
+            .disableAutocorrection(true)
+            .textContentType(.emailAddress)
+            .accessibilityIdentifier("clinicalNotesSection.contactEmailField")
+
+            // Soft validation feedback only. A malformed entry still
+            // persists and goes out in the UA — Cliniko's docs request a
+            // "valid contact email" but don't policy-validate, and we'd
+            // rather not block save on our heuristic. The hint nudges the
+            // practitioner; the orange triangle matches the warm-minimalism
+            // colour story in `KeywordEditorSheet` for unsupported input.
+            // VM owns the policy via `shouldShowContactEmailInvalidHint` so
+            // the trim + validity rules live in one place (DRY — Gemini #137).
+            if viewModel.shouldShowContactEmailInvalidHint {
+                Label("That doesn't look like a valid email address", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("clinicalNotesSection.contactEmailField.invalidHint")
+            }
+
+            Text("Cliniko's API requires a contact email so they can reach you about integration issues. This Mac sends it in the User-Agent header on every Cliniko request.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     // MARK: - Action Buttons
 
     private var actionButtons: some View {
@@ -604,6 +653,48 @@ final class ClinicalNotesSectionViewModel {
         }
     }
 
+    /// The practitioner's contact email (#89). Embedded in the Cliniko
+    /// `User-Agent` header so Cliniko ops can reach the integration owner
+    /// about abuse / incident. Persists to `UserDefaults` via
+    /// `ClinikoCredentialStore.updateContactEmail` on every change so the
+    /// value survives a quit even mid-typing — UserDefaults writes are
+    /// cheap and the worst-case cost is one stale partial during typing.
+    var contactEmailDraft: String = "" {
+        didSet {
+            guard oldValue != contactEmailDraft, !isApplyingExternalUpdate else { return }
+            credentialStore.updateContactEmail(contactEmailDraft)
+        }
+    }
+
+    /// Loose RFC 5321 sanity check — has at least one `@`, with non-empty
+    /// local + domain parts and a `.` somewhere in the domain. Cliniko
+    /// doesn't enforce a format (the docs say "valid contact email" but
+    /// don't policy-validate), so we only use this to drive a soft
+    /// orange-warning hint, never to block save. A malformed entry still
+    /// stores and emits in the UA — at worst Cliniko will eventually flag
+    /// the integration owner about it.
+    ///
+    /// Empty / whitespace-only is treated as "unset" (returns `true` — not
+    /// invalid). Pair with `shouldShowContactEmailInvalidHint` to drive UI
+    /// — that combined property is what the view binds to so the hint logic
+    /// lives in one place.
+    var isContactEmailDraftValid: Bool {
+        let trimmed = contactEmailDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true } // empty = unset, not invalid
+        let parts = trimmed.split(separator: "@", omittingEmptySubsequences: false)
+        guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { return false }
+        return parts[1].contains(".")
+    }
+
+    /// Drives the orange-triangle warning under the contact-email field.
+    /// Combines "user has typed something" + "it doesn't look valid", so
+    /// the view doesn't need to re-trim or re-check (DRY — keeps the
+    /// hint policy in the VM where the format rule lives).
+    var shouldShowContactEmailInvalidHint: Bool {
+        let trimmed = contactEmailDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && !isContactEmailDraftValid
+    }
+
     private(set) var credentialState: CredentialLoadState = .unknown
     private(set) var verificationStatus: VerificationStatus = .absent
     private(set) var connectionStatus: ConnectionStatus = .idle
@@ -638,7 +729,23 @@ final class ClinicalNotesSectionViewModel {
     /// Called from `.task { … }` on the section view.
     func refreshState() async {
         let shard = credentialStore.loadShard()
-        applyExternalUpdate { self.selectedShard = shard }
+        let storedContactEmail = credentialStore.loadContactEmail() ?? ""
+        applyExternalUpdate {
+            self.selectedShard = shard
+            // Hydrate the contact-email draft from disk so the field shows
+            // the persisted value on next visit. The `applyExternalUpdate`
+            // guard prevents the didSet from echoing back to the store.
+            //
+            // Equality-guard the assignment so a future call site that
+            // re-runs `refreshState` while the field is focused (e.g.
+            // post-probe refresh) cannot clobber an in-flight draft that
+            // already matches disk. Today's only trigger is `.task` on
+            // view-appear, which fires before the field exists, so this
+            // is belt-and-braces against future regressions.
+            if self.contactEmailDraft != storedContactEmail {
+                self.contactEmailDraft = storedContactEmail
+            }
+        }
 
         do {
             let present = try await credentialStore.hasAPIKey()
