@@ -126,6 +126,19 @@ public actor ClinikoAppointmentService: ClinikoAppointmentLoading {
         // `pathTemplate` is `/individual_appointments?q[]={…}` —
         // structural by design. Re-throw preserves the existing
         // surface for `PatientPickerViewModel`.
+        //
+        // **Future-proofing**: today, `toDomainModel` only re-throws
+        // from the `parser.parse(startsAt)` call (the `endsAt` parse
+        // is locally swallowed + structurally logged), and the parser
+        // only throws `.dateMalformed`. So narrow-catch is provably
+        // exhaustive against the actual throw set. If a future PR adds
+        // a new throw site to `toDomainModel`, decide *in that PR*
+        // whether to widen this catch — and if so, whether to mirror
+        // `ExportFlowViewModel.caseName(_:)` here for a structural
+        // case name, or add a parallel `ClinikoClient`-side log path.
+        // Do NOT widen pre-emptively to a `let error as ClinikoError`
+        // form: that would re-introduce `String(describing: error)` /
+        // `error.description` interpolation against the AGENTS rule.
         let domain: [Appointment]
         do {
             domain = try response.individualAppointments.map { dto in
