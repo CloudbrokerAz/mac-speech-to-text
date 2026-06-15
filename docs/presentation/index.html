@@ -1,0 +1,1610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A story about a chiropractor, LLMs and nine days · Aaron Evans</title>
+<style>
+  /* ============================================================
+     Theme: nexu-io/open-design · design-systems/claude
+     Warm parchment canvas, terracotta accent, serif-500 headlines,
+     warm-only neutrals, ring shadows. No cool grays. No gradients.
+     ============================================================ */
+  :root {
+    --parchment:   #f5f4ed;
+    --ivory:       #faf9f5;
+    --white:       #ffffff;
+    --sand:        #e8e6dc;
+    --near-black:  #141413;
+    --dark-surface:#30302e;
+    --terracotta:  #c96442;
+    --coral:       #d97757;
+    --charcoal:    #4d4c48;
+    --olive:       #5e5d59;
+    --stone:       #87867f;
+    --dark-warm:   #3d3d3a;
+    --silver:      #b0aea5;
+    --border-cream:#f0eee6;
+    --border-warm: #e8e6dc;
+    --ring-warm:   #d1cfc5;
+    --focus-blue:  #3898ec;
+    --serif: Georgia, 'Iowan Old Style', 'Times New Roman', serif;
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --mono: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+    --spring: cubic-bezier(0.34, 1.18, 0.64, 1);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    background: var(--near-black); /* letterbox around the stage */
+    font-family: var(--sans);
+    overflow: hidden;
+  }
+
+  /* ---------- Fixed 16:9 stage, scaled to fit the window ---------- */
+  #viewport {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #stage {
+    width: 1280px; height: 720px;
+    position: relative;
+    transform-origin: center center;
+    background: var(--parchment);
+    overflow: hidden;
+  }
+
+  /* ---------- Slides ---------- */
+  .slide {
+    position: absolute; inset: 0;
+    padding: 64px 88px 76px;
+    display: flex; flex-direction: column;
+    background: var(--parchment);
+    color: var(--near-black);
+    visibility: hidden;
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  .slide.current {
+    visibility: visible;
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity .42s var(--spring), transform .42s var(--spring);
+  }
+  .slide.leaving {
+    visibility: visible;
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: opacity .3s ease, transform .3s ease;
+  }
+  .slide.dark { background: var(--near-black); color: var(--ivory); }
+
+  /* ---------- Type ---------- */
+  .overline {
+    font: 400 12px/1.6 var(--sans);
+    letter-spacing: 2.2px;
+    text-transform: uppercase;
+    color: var(--stone);
+    margin-bottom: 26px;
+  }
+  .overline b { color: var(--terracotta); font-weight: 500; }
+  .dark .overline { color: var(--silver); }
+  .dark .overline b { color: var(--coral); }
+
+  h1 {
+    font: 500 64px/1.1 var(--serif);
+    letter-spacing: -0.5px;
+    max-width: 980px;
+  }
+  h2 {
+    font: 500 46px/1.18 var(--serif);
+    letter-spacing: -0.3px;
+    margin-bottom: 14px;
+    max-width: 980px;
+  }
+  .lede {
+    font: 400 20px/1.6 var(--sans);
+    color: var(--olive);
+    max-width: 760px;
+  }
+  .dark .lede { color: var(--silver); }
+
+  /* hand-drawn terracotta stroke under a key phrase */
+  .uline { position: relative; white-space: nowrap; }
+  .uline svg {
+    position: absolute; left: -1%; bottom: -0.18em;
+    width: 102%; height: 0.34em;
+    overflow: visible;
+  }
+  .uline svg path {
+    fill: none; stroke: var(--terracotta);
+    stroke-width: 5; stroke-linecap: round;
+  }
+
+  .body-area { flex: 1; display: flex; flex-direction: column; justify-content: center; min-height: 0; }
+
+  /* ---------- Cards & chips ---------- */
+  .card {
+    background: var(--ivory);
+    border: 1px solid var(--border-cream);
+    border-radius: 16px;
+    box-shadow: rgba(0,0,0,0.05) 0 4px 24px;
+  }
+  .dark .card {
+    background: var(--dark-surface);
+    border-color: var(--dark-surface);
+    box-shadow: none;
+  }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--sand);
+    color: var(--charcoal);
+    font: 500 14px/1.25 var(--sans);
+    padding: 8px 16px;
+    border-radius: 24px;
+    box-shadow: var(--ring-warm) 0 0 0 1px;
+  }
+  .chip::before {
+    content: ''; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--terracotta); flex: none;
+  }
+  .mono {
+    font: 400 15px/1.6 var(--mono);
+    letter-spacing: -0.32px;
+    background: var(--ivory);
+    border-radius: 8px;
+    padding: 3px 10px;
+    box-shadow: var(--ring-warm) 0 0 0 1px;
+    color: var(--charcoal);
+  }
+  .dark .mono { background: var(--dark-surface); color: var(--silver); box-shadow: #3d3d3a 0 0 0 1px; }
+
+  /* ---------- Title slide ---------- */
+  .reveal { opacity: 0; transform: translateY(12px); animation: rise .6s var(--spring) forwards; }
+  .reveal.d1 { animation-delay: .08s; } .reveal.d2 { animation-delay: .2s; }
+  .reveal.d3 { animation-delay: .34s; } .reveal.d4 { animation-delay: .5s; }
+  @keyframes rise { to { opacity: 1; transform: translateY(0); } }
+
+  /* ---------- Pipeline (slide 4) ---------- */
+  .pipeline { display: flex; align-items: center; gap: 0; margin: 56px 0 52px; }
+  .pipe-step {
+    flex: 1; padding: 20px 18px 18px;
+    min-height: 150px;
+    background: var(--ivory);
+    border: 1px solid var(--border-cream);
+    border-radius: 12px;
+    box-shadow: rgba(0,0,0,0.05) 0 4px 24px;
+  }
+  .pipe-step.up   { transform: translateY(-36px); }
+  .pipe-step.down { transform: translateY(36px); }
+  .pipe-step .num { font: 500 12px/1 var(--sans); letter-spacing: 1.5px; color: var(--terracotta); margin-bottom: 10px; }
+  .pipe-step h3 { font: 500 21px/1.2 var(--serif); margin-bottom: 6px; }
+  .pipe-step p { font: 400 13.5px/1.5 var(--sans); color: var(--olive); }
+  .pipe-arrow {
+    flex: none; width: 40px; align-self: center;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--terracotta); font-size: 24px; font-weight: 600;
+  }
+  .pipe-arrow.a-down { transform: none; }
+  .pipe-arrow.a-up   { transform: none; }
+  .chips-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .footnote { margin-top: 26px; font: 400 14px/1.6 var(--sans); color: var(--stone); max-width: 880px; }
+  .dark .footnote { color: var(--stone); }
+
+  /* ---------- Loop diagram (slide 5) ---------- */
+  .loop { display: flex; align-items: center; gap: 0; margin: 36px 0 34px; }
+  .loop-node {
+    flex: 1; padding: 24px 24px 22px;
+    background: var(--dark-surface);
+    border: 1px solid #3d3d3a;
+    border-radius: 16px;
+  }
+  .loop-node .who { font: 500 13px/1.25 var(--sans); letter-spacing: 1.2px; text-transform: uppercase; color: var(--coral); margin-bottom: 10px; }
+  .loop-node h3 { font: 500 24px/1.2 var(--serif); color: var(--ivory); margin-bottom: 8px; }
+  .loop-node p { font: 400 14.5px/1.55 var(--sans); color: var(--silver); }
+  .loop-arrow { flex: none; width: 44px; text-align: center; color: var(--coral); font-size: 22px; }
+  .loop-return {
+    text-align: center; font: 400 14px/1.6 var(--sans); color: var(--stone);
+    margin-top: -10px; margin-bottom: 26px;
+  }
+  .loop-return b { color: var(--coral); font-weight: 500; }
+  .rules { display: flex; gap: 28px; }
+  .rules div { flex: 1; }
+  .rules h4 { font: 500 16px/1.3 var(--serif); color: var(--ivory); margin-bottom: 5px; }
+  .rules p { font: 400 13.5px/1.55 var(--sans); color: var(--silver); }
+
+  /* ---------- Stat grid (slide 6) ---------- */
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 30px; }
+  .stat {
+    background: var(--ivory);
+    border: 1px solid var(--border-cream);
+    border-radius: 12px;
+    padding: 20px 22px 17px;
+  }
+  .stat .v { font: 500 40px/1.1 var(--serif); letter-spacing: -0.5px; }
+  .stat.hot .v { color: var(--terracotta); }
+  .stat .k { font: 400 14px/1.45 var(--sans); color: var(--olive); margin-top: 6px; }
+
+  /* ---------- Charts (slide 7) ---------- */
+  .charts { display: grid; grid-template-columns: 1.25fr 1fr; gap: 28px; margin-top: 26px; align-items: start; }
+  .chart-card { padding: 22px 24px 16px; }
+  .chart-card h3 { font: 500 20px/1.25 var(--serif); margin-bottom: 2px; }
+  .chart-card .sub { font: 400 13px/1.5 var(--sans); color: var(--stone); margin-bottom: 12px; }
+  .streak { display: flex; gap: 8px; margin-top: 22px; align-items: center; }
+  .streak .day {
+    width: 44px; height: 44px; border-radius: 10px;
+    background: var(--sand);
+    display: flex; align-items: center; justify-content: center;
+    font: 500 15px/1 var(--sans); color: var(--charcoal);
+    box-shadow: var(--ring-warm) 0 0 0 1px;
+  }
+  .streak .day.hot { background: var(--terracotta); color: var(--ivory); box-shadow: none; }
+  .streak .lbl { font: 400 14px/1.5 var(--sans); color: var(--olive); margin-left: 14px; }
+
+  /* ---------- Editorial list slides (8, 9, 10, 12) ---------- */
+  .points { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 28px; margin-top: 28px; }
+  .points.single { grid-template-columns: 1fr; gap: 10px; max-width: 1000px; }
+  .points.single .point { padding: 13px 20px 11px; }
+  .points.single .point h3 { font-size: 20px; margin-bottom: 4px; }
+  .point { padding: 18px 22px 16px; border-radius: 12px; background: var(--ivory); border: 1px solid var(--border-cream); }
+  .dark .point { background: var(--dark-surface); border-color: #3d3d3a; }
+  .point h3 { font: 500 21px/1.25 var(--serif); margin-bottom: 6px; }
+  .point h3 .n { color: var(--terracotta); margin-right: 10px; }
+  .dark .point h3 { color: var(--ivory); }
+  .dark .point h3 .n { color: var(--coral); }
+  .point p { font: 400 14.5px/1.55 var(--sans); color: var(--olive); }
+  .dark .point p { color: var(--silver); }
+  .point .ref { font: 400 12.5px/1.4 var(--mono); color: var(--stone); letter-spacing: -0.2px; }
+
+  /* ---------- Close slide ---------- */
+  .close-stack { display: flex; flex-direction: column; gap: 26px; align-items: flex-start; }
+
+  /* ---------- Big centered statement (interstitial) ---------- */
+  .statement { align-items: center; justify-content: center; text-align: center; }
+  .statement .big {
+    font: 500 60px/1.18 var(--serif);
+    letter-spacing: -0.6px;
+    color: var(--ivory);
+    max-width: 980px;
+  }
+  .statement .big .soft { color: var(--silver); }
+  .statement .big .but {
+    position: relative; white-space: nowrap;
+    color: var(--coral);
+  }
+  .statement .big .but svg {
+    position: absolute; left: -2%; bottom: -0.16em;
+    width: 104%; height: 0.34em; overflow: visible;
+  }
+  .statement .big .but svg path { fill: none; stroke: var(--coral); stroke-width: 5; stroke-linecap: round; }
+
+  /* ---------- Why · 2 split (text + screenshot) ---------- */
+  .why-split { flex-direction: row !important; gap: 44px; align-items: center; }
+  .why-text { flex: 1; min-width: 0; }
+  .why-split .points.single { margin-top: 0; gap: 12px; max-width: none; }
+  .why-split .points.single .point h3 { font-size: 19px; }
+  .shot { flex: 1.04; min-width: 0; display: flex; flex-direction: column; gap: 11px; }
+  .shot img {
+    width: 100%; height: auto; display: block;
+    border-radius: 14px;
+    box-shadow: rgba(20,20,19,0.16) 0 22px 50px -14px, var(--ring-warm) 0 0 0 1px;
+  }
+  .shot figcaption { font: 400 12.5px/1.5 var(--sans); color: var(--stone); text-align: center; }
+  .dark .shot figcaption { color: var(--silver); }
+  .dark .shot img { box-shadow: rgba(0,0,0,0.5) 0 26px 60px -18px, rgba(255,255,255,0.06) 0 0 0 1px; }
+
+  /* ---------- Moments (slide 12) — the PR thread, rendered natively ----------
+     The real exchange from PR #128, typeset instead of screenshotted, so the
+     courteous bits can be highlighted in place of a separate pull quote. */
+  .thread { position: relative; max-width: 950px; margin-top: 2px; }
+  .thread::before {                  /* timeline spine joining the comments */
+    content: ''; position: absolute; left: 15px; top: 24px; bottom: 24px;
+    width: 2px; background: #3d3d3a;
+  }
+  .cmt { position: relative; display: flex; gap: 12px; align-items: flex-start; }
+  .cmt + .cmt { margin-top: 10px; }
+  .cmt .av {
+    width: 32px; height: 32px; border-radius: 50%; flex: none;
+    position: relative; z-index: 1;
+    display: flex; align-items: center; justify-content: center;
+    background: #26261f; box-shadow: #3d3d3a 0 0 0 1px;
+  }
+  .cmt .av svg { width: 18px; height: 18px; display: block; }
+  .cmt .body2 {
+    flex: 1; position: relative;
+    background: var(--dark-surface);
+    border: 1px solid #3d3d3a; border-radius: 11px;
+    padding: 8px 14px 9px;
+  }
+  .cmt .body2::before {              /* little tail pointing at the avatar */
+    content: ''; position: absolute; top: 11px; left: -6px;
+    width: 10px; height: 10px; background: var(--dark-surface);
+    border-left: 1px solid #3d3d3a; border-bottom: 1px solid #3d3d3a;
+    transform: rotate(45deg);
+  }
+  .cmt .meta { display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px; flex-wrap: wrap; }
+  .cmt .meta b { font: 500 13px/1 var(--sans); color: var(--ivory); }
+  .cmt .meta .tag {
+    font: 500 9.5px/1 var(--sans); letter-spacing: .5px; text-transform: uppercase;
+    color: var(--coral); background: rgba(217,119,87,0.13);
+    padding: 2px 7px; border-radius: 20px;
+  }
+  .cmt .body2 p { font: 400 13px/1.55 var(--sans); color: var(--silver); }
+  .cmt .m { color: var(--coral); font-weight: 500; }            /* @mention */
+  .cmt .cc {                                                    /* inline code */
+    font: 400 11.5px/1.2 var(--mono); letter-spacing: -0.2px;
+    background: #26261f; color: var(--silver); white-space: nowrap;
+    padding: 1px 5px; border-radius: 5px; box-shadow: #3d3d3a 0 0 0 1px;
+  }
+  .cmt .hl {                                                    /* the argument's beats */
+    color: var(--ivory); font-weight: 500;
+    background: rgba(217,119,87,0.18);
+    padding: 1px 5px; border-radius: 5px;
+    box-decoration-break: clone; -webkit-box-decoration-break: clone;
+  }
+  .cmt .sign { color: var(--coral); font-weight: 500; }         /* the sign-off */
+  .cmt .sign svg path { stroke: var(--coral); }
+  /* each reply lands 2s after the one before — the back-and-forth unfolds
+     while you talk over it */
+  .cmt { opacity: 0; transform: translateY(12px); }
+  .slide.current .cmt { animation: rise .5s var(--spring) forwards; }
+  .slide.current .cmt:nth-child(2) { animation-delay: 2s; }
+  .slide.current .cmt:nth-child(3) { animation-delay: 4s; }
+  .slide.current .cmt:nth-child(4) { animation-delay: 6s; }
+  .slide.current .cmt:nth-child(5) { animation-delay: 8s; }
+
+  /* ---------- Ted Lasso quote callout (slide 3) ---------- */
+  .ted {
+    margin-top: 18px;
+    padding: 16px 22px;
+    background: var(--ivory);
+    border-left: 3px solid var(--terracotta);
+    border-radius: 0 10px 10px 0;
+    box-shadow: var(--ring-warm) 0 0 0 1px;
+  }
+  .ted blockquote {
+    font: 500 22px/1.32 var(--serif);
+    color: var(--near-black);
+    letter-spacing: -0.2px;
+  }
+  .ted blockquote .q { color: var(--terracotta); }
+  .ted cite {
+    display: block; margin-top: 8px;
+    font: 400 13px/1.4 var(--sans); font-style: normal;
+    letter-spacing: 1px; text-transform: uppercase; color: var(--stone);
+  }
+
+  /* ---------- Icon system ---------- */
+  .ico { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; display: block; }
+  .ico-badge {
+    width: 46px; height: 46px; border-radius: 13px; flex: none;
+    background: var(--sand); color: var(--terracotta);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: var(--ring-warm) 0 0 0 1px;
+  }
+  .ico-badge .ico { width: 24px; height: 24px; }
+  .dark .ico-badge { background: #26261f; color: var(--coral); box-shadow: #3d3d3a 0 0 0 1px; }
+
+  /* ---------- Slide 2 — pain cards (icon on top) ---------- */
+  .pain { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 30px; }
+  .pain-card {
+    background: var(--ivory); border: 1px solid var(--border-cream); border-radius: 16px;
+    padding: 26px 24px 24px; box-shadow: rgba(0,0,0,0.05) 0 4px 24px;
+    display: flex; flex-direction: column; gap: 15px;
+  }
+  .pain-card h3 { font: 500 23px/1.2 var(--serif); }
+  .pain-card p { font: 400 14.5px/1.55 var(--sans); color: var(--olive); }
+
+  /* ---------- Slide 4 — pipeline icons ---------- */
+  .pipe-step .pico { color: var(--terracotta); margin-bottom: 12px; }
+  .pipe-step .pico .ico { width: 27px; height: 27px; }
+  .pipe-step .num { display: inline-block; }
+
+  /* ---------- Slide 5 — loop node heads + ruled icons ---------- */
+  .loop-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .loop-head .ico-badge { width: 40px; height: 40px; border-radius: 11px; }
+  .loop-head .ico-badge .ico { width: 21px; height: 21px; }
+  .loop-node .who { margin-bottom: 0; }
+  .rules h4 { display: flex; align-items: center; gap: 9px; }
+  .rules h4 .ico { width: 17px; height: 17px; color: var(--coral); flex: none; }
+
+  /* ---------- Slide 9 — wins as equations (typographic, no boxes) ----------
+     The content already speaks in arithmetic ("written down = shipped",
+     "small PRs + instant review = same-session merges"), so the layout does
+     too: four big serif equations stepping diagonally down the page, the
+     result of each in terracotta, the receipts in small print underneath. */
+  .wins { display: flex; flex-direction: column; gap: 33px; margin-top: 26px; }
+  .win:nth-child(2) { margin-left: 58px; }
+  .win:nth-child(3) { margin-left: 116px; }
+  .win:nth-child(4) { margin-left: 174px; }
+  .eq { display: flex; align-items: baseline; gap: 15px; flex-wrap: wrap; }
+  .eq .t { font: 500 29px/1.2 var(--serif); letter-spacing: -0.3px; }
+  .eq .t.hot { color: var(--terracotta); }
+  .eq .op { font: 400 25px/1 var(--sans); color: var(--stone); }
+  .win .ev { margin-top: 7px; font: 400 13.5px/1.5 var(--sans); color: var(--olive); }
+
+  /* ---------- Slide 10 — postmortem terminal (one artifact, not five boxes) */
+  .term {
+    margin-top: 22px; max-width: 1062px;
+    background: var(--dark-surface);
+    border-radius: 14px;
+    box-shadow: rgba(0,0,0,0.45) 0 24px 60px -18px, rgba(255,255,255,0.07) 0 0 0 1px;
+    overflow: hidden;
+  }
+  .term-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 11px 16px;
+    background: #26261f;
+    border-bottom: 1px solid #3d3d3a;
+  }
+  .term-bar .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .term-bar .dr { background: #e0584f; }
+  .term-bar .dy { background: #d9a13d; }
+  .term-bar .dg { background: #5fa55f; }
+  .term-title { font: 400 12px/1 var(--mono); color: var(--stone); margin-left: 8px; letter-spacing: -0.2px; }
+  .term-body { padding: 14px 26px 16px; }
+  .log { display: flex; gap: 14px; align-items: flex-start; padding: 14px 0 13px; }
+  .log + .log { border-top: 1px dashed #3d3d3a; }
+  .log .lx { font: 500 17px/1.45 var(--mono); color: var(--coral); flex: none; }
+  .log h3 { font: 500 21px/1.3 var(--serif); color: var(--ivory); margin-bottom: 4px; display: flex; gap: 11px; align-items: baseline; flex-wrap: wrap; }
+  .log p { font: 400 14px/1.55 var(--sans); color: var(--silver); }
+  .log .cc {                          /* inline code inside the terminal */
+    font: 400 12px/1.2 var(--mono); letter-spacing: -0.2px; white-space: nowrap;
+    background: #26261f; color: var(--silver);
+    padding: 1px 6px; border-radius: 5px; box-shadow: #3d3d3a 0 0 0 1px;
+  }
+  .log .fix {                         /* the takeaway, log-style */
+    margin-top: 5px;
+    font: 400 12.5px/1.5 var(--mono); letter-spacing: -0.2px;
+    color: var(--coral);
+  }
+  .term-cursor {
+    margin-top: 9px; padding-top: 10px; border-top: 1px solid #3d3d3a;
+    font: 400 13px/1.4 var(--mono); color: var(--stone);
+    display: flex; align-items: center;
+  }
+  .term-cursor .caret {
+    width: 8px; height: 15px; margin-left: 7px; flex: none;
+    background: var(--coral);
+    animation: caret-blink 1.1s steps(1) infinite;
+  }
+  @keyframes caret-blink { 50% { opacity: 0; } }
+
+  /* ---------- Slide 11 — field notes: four columns under ghost numerals */
+  .lessons { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 38px; }
+  .lesson { position: relative; padding: 86px 24px 12px 0; }
+  .lesson + .lesson { border-left: 1px solid var(--border-warm); padding-left: 24px; }
+  .lesson .ln {
+    position: absolute; top: -16px; left: -7px;
+    font: 500 132px/1 var(--serif); color: var(--sand);
+    letter-spacing: -4px; pointer-events: none; user-select: none;
+  }
+  .lesson + .lesson .ln { left: 15px; }
+  .lesson h3 { position: relative; font: 500 20.5px/1.28 var(--serif); margin-bottom: 9px; }
+  .lesson p { position: relative; font: 400 13.5px/1.58 var(--sans); color: var(--olive); }
+
+  /* staggered entrance for the three redesigned slides — re-runs on revisit */
+  .win, .log, .term-cursor, .lesson { opacity: 0; transform: translateY(12px); }
+  .slide.current .win, .slide.current .log, .slide.current .lesson {
+    animation: rise .5s var(--spring) forwards;
+  }
+  .slide.current .win:nth-child(2), .slide.current .log:nth-child(2), .slide.current .lesson:nth-child(2) { animation-delay: .09s; }
+  .slide.current .win:nth-child(3), .slide.current .log:nth-child(3), .slide.current .lesson:nth-child(3) { animation-delay: .18s; }
+  .slide.current .win:nth-child(4), .slide.current .log:nth-child(4), .slide.current .lesson:nth-child(4) { animation-delay: .27s; }
+  .slide.current .log:nth-child(5) { animation-delay: .36s; }
+  .slide.current .term-cursor { animation: rise .5s var(--spring) forwards; animation-delay: .52s; }
+
+  /* ---------- Chrome: progress, counter, nav, help ---------- */
+  /* ---------- Clawd mascot ---------- */
+  #clawd {
+    position: absolute; top: 0; left: 0;
+    width: 46px; height: 46px;
+    z-index: 24; pointer-events: none;
+    will-change: transform;
+  }
+  #clawd svg { width: 100%; height: 100%; display: block; }
+  /* the contact shadow lives in its own svg so trick animations (flip,
+     cartwheel, bonk) spin the body while the shadow stays on the floor */
+  #clawd .clawd-shadow-svg { position: absolute; inset: 0; }
+  /* walk cycle — driven from JS so the leg scissor, the body bob, and the
+     forward surge all share one gait clock: planted feet sweep backward while
+     the body advances (reads as ground contact, not a piston-legged hover).
+     The contact shadow stays on the ground while the body bobs above it. */
+  .clawd-bob { transform-box: fill-box; transform-origin: 50% 100%; }
+  .leg { transform-box: fill-box; }
+  .clawd-shadow { transform-box: fill-box; transform-origin: 50% 50%; }
+  #clawd.bonk svg.clawd-body { animation: clawd-squish .3s var(--spring); }
+  @keyframes clawd-squish { 0% { scale: 1 1; } 40% { scale: 1.18 .82; } 100% { scale: 1 1; } }
+  /* backflip trick — a little hop while spinning a full rotation */
+  #clawd.flip svg.clawd-body { animation: clawd-flip 1s cubic-bezier(0.5, -0.2, 0.4, 1.2); transform-origin: 50% 60%; }
+  @keyframes clawd-flip {
+    0%   { transform: translateY(0)     rotate(0deg);    scale: 1 1; }
+    15%  { transform: translateY(2px)   rotate(0deg);    scale: 1.12 .86; }   /* crouch */
+    50%  { transform: translateY(-46px) rotate(-180deg); scale: 1 1; }        /* peak, upside down */
+    85%  { transform: translateY(0)     rotate(-360deg); scale: 1 1; }
+    100% { transform: translateY(0)     rotate(-360deg); scale: 1.1 .9; }     /* land */
+  }
+  /* cartwheel trick — a full sideways turn; --cd (±1) matches the direction
+     he travels in, driven frame-by-frame from the JS while this plays */
+  #clawd.cartwheel svg.clawd-body { animation: clawd-cartwheel .95s ease-in-out; transform-origin: 50% 55%; }
+  @keyframes clawd-cartwheel {
+    0%   { transform: translateY(0)    rotate(0); scale: 1 1; }
+    12%  { scale: .92 1.06; }                                  /* reach over */
+    50%  { transform: translateY(-9px) rotate(calc(var(--cd, 1) * 180deg)); }
+    88%  { scale: 1.06 .94; }                                  /* land on hands→feet */
+    100% { transform: translateY(0)    rotate(calc(var(--cd, 1) * 360deg)); scale: 1 1; }
+  }
+  /* relocation poof — masks the snap when a slide change traps him */
+  #clawd.poof svg { animation: clawd-poof .42s var(--spring); }
+  @keyframes clawd-poof {
+    0%   { scale: .1 .1;   opacity: 0; }
+    55%  { opacity: 1; }
+    75%  { scale: 1.12 .88; }
+    100% { scale: 1 1;     opacity: 1; }
+  }
+  #clawd.hidden { display: none; }
+
+  /* Clawd speech bubble — floats above him, fades in/out when he "talks" */
+  #clawd-bubble {
+    position: absolute; left: 50%; bottom: 100%;
+    margin-bottom: 9px; transform: translate(-50%, 4px);
+    background: var(--ivory); color: var(--near-black);
+    font: 500 13px/1.35 var(--sans);
+    width: max-content; max-width: 232px; text-align: center;
+    white-space: normal; padding: 8px 13px; border-radius: 13px;
+    box-shadow: rgba(20,20,19,0.18) 0 6px 18px -4px, var(--ring-warm) 0 0 0 1px;
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity .26s var(--spring), transform .26s var(--spring);
+  }
+  #clawd-bubble::after {            /* little tail pointing down at Clawd */
+    content: ''; position: absolute; top: 100%; left: 50%;
+    width: 11px; height: 11px; margin: -6px 0 0 -5px;
+    background: var(--ivory); transform: rotate(45deg);
+    box-shadow: var(--ring-warm) 1px 1px 0 0;
+  }
+  #clawd.talking #clawd-bubble { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
+  /* words pop in one at a time, like he's saying them */
+  #clawd-bubble .bw { display: inline-block; opacity: 0; animation: word-in .24s var(--spring) forwards; }
+  @keyframes word-in { from { opacity: 0; transform: translateY(5px) scale(.85); } to { opacity: 1; transform: none; } }
+
+  #progress {
+    position: absolute; top: 0; left: 0; height: 3px;
+    background: var(--terracotta);
+    width: 0; transition: width .35s var(--spring);
+    z-index: 30;
+  }
+  #counter {
+    position: absolute; right: 30px; bottom: 22px;
+    font: 400 13px/1 var(--sans); color: var(--stone);
+    z-index: 30; user-select: none;
+    display: flex; align-items: center; gap: 14px;
+  }
+  #counter button {
+    background: none; border: none; cursor: pointer;
+    color: var(--stone); font: 400 17px/1 var(--sans);
+    padding: 6px 8px; border-radius: 8px;
+  }
+  #counter button:hover { background: rgba(0,0,0,0.06); color: var(--charcoal); }
+  .dark-active #counter, .dark-active #counter button { color: var(--silver); }
+  .dark-active #counter button:hover { background: rgba(255,255,255,0.08); }
+  #counter button:focus-visible { outline: 2px solid var(--focus-blue); outline-offset: 1px; }
+
+  #help {
+    position: absolute; inset: 0; z-index: 40;
+    background: rgba(20,20,19,0.55);
+    display: none; align-items: center; justify-content: center;
+  }
+  #help.open { display: flex; }
+  #help .panel {
+    background: var(--ivory); border-radius: 16px;
+    padding: 34px 42px; min-width: 380px;
+    box-shadow: rgba(0,0,0,0.05) 0 4px 24px, var(--ring-warm) 0 0 0 1px;
+  }
+  #help h3 { font: 500 24px/1.2 var(--serif); margin-bottom: 16px; color: var(--near-black); }
+  #help table { border-collapse: collapse; }
+  #help td { font: 400 15px/2 var(--sans); color: var(--olive); padding-right: 26px; }
+  #help td:first-child { font-family: var(--mono); font-size: 13.5px; color: var(--charcoal); }
+</style>
+</head>
+<body>
+<div id="viewport">
+  <div id="stage">
+
+    <!-- Inline icon library (line glyphs, stroke = currentColor) -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <defs>
+        <symbol id="i-pulse" viewBox="0 0 24 24"><polyline points="3,12 7,12 9,6 13,18 15,12 21,12"/></symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polyline points="12,7 12,12 16,14"/></symbol>
+        <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4-3 7-7 9-4-2-7-5-7-9V6z"/><polyline points="9,12 11,14 15,10"/></symbol>
+        <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="9" y1="21" x2="15" y2="21"/></symbol>
+        <symbol id="i-wave" viewBox="0 0 24 24"><line x1="4" y1="10" x2="4" y2="14"/><line x1="8" y1="6" x2="8" y2="18"/><line x1="12" y1="9" x2="12" y2="15"/><line x1="16" y1="4" x2="16" y2="20"/><line x1="20" y1="8" x2="20" y2="16"/></symbol>
+        <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7z"/></symbol>
+        <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20l1-4L16 5l3 3L8 19z"/><line x1="14" y1="7" x2="17" y2="10"/></symbol>
+        <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2L2 9l8 3 3 8z"/><line x1="22" y1="2" x2="10" y2="12"/></symbol>
+        <symbol id="i-code" viewBox="0 0 24 24"><polyline points="9,8 5,12 9,16"/><polyline points="15,8 19,12 15,16"/></symbol>
+        <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><line x1="14.5" y1="14.5" x2="20" y2="20"/></symbol>
+        <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19 12a7 7 0 1 1-2-4.9"/><polyline points="19,4 19,8 15,8"/></symbol>
+        <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1"/></symbol>
+        <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2L5 13h5l-1 9 8-12h-5z"/></symbol>
+        <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="9" r="3"/><path d="M3 19a6 6 0 0 1 12 0"/><path d="M16 6a3 3 0 0 1 0 6"/><path d="M17 13a6 6 0 0 1 4 6"/></symbol>
+        <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3l9 17H3z"/><line x1="12" y1="9" x2="12" y2="14"/><line x1="12" y1="16.6" x2="12" y2="16.9"/></symbol>
+        <symbol id="i-doc" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><polyline points="14,3 14,7 18,7"/><line x1="9.5" y1="12.5" x2="15" y2="12.5"/><line x1="9.5" y1="16" x2="15" y2="16"/></symbol>
+        <symbol id="i-repeat" viewBox="0 0 24 24"><polyline points="7,4 4,7 7,10"/><path d="M4 7h13a3 3 0 0 1 3 3v1"/><polyline points="17,20 20,17 17,14"/><path d="M20 17H7a3 3 0 0 1-3-3v-1"/></symbol>
+        <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5z"/><polyline points="3,13 12,18 21,13"/></symbol>
+      </defs>
+    </svg>
+
+    <!-- 1 ─ Title -->
+    <section class="slide" data-name="Title">
+      <div class="overline reveal d1">what I built, what broke, what I learned</div>
+      <div class="body-area">
+        <h1 class="reveal d2">A story about a chiropractor,<br>
+          LLMs and <span class="uline">nine days<svg viewBox="0 0 200 12" preserveAspectRatio="none"><path d="M3 9 C 40 3, 80 11, 120 6 S 185 4, 197 8"/></svg></span>
+        </h1>
+      </div>
+    </section>
+
+    <!-- 2 ─ Why, part 1 -->
+    <section class="slide" data-name="Why · 1">
+      <h2>The day in the life of a medical professional</h2>
+      <div class="body-area">
+        <p class="lede" style="margin-bottom:6px">
+          My wife is a chiro, and after every patient she turns the conversation into a
+          SOAP note, trying to remember all the intricate details from <strong style="color:var(--near-black); font-weight:600">memory</strong>.
+        </p>
+        <div class="pain">
+          <div class="pain-card">
+            <span class="ico-badge"><svg class="ico"><use href="#i-pulse"/></svg></span>
+            <h3>Mentally taxing</h3>
+            <p>Recalling every detail of an appointment (subjective, objective, assessment, plan), visit after visit, is exhausting.</p>
+          </div>
+          <div class="pain-card">
+            <span class="ico-badge"><svg class="ico"><use href="#i-clock"/></svg></span>
+            <h3>Time-consuming</h3>
+            <p>The writing happens after the clinical work is done. It eats into the day, then into the evening.</p>
+          </div>
+          <div class="pain-card">
+            <span class="ico-badge"><svg class="ico"><use href="#i-shield"/></svg></span>
+            <h3>Not optional</h3>
+            <p>Notes are legally required. In an audit, a gap in the record is a real liability, so they can't be skipped or rushed.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3 ─ Statement (dark interstitial) -->
+    <section class="slide dark" data-name="Obviously AI">
+      <div class="body-area statement">
+        <p class="big"><span class="soft">Obviously, AI is the answer,</span><br>
+          <span class="but">but…<svg viewBox="0 0 200 12" preserveAspectRatio="none"><path d="M3 9 C 40 3, 80 11, 120 6 S 185 4, 197 8"/></svg></span>
+        </p>
+      </div>
+    </section>
+
+    <!-- 4 ─ Why, part 2 -->
+    <section class="slide" data-name="Why · 2">
+      <h2>Why a local LLM?</h2>
+      <div class="body-area why-split">
+        <div class="why-text">
+          <div class="points single">
+            <div class="point"><h3><span class="n">I.</span>Privacy is the premise</h3>
+              <p>Protected Health Information (PHI) carries legal and ethical weight; cloud dictation
+                 and hosted LLM APIs were off the table from day one. On-device was the constraint
+                 everything else had to fit.</p></div>
+            <div class="point"><h3><span class="n">II.</span>And an excuse to learn</h3>
+              <p>How to run local LLMs in a real use case, how to build a native Mac app, and simply to
+                 tinker and play.</p></div>
+          </div>
+          <div class="ted">
+            <blockquote><span class="q">"</span>Be curious, not judgemental.<span class="q">"</span></blockquote>
+            <cite>Ted Lasso</cite>
+          </div>
+        </div>
+        <figure class="shot">
+          <img src="assets/review-screen.png"
+               alt="The Clinical Notes Review screen: editable SOAP sections beside a manipulations checklist.">
+        </figure>
+      </div>
+    </section>
+
+    <!-- 4 ─ What I built -->
+    <section class="slide" data-name="What I built">
+      <h2>Dictation in, doctor's notes out. Nothing leaves the Mac.</h2>
+      <div class="body-area">
+        <div class="pipeline">
+          <div class="pipe-step up"><div class="pico"><svg class="ico"><use href="#i-mic"/></svg></div><div class="num">01</div><h3>Record</h3><p>Menu-bar app, global hotkey, glass overlay. Swift 6 + SwiftUI.</p></div>
+          <div class="pipe-arrow a-down">→</div>
+          <div class="pipe-step down"><div class="pico"><svg class="ico"><use href="#i-wave"/></svg></div><div class="num">02</div><h3>Transcribe</h3><p>Parakeet v3 via FluidAudio, on the Neural Engine.</p></div>
+          <div class="pipe-arrow a-up">→</div>
+          <div class="pipe-step up"><div class="pico"><svg class="ico"><use href="#i-spark"/></svg></div><div class="num">03</div><h3>Draft</h3><p>Gemma&nbsp;4 LLM in-process (MLX) writes a structured SOAP note.</p></div>
+          <div class="pipe-arrow a-down">→</div>
+          <div class="pipe-step down"><div class="pico"><svg class="ico"><use href="#i-pencil"/></svg></div><div class="num">04</div><h3>Review</h3><p>Doctor edits in a two-column review screen. Human holds the pen.</p></div>
+          <div class="pipe-arrow a-up">→</div>
+          <div class="pipe-step up"><div class="pico"><svg class="ico"><use href="#i-send"/></svg></div><div class="num">05</div><h3>Export</h3><p>One POST to the Cliniko practice system. Session cleared.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5 ─ The loop (dark) -->
+    <section class="slide dark" data-name="The loop">
+      <h2 style="color:var(--ivory)">My process of developing with AI</h2>
+      <div class="body-area">
+        <div class="loop">
+          <div class="loop-node">
+            <div class="loop-head"><span class="ico-badge"><svg class="ico"><use href="#i-code"/></svg></span><div class="who">Claude Code</div></div>
+            <h3>Writes the change</h3><p>Picks up a GitHub issue, branches, codes, tests, opens the PR.</p></div>
+          <div class="loop-arrow">→</div>
+          <div class="loop-node">
+            <div class="loop-head"><span class="ico-badge"><svg class="ico"><use href="#i-search"/></svg></span><div class="who">Gemini Code Assist</div></div>
+            <h3>Reviews every PR</h3><p>Automated peer review on open: inline comments, treated as a real reviewer.</p></div>
+          <div class="loop-arrow">→</div>
+          <div class="loop-node">
+            <div class="loop-head"><span class="ico-badge"><svg class="ico"><use href="#i-refresh"/></svg></span><div class="who">Claude, again</div></div>
+            <h3>Folds the review in</h3><p>Addresses the comments, repairs, re-pushes. Merge on green CI.</p></div>
+        </div>
+        <div class="rules">
+          <div><h4><svg class="ico"><use href="#i-bolt"/></svg>Wired up on day one</h4><p>The whole pipeline (review bot, lint, CI, pre-commit) landed before feature work (#37).</p></div>
+          <div><h4><svg class="ico"><use href="#i-repeat"/></svg>Issue-driven, checkpointed</h4><p>2 EPICs → 66 issues. Plan, PR link, merge SHA, commented on every single one.</p></div>
+          <div><h4><svg class="ico"><use href="#i-doc"/></svg>House rules in the repo</h4><p>AGENTS.md + CLAUDE.md: concurrency, PHI, testing rules the agent re-reads every session.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6 ─ The numbers -->
+    <section class="slide" data-name="The numbers">
+      <h2>Nine days, measured</h2>
+      <div class="body-area">
+        <div class="stats">
+          <div class="stat hot"><div class="v">9 days</div><div class="k">active development, fork → ship. Nine for nine, zero gap days.</div></div>
+          <div class="stat hot"><div class="v">0.89 : 1</div><div class="k">test-to-source ratio. ~1,659 test functions guard the agent.</div></div>
+          <div class="stat hot"><div class="v">±38k</div><div class="k">lines churned for a net of ≈ 0. The work <em>was</em> the iteration.</div></div>
+          <div class="stat"><div class="v">86%</div><div class="k">of PRs reviewed by Gemini: 74 reviews, 76 inline comments.</div></div>
+          <div class="stat"><div class="v">65 / 66</div><div class="k">issues closed. Two EPICs burned down.</div></div>
+          <div class="stat"><div class="v">77%</div><div class="k">of my commits carry <em>Co-Authored-By: Claude</em>.</div></div>
+          <div class="stat"><div class="v">88%</div><div class="k">CI success across 207 workflow runs at full merge speed.</div></div>
+          <div class="stat"><div class="v">0.8 : 1</div><div class="k">fix : feat commit ratio: one repair per feature, the loop's signature.</div></div>
+        </div>
+        <p class="footnote">Measured 2026-06-11 from the GitHub API + git history · my 71-commit window, 24 Apr → 2 May 2026.</p>
+      </div>
+    </section>
+
+    <!-- 7 ─ The shape of the work -->
+    <section class="slide" data-name="The shape">
+      <h2>The shape of a side project</h2>
+      <div class="body-area">
+        <div class="charts">
+          <div class="card chart-card">
+            <h3>PRs merged per day</h3>
+            <div class="sub">Day one: 18 merges. The testing framework landed before any feature.</div>
+            <div id="chart-prs"></div>
+          </div>
+          <div class="card chart-card">
+            <h3>Commits by weekday</h3>
+            <div class="sub">Fridays and weekends. Lunch breaks and evenings. You can see the day job.</div>
+            <div id="chart-days"></div>
+          </div>
+        </div>
+        <div class="streak" id="streak"></div>
+      </div>
+    </section>
+
+    <!-- 8 ─ What went well -->
+    <section class="slide" data-name="Went well">
+      <h2>What went well</h2>
+      <div class="body-area">
+        <div class="wins">
+          <div class="win">
+            <div class="eq"><span class="t">issues</span><span class="op">+</span><span class="t">acceptance criteria</span><span class="op">=</span><span class="t hot uline">what I meant, shipped<svg viewBox="0 0 200 12" preserveAspectRatio="none"><path d="M3 9 C 40 3, 80 11, 120 6 S 185 4, 197 8"/></svg></span></div>
+            <p class="ev">70 of 71 commits trace to a GitHub issue. Written-down criteria were the steering wheel.</p>
+          </div>
+          <div class="win">
+            <div class="eq"><span class="t">a confident agent</span><span class="op">+</span><span class="t">a test per line</span><span class="op">=</span><span class="t hot">kept honest</span></div>
+            <p class="ev">CI and render-crash tests caught what would otherwise have shipped with a straight face.</p>
+          </div>
+          <div class="win">
+            <div class="eq"><span class="t">small PRs</span><span class="op">+</span><span class="t">instant review</span><span class="op">=</span><span class="t hot">23-minute merges</span></div>
+            <p class="ev">Same-session merges. Momentum compounds; nothing rots on a branch.</p>
+          </div>
+          <div class="win">
+            <div class="eq"><span class="t">Claude</span><span class="op">×</span><span class="t">Gemini</span><span class="op">=</span><span class="t hot">different blind spots</span></div>
+            <p class="ev">AI reviewing AI actually worked: real bugs caught, half my commits cite the feedback.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9 ─ What didn't (dark) -->
+    <section class="slide dark" data-name="What didn't">
+      <h2 style="color:var(--ivory)">What didn't</h2>
+      <div class="body-area">
+        <div class="term">
+          <div class="term-bar">
+            <span class="dot dr"></span><span class="dot dy"></span><span class="dot dg"></span>
+            <span class="term-title">postmortem.log — nine days, three lessons</span>
+          </div>
+          <div class="term-body">
+            <div class="log">
+              <span class="lx">✗</span>
+              <div><h3>AI is persuasive when it's wrong</h3>
+                <p>Days chasing a blocker in <span class="cc">mlx-swift</span> — the fix lived in
+                  <span class="cc">mlx-swift-lm</span> all along. Confident, well-argued, mistaken.</p>
+                <p class="fix">└─ fix: a separate agent, separate context, briefed to challenge the work</p></div>
+            </div>
+            <div class="log">
+              <span class="lx">✗</span>
+              <div><h3>A stale doc is a standing order</h3>
+                <p>Our rules file still cited a deleted lint rule — the agent obeyed it anyway.
+                  It won't squint at the system of record like you do.</p>
+                <p class="fix">└─ fix: docs update in the same PR as the code they describe</p></div>
+            </div>
+            <div class="log">
+              <span class="lx">✗</span>
+              <div><h3>Native UI still needs human eyes</h3>
+                <p>"Cancel" quit the entire app. CI, tests and two AI reviewers all passed it —
+                  five minutes of actually using the app caught it.</p>
+                <p class="fix">└─ fix: a human smoke-test on real hardware</p></div>
+            </div>
+            <div class="term-cursor">$ fix · write it into the house rules · repeat<span class="caret"></span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 10 ─ What I learned -->
+    <section class="slide" data-name="Learned">
+      <h2>What I learned</h2>
+      <div class="body-area">
+        <div class="lessons">
+          <div class="lesson"><span class="ln">1</span>
+            <h3>Write the <span class="uline">house rules<svg viewBox="0 0 200 12" preserveAspectRatio="none"><path d="M3 9 C 40 3, 80 11, 120 6 S 185 4, 197 8"/></svg></span> down</h3>
+            <p>AGENTS.md is a contract. The agent follows what's written, not what you meant. Investment in rules paid back every session.</p></div>
+          <div class="lesson"><span class="ln">2</span>
+            <h3>Make the AI test its own work</h3>
+            <p>The test suite is what turns "plausible" into "true". Never accept agent code without the test that would catch its lie.</p></div>
+          <div class="lesson"><span class="ln">3</span>
+            <h3>A second AI reviewer isn't a gimmick</h3>
+            <p>Writer and reviewer from different vendors disagree in useful ways. The disagreement is the value.</p></div>
+          <div class="lesson"><span class="ln">4</span>
+            <h3>Small PRs beat clever prompts</h3>
+            <p>The 23-minute merge loop did more for quality than any prompt engineering. Keep the unit of work reviewable.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 11 ─ Favourite moments (dark interlude) -->
+    <section class="slide dark" data-name="Moments">
+      <h2 style="color:var(--ivory)">My favourite part? Watching them talk.</h2>
+      <p class="lede">PRs #52–53, first lines only: Gemini suggests, Claude declines — citing the
+        house rules — Gemini agrees. A polite argument between two AIs, while I watched.</p>
+      <div class="body-area">
+        <div class="thread">
+          <div class="cmt">
+            <span class="av" aria-hidden="true">
+              <svg viewBox="0 0 400 400"><path fill="#b0aea5"
+                d="M200 30 C 215 130, 270 185, 370 200 C 270 215, 215 270, 200 370 C 185 270, 130 215, 30 200 C 130 185, 185 130, 200 30 Z"/></svg>
+            </span>
+            <div class="body2">
+              <div class="meta"><b>gemini-code-assist</b><span class="tag">bot</span></div>
+              <p><span class="hl">Hello, I'm Gemini Code Assist!</span> I'm currently reviewing this pull
+                request and will post my feedback shortly.</p>
+            </div>
+          </div>
+          <div class="cmt">
+            <span class="av" aria-hidden="true">
+              <svg viewBox="0 0 400 400"><g fill="#f15b45">
+                <rect x="72" y="275" width="34" height="58"/><rect x="137" y="275" width="32" height="58"/>
+                <rect x="231" y="275" width="32" height="58"/><rect x="294" y="275" width="36" height="58"/>
+                <rect x="12" y="152" width="60" height="62"/><rect x="330" y="152" width="58" height="62"/>
+                <rect x="72" y="91" width="258" height="184" rx="12"/>
+                <rect fill="#141413" x="108" y="120" width="31" height="31"/>
+                <rect fill="#141413" x="262" y="120" width="32" height="31"/>
+              </g></svg>
+            </span>
+            <div class="body2">
+              <div class="meta"><b>CloudbrokerAz</b><span class="tag">Claude · writing as me</span></div>
+              <p><span class="m">@gemini-code-assist</span> <span class="hl">Good catch — applied in the
+                next commit.</span> The single-pass version is strictly cleaner, not just a perf win.
+                <span class="cc">/gemini review</span></p>
+            </div>
+          </div>
+          <div class="cmt">
+            <span class="av" aria-hidden="true">
+              <svg viewBox="0 0 400 400"><path fill="#b0aea5"
+                d="M200 30 C 215 130, 270 185, 370 200 C 270 215, 215 270, 200 370 C 185 270, 130 215, 30 200 C 130 185, 185 130, 200 30 Z"/></svg>
+            </span>
+            <div class="body2">
+              <div class="meta"><b>gemini-code-assist</b><span class="tag">bot · code review</span></div>
+              <p>The implementation correctly prioritizes privacy — structural logging, no PHI persistence.
+                One suggestion: a pre-calculated map for the manipulation lookup, to avoid redundant
+                <span class="cc">O(N)</span> string operations as the taxonomy grows.</p>
+            </div>
+          </div>
+          <div class="cmt">
+            <span class="av" aria-hidden="true">
+              <svg viewBox="0 0 400 400"><g fill="#f15b45">
+                <rect x="72" y="275" width="34" height="58"/><rect x="137" y="275" width="32" height="58"/>
+                <rect x="231" y="275" width="32" height="58"/><rect x="294" y="275" width="36" height="58"/>
+                <rect x="12" y="152" width="60" height="62"/><rect x="330" y="152" width="58" height="62"/>
+                <rect x="72" y="91" width="258" height="184" rx="12"/>
+                <rect fill="#141413" x="108" y="120" width="31" height="31"/>
+                <rect fill="#141413" x="262" y="120" width="32" height="31"/>
+              </g></svg>
+            </span>
+            <div class="body2">
+              <div class="meta"><b>CloudbrokerAz</b><span class="tag">Claude · writing as me</span></div>
+              <p><span class="m">@gemini-code-assist</span> <span class="hl">Acknowledged but not folding
+                in this round:</span> v1 ships seven entries, and <span class="cc">CLAUDE.md</span> cautions
+                against speculative optimization. My pre-PR Opus reviewer reached the same YAGNI conclusion.
+                <span class="hl">Proceeding to merge.</span></p>
+            </div>
+          </div>
+          <div class="cmt">
+            <span class="av" aria-hidden="true">
+              <svg viewBox="0 0 400 400"><path fill="#b0aea5"
+                d="M200 30 C 215 130, 270 185, 370 200 C 270 215, 215 270, 200 370 C 185 270, 130 215, 30 200 C 130 185, 185 130, 200 30 Z"/></svg>
+            </span>
+            <div class="body2">
+              <div class="meta"><b>gemini-code-assist</b><span class="tag">bot</span></div>
+              <p><span class="hl">Understood.</span> I agree that a dictionary-based lookup is premature
+                and aligns with the YAGNI principle.
+                <span class="sign uline">I have no further concerns.<svg viewBox="0 0 200 12" preserveAspectRatio="none"><path d="M3 9 C 40 3, 80 11, 120 6 S 185 4, 197 8"/></svg></span></p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 13 ─ Close -->
+    <section class="slide" data-name="Close">
+      <div class="body-area">
+        <div class="close-stack">
+          <h1 style="font-size:56px">Thanks. Now poke holes in it.</h1>
+          <span class="mono" style="font-size:17px; padding:10px 18px">github.com/CloudbrokerAz/mac-speech-to-text</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Clawd — the wandering mascot. Vector recreation of the official icon
+         (© Homarr Labs, by Lucas Paul, CC BY 4.0) so the legs can walk. -->
+    <div id="clawd" aria-hidden="true">
+      <div id="clawd-bubble"><span></span></div>
+      <!-- contact shadow: own layer so it stays on the ground while the body
+           bobs, flips and cartwheels above it -->
+      <svg class="clawd-shadow-svg" viewBox="0 0 400 400">
+        <ellipse class="clawd-shadow" cx="200" cy="349" rx="148" ry="13" fill="#141413" opacity="0.15"/>
+      </svg>
+      <svg class="clawd-body" viewBox="0 0 400 400">
+        <g class="clawd-bob" fill="#f15b45">
+          <!-- legs (behind body; lifted portion tucks under the body) -->
+          <rect class="leg leg-a" x="72"  y="275" width="34" height="68"/>
+          <rect class="leg leg-b" x="137" y="275" width="32" height="68"/>
+          <rect class="leg leg-a" x="231" y="275" width="32" height="68"/>
+          <rect class="leg leg-b" x="294" y="275" width="36" height="68"/>
+          <!-- side nubs -->
+          <rect x="12"  y="152" width="60" height="62"/>
+          <rect x="330" y="152" width="58" height="62"/>
+          <!-- body -->
+          <rect x="72" y="91" width="258" height="184" rx="12"/>
+          <!-- eyes -->
+          <rect fill="#141413" x="108" y="120" width="31" height="31"/>
+          <rect fill="#141413" x="262" y="120" width="32" height="31"/>
+        </g>
+      </svg>
+    </div>
+
+    <div id="progress"></div>
+    <div id="counter">
+      <button id="prev" aria-label="Previous slide">←</button>
+      <span id="count">1 / 13</span>
+      <button id="next" aria-label="Next slide">→</button>
+    </div>
+
+    <div id="help">
+      <div class="panel">
+        <h3>Keys</h3>
+        <table>
+          <tr><td>→ &nbsp;space &nbsp;n</td><td>next slide</td></tr>
+          <tr><td>← &nbsp;p</td><td>previous slide</td></tr>
+          <tr><td>Home / End</td><td>first / last slide</td></tr>
+          <tr><td>?</td><td>toggle this help</td></tr>
+          <tr><td>m</td><td>toggle Clawd 🐾</td></tr>
+          <tr><td>c / b</td><td>Clawd: cartwheel / backflip gag</td></tr>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ---------- Metrics (researched 2026-06-11 · gh API + git log) ---------- */
+  var METRICS = {
+    prsPerDay: {
+      labels: ['Apr 24','25','26','27','28','29','30','May 1','2'],
+      values: [18, 10, 10, 4, 7, 8, 6, 5, 2],
+      hot: [0]                               // highlight day one
+    },
+    commitsByWeekday: {
+      labels: ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'],
+      values: [3, 8, 8, 7, 23, 11, 11],
+      hot: [4, 5, 6]                         // Fri + weekend
+    },
+    commitsPerDay: [17, 9, 11, 3, 8, 8, 7, 6, 2]
+  };
+
+  /* ---------- Tiny warm-toned SVG bar chart ---------- */
+  function barChart(el, data, w, h) {
+    var pad = { t: 26, r: 6, b: 24, l: 6 };
+    var n = data.values.length;
+    var max = Math.max.apply(null, data.values);
+    var gap = 10;
+    var bw = (w - pad.l - pad.r - gap * (n - 1)) / n;
+    var s = '<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" role="img" aria-label="bar chart">';
+    for (var i = 0; i < n; i++) {
+      var v = data.values[i];
+      var bh = Math.max(3, (h - pad.t - pad.b) * v / max);
+      var x = pad.l + i * (bw + gap);
+      var y = h - pad.b - bh;
+      var hot = data.hot.indexOf(i) !== -1;
+      s += '<rect x="' + x + '" y="' + y + '" width="' + bw + '" height="' + bh + '" rx="4"' +
+           ' fill="' + (hot ? '#c96442' : '#e8e6dc') + '"' +
+           (hot ? '' : ' stroke="#d1cfc5" stroke-width="1"') + '/>';
+      s += '<text x="' + (x + bw / 2) + '" y="' + (y - 7) + '" text-anchor="middle"' +
+           ' font-family="ui-sans-serif,-apple-system,sans-serif" font-size="13"' +
+           ' font-weight="500" fill="' + (hot ? '#c96442' : '#4d4c48') + '">' + v + '</text>';
+      s += '<text x="' + (x + bw / 2) + '" y="' + (h - 7) + '" text-anchor="middle"' +
+           ' font-family="ui-sans-serif,-apple-system,sans-serif" font-size="11.5"' +
+           ' fill="#87867f">' + data.labels[i] + '</text>';
+    }
+    s += '</svg>';
+    el.innerHTML = s;
+  }
+
+  barChart(document.getElementById('chart-prs'), METRICS.prsPerDay, 560, 230);
+  barChart(document.getElementById('chart-days'), METRICS.commitsByWeekday, 420, 230);
+
+  /* streak strip: 9/9 days active, busiest day highlighted */
+  var streakEl = document.getElementById('streak');
+  var maxC = Math.max.apply(null, METRICS.commitsPerDay);
+  var sHtml = '';
+  METRICS.commitsPerDay.forEach(function (c) {
+    sHtml += '<div class="day' + (c === maxC ? ' hot' : '') + '">' + c + '</div>';
+  });
+  sHtml += '<div class="lbl">commits per day · nine for nine, zero gaps</div>';
+  streakEl.innerHTML = sHtml;
+
+  /* ---------- Stage scaling (fixed 1280×720, fit to window) ---------- */
+  var stage = document.getElementById('stage');
+  function fit() {
+    var s = Math.min(window.innerWidth / 1280, window.innerHeight / 720);
+    stage.style.transform = 'scale(' + s + ')';
+  }
+  window.addEventListener('resize', fit);
+  fit();
+
+  /* ---------- Navigation ---------- */
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var progress = document.getElementById('progress');
+  var count = document.getElementById('count');
+  var help = document.getElementById('help');
+  var idx = 0;
+
+  function go(n, instant) {
+    n = Math.max(0, Math.min(slides.length - 1, n));
+    if (n === idx && !instant) return;
+    var old = slides[idx];
+    idx = n;
+    slides.forEach(function (sl, i) {
+      sl.classList.remove('leaving');
+      if (i === idx) { sl.classList.add('current'); }
+      else { sl.classList.remove('current'); }
+    });
+    if (old && old !== slides[idx]) {
+      old.classList.add('leaving');
+      setTimeout(function () { old.classList.remove('leaving'); }, 320);
+    }
+    progress.style.width = (idx / (slides.length - 1) * 100) + '%';
+    count.textContent = (idx + 1) + ' / ' + slides.length;
+    document.body.classList.toggle('dark-active', slides[idx].classList.contains('dark'));
+    if (location.hash !== '#/' + (idx + 1)) { location.hash = '#/' + (idx + 1); }
+  }
+
+  function fromHash() {
+    var m = location.hash.match(/^#\/(\d+)/);
+    return m ? parseInt(m[1], 10) - 1 : 0;
+  }
+
+  document.getElementById('next').addEventListener('click', function () { go(idx + 1); });
+  document.getElementById('prev').addEventListener('click', function () { go(idx - 1); });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    switch (e.key) {
+      case 'ArrowRight': case ' ': case 'n': case 'PageDown': e.preventDefault(); go(idx + 1); break;
+      case 'ArrowLeft':  case 'p': case 'PageUp':             e.preventDefault(); go(idx - 1); break;
+      case 'Home': e.preventDefault(); go(0); break;
+      case 'End':  e.preventDefault(); go(slides.length - 1); break;
+      case '?':    help.classList.toggle('open'); break;
+      case 'Escape': help.classList.remove('open'); break;
+    }
+  });
+  help.addEventListener('click', function () { help.classList.remove('open'); });
+  window.addEventListener('hashchange', function () { go(fromHash()); });
+
+  go(fromHash(), true);
+})();
+</script>
+
+<script>
+/* ---------- Clawd: a spatially-aware wandering mascot ---------- */
+(function () {
+  'use strict';
+  var stage = document.getElementById('stage');
+  var clawd = document.getElementById('clawd');
+  if (!stage || !clawd) return;
+  var clawdSvg = clawd.querySelector('svg.clawd-body');
+  var bubble = clawd.querySelector('#clawd-bubble span');
+  var legsA = clawd.querySelectorAll('.leg-a');
+  var legsB = clawd.querySelectorAll('.leg-b');
+  var bob = clawd.querySelector('.clawd-bob');
+  var shadow = clawd.querySelector('.clawd-shadow');
+
+  var W = 1280, H = 720, S = 46;          // logical stage + sprite size
+  var PAD = 4;                            // collision padding around boxes
+  var SPEED = 1.0;                        // average walking pace (px per 60fps frame)
+  var MARGIN_X = 58, MARGIN_T = 92, MARGIN_B = 46;    // keep goals off the edges
+  var MIN_TRAVEL = 240;                   // each goal is a proper walk away
+  var DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  var TURN = 0.1;                         // heading lerp per frame — turns are arcs, not pivots
+  // gait tuning (SVG viewBox units): leg fore-aft scissor, foot lift, body bob/rock
+  var STEP_RATE = 0.34;                   // gait phase advance per frame (~0.3s per stride)
+  var STRIDE = 22, LIFT = 32, BOB = 10, ROCK = 2.4;
+  var x = 120, y = 150;
+  var hx = 1, hy = 0;                     // smoothed heading (unit vector)
+  var faceFlip = 1;
+  var slideBias = 1;                      // deflection side when a wall is hit dead-on
+  var obstacles = [];
+  var running = true;
+  var goal = { x: x, y: y };
+  var pause = 0;                          // frames to stand still at a goal
+  var phase = 0, amp = 0;                 // gait clock + blend (0 = standing, 1 = full walk)
+  var cart = 0, cartDir = 1;              // frames left in a cartwheel + travel direction
+  var stuckBest = Infinity, stuckFrames = 0;
+  var wedgeFrames = 0;                    // frames spent overlapping a box (vibration guard)
+  var lastTs = 0;                         // rAF timestamp — keeps the pace stable at 120Hz
+
+  // Boxes Clawd bumps into — the cards/tiles, never headings or text.
+  var SEL = [
+    '.pain-card', '.pipe-step', '.loop-node', '.rules > div', '.stat',
+    '.chart-card', '.point', '.win', '.term', '.lesson', '.thread',
+    '.ted', '.shot', '.streak .day', '.mono'
+  ].join(',');
+
+  function rebuild() {
+    var cur = stage.querySelector('.slide.current');
+    obstacles = [];
+    if (!cur) return;
+    var sr = stage.getBoundingClientRect();
+    var scale = sr.width / W || 1;
+    cur.querySelectorAll(SEL).forEach(function (el) {
+      var r = el.getBoundingClientRect();
+      if (r.width < 4 || r.height < 4) return;
+      obstacles.push({
+        l: (r.left - sr.left) / scale - PAD,
+        t: (r.top - sr.top) / scale - PAD,
+        r: (r.right - sr.left) / scale + PAD,
+        b: (r.bottom - sr.top) / scale + PAD
+      });
+    });
+    // a slide change may have dropped a box on Clawd — or on his goal. Fix both,
+    // or he beelines into the new card and grinds against its face.
+    if (running) {
+      if (overlapping()) relocate();
+      else if (!clearAt(goal.x, goal.y, 8)) newGoal();
+    }
+  }
+
+  // Is the sprite box at an arbitrary position clear of every obstacle?
+  function clearAt(px, py, gap) {
+    gap = gap || 0;
+    for (var i = 0; i < obstacles.length; i++) {
+      var o = obstacles[i];
+      if (px - gap < o.r && px + S + gap > o.l && py - gap < o.b && py + S + gap > o.t) return false;
+    }
+    return true;
+  }
+
+  // Is a candidate step by (dx, dy) clear of walls + boxes?
+  function clearStep(dx, dy) {
+    var tx = x + dx, ty = y + dy;
+    if (tx < 0 || tx + S > W || ty < 0 || ty + S > H) return false;
+    return clearAt(tx, ty);
+  }
+
+  // Pick a fresh destination: open ground, well off the edges, a real walk away.
+  // Gather many valid candidates and choose randomly among the far ones, so goals
+  // spread across the whole stage (not just whatever's far horizontally).
+  function pickGoal() {
+    var far = [], any = [];
+    for (var tries = 0; tries < 120; tries++) {
+      var gx = MARGIN_X + Math.random() * (W - S - 2 * MARGIN_X);
+      var gy = MARGIN_T + Math.random() * (H - S - MARGIN_T - MARGIN_B);
+      if (!clearAt(gx, gy, 8)) continue;
+      var c = { x: gx, y: gy, d: Math.hypot(gx - x, gy - y) };
+      any.push(c);
+      if (c.d >= MIN_TRAVEL) far.push(c);
+    }
+    var pool = far.length ? far : any;
+    if (!pool.length) return { x: x, y: y };
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  // Is the sprite currently overlapping any obstacle at its present position?
+  function overlapping() {
+    return !clearAt(x, y, 0);
+  }
+
+  // Find the nearest position whose sprite box is fully clear (expanding ring search).
+  function nearestClear() {
+    if (clearAt(x, y, 4)) return { x: x, y: y };
+    var maxX = W - S, maxY = H - S;
+    for (var rad = 16; rad <= 900; rad += 16) {
+      for (var a = 0; a < 16; a++) {
+        var ang = a / 16 * Math.PI * 2;
+        var nx = Math.min(maxX, Math.max(0, x + Math.cos(ang) * rad));
+        var ny = Math.min(maxY, Math.max(0, y + Math.sin(ang) * rad));
+        if (clearAt(nx, ny, 4)) return { x: nx, y: ny };
+      }
+    }
+    // last resort: any clear random spot
+    for (var t = 0; t < 300; t++) {
+      var rx = MARGIN_X + Math.random() * (W - S - 2 * MARGIN_X);
+      var ry = MARGIN_T + Math.random() * (H - S - MARGIN_T - MARGIN_B);
+      if (clearAt(rx, ry, 4)) return { x: rx, y: ry };
+    }
+    return { x: x, y: y };
+  }
+
+  // Snap to open ground and start fresh — used when a slide change traps Clawd.
+  // The poof masks the teleport so it reads as a gag, not a glitch.
+  function relocate() {
+    var spot = nearestClear();
+    x = spot.x; y = spot.y;
+    wedgeFrames = 0;
+    poof();
+    newGoal();
+  }
+
+  var poofTimer = null;
+  function poof() {
+    clawd.classList.remove('poof');
+    void clawd.offsetWidth;             // restart animation
+    clawd.classList.add('poof');
+    clearTimeout(poofTimer);
+    poofTimer = setTimeout(function () { clawd.classList.remove('poof'); }, 460);
+  }
+
+  function newGoal() {
+    goal = pickGoal();
+    stuckBest = Math.hypot(goal.x - x, goal.y - y);
+    stuckFrames = 0;
+  }
+
+  // When wedged inside/against a box (every small step still overlaps), ease out
+  // toward that box's nearest edge so Clawd can never get permanently stuck.
+  function escapeStep() {
+    var deepest = null, deep = 0;
+    for (var i = 0; i < obstacles.length; i++) {
+      var o = obstacles[i];
+      var ox = Math.min(x + S, o.r) - Math.max(x, o.l);
+      var oy = Math.min(y + S, o.b) - Math.max(y, o.t);
+      if (ox > 0 && oy > 0 && Math.min(ox, oy) > deep) { deep = Math.min(ox, oy); deepest = o; }
+    }
+    var d;
+    if (!deepest) {
+      var ok = DIRS.filter(function (q) {
+        var tx = x + q[0] * SPEED, ty = y + q[1] * SPEED;
+        return tx >= 0 && tx + S <= W && ty >= 0 && ty + S <= H;
+      });
+      return ok.length ? ok[0] : null;
+    }
+    var exitL = x + S - deepest.l, exitR = deepest.r - x;
+    var exitU = y + S - deepest.t, exitD = deepest.b - y;
+    var mn = Math.min(exitL, exitR, exitU, exitD);
+    d = mn === exitL ? [-1, 0] : mn === exitR ? [1, 0] : mn === exitU ? [0, -1] : [0, 1];
+    var tx = x + d[0] * SPEED, ty = y + d[1] * SPEED;
+    if (tx < 0 || tx + S > W || ty < 0 || ty + S > H) d = [-d[0], -d[1]];
+    return d;
+  }
+
+  var bonkAt = 0;
+  function bonk() {
+    var now = performance.now();
+    if (now - bonkAt < 180) return;
+    bonkAt = now;
+    clawd.classList.remove('bonk');
+    void clawd.offsetWidth;             // restart animation
+    clawd.classList.add('bonk');
+  }
+
+  function render() {
+    clawd.style.transform = 'translate(' + x + 'px,' + y + 'px)';
+    clawdSvg.style.transform = 'scaleX(' + faceFlip + ')';   // facing only on the body, bubble stays readable
+  }
+
+  // One gait clock drives everything: the leg scissor + lift, the two-beat
+  // body bob/rock, the contact shadow, and the forward surge inside step().
+  // While a foot is planted it sweeps backward as the body advances, so the
+  // feet read as gripping the ground. amp blends the whole gait in and out
+  // so he eases between standing and walking instead of snapping.
+  function renderGait(moving, k, strideScale) {
+    amp += ((moving ? 1 : 0) - amp) * Math.min(1, 0.16 * k);
+    if (!moving && amp < 0.01) amp = 0;
+    var s = Math.sin(phase), i;
+    var ax = -Math.cos(phase) * STRIDE * strideScale * amp;   // planted pair sweeps back…
+    var ay = -Math.max(0, s) * LIFT * amp;                    // …lifted pair swings forward
+    var by = -Math.max(0, -s) * LIFT * amp;
+    for (i = 0; i < legsA.length; i++) legsA[i].style.transform = 'translate(' + ax + 'px,' + ay + 'px)';
+    for (i = 0; i < legsB.length; i++) legsB[i].style.transform = 'translate(' + (-ax) + 'px,' + by + 'px)';
+    var bobN = (0.5 - 0.5 * Math.cos(2 * phase)) * amp;       // two beats per stride
+    bob.style.transform = 'translateY(' + (-BOB * bobN) + 'px) rotate(' + (ROCK * s * amp) + 'deg)';
+    if (shadow) shadow.style.transform = 'scale(' + (1 - 0.08 * bobN) + ',' + (1 - 0.25 * bobN) + ')';
+  }
+
+  function step(ts) {
+    if (!running) return;
+    var k = lastTs ? Math.min(2.5, Math.max(0.3, (ts - lastTs) / 16.7)) : 1;  // 60fps-normalised delta
+    lastTs = ts;
+
+    // mid-cartwheel: travel sideways under the spin, no goal-seeking. If a
+    // box is in the way he stops sliding and finishes the turn in place.
+    if (cart > 0) {
+      cart -= k;
+      var cv = 1.6 * k;
+      if (clearStep(cartDir * cv, 0)) x += cartDir * cv;
+      if (cart <= 0) { cart = 0; pause = 24; }   // stick the landing, then carry on
+      renderGait(false, k, 1);
+      render();
+      requestAnimationFrame(step);
+      return;
+    }
+
+    // standing at a goal for a beat — gait eases back to neutral
+    if (pause > 0) {
+      pause -= k;
+      if (pause <= 0) { pause = 0; newGoal(); }
+      renderGait(false, k, 1);
+      render();
+      requestAnimationFrame(step);
+      return;
+    }
+
+    // arrived? (reach radius is looser than pickGoal's threshold, so no deadlock)
+    if (Math.abs(goal.x - x) <= 6 && Math.abs(goal.y - y) <= 6) {
+      x = goal.x; y = goal.y;
+      pause = 30 + Math.floor(Math.random() * 60);   // ~0.5–1.5s rest
+      renderGait(false, k, 1);
+      render();
+      requestAnimationFrame(step);
+      return;
+    }
+
+    // steer: arc the heading toward the goal rather than snapping to a grid
+    var gx = goal.x - x, gy = goal.y - y, gl = Math.hypot(gx, gy) || 1;
+    hx += (gx / gl - hx) * Math.min(1, TURN * k);
+    hy += (gy / gl - hy) * Math.min(1, TURN * k);
+    var hl = Math.hypot(hx, hy) || 1;
+
+    // step-synced surge: the body pushes forward at each footfall (avg ≈ SPEED),
+    // instead of the constant glide that read as floating
+    var v = SPEED * (0.55 + 0.7 * Math.abs(Math.cos(phase))) * k;
+    var mx = hx / hl * v, my = hy / hl * v;
+    var dxa = 0, dya = 0, moved = false;
+
+    if (overlapping()) {
+      // inside a box (slide change mid-flight) — ease out toward the nearest edge
+      var e = escapeStep();
+      if (e) { dxa = e[0] * v; dya = e[1] * v; moved = true; }
+      wedgeFrames += k;
+      if (wedgeFrames > 36) { relocate(); renderGait(false, k, 1); render(); requestAnimationFrame(step); return; }
+    } else {
+      wedgeFrames = 0;
+      if (clearStep(mx, my)) {
+        dxa = mx; dya = my; moved = true;
+      } else {
+        // blocked — slide along the obstacle edge at full pace. This is what
+        // walks him around boxes instead of vibrating against their faces.
+        var sx = mx ? (mx < 0 ? -1 : 1) : slideBias;
+        var sy = my ? (my < 0 ? -1 : 1) : slideBias;
+        var tryX = Math.abs(mx) >= Math.abs(my);
+        if (tryX && clearStep(sx * v, 0)) { dxa = sx * v; moved = true; }
+        else if (clearStep(0, sy * v))    { dya = sy * v; moved = true; }
+        else if (!tryX && clearStep(sx * v, 0)) { dxa = sx * v; moved = true; }
+        if (moved) {
+          // hug the edge we're sliding along so the steering doesn't fight the wall
+          hx = dxa ? (dxa < 0 ? -1 : 1) : 0;
+          hy = dya ? (dya < 0 ? -1 : 1) : 0;
+        } else {
+          bonk();                        // boxed into a pocket — squish + repath
+          slideBias = -slideBias;
+          newGoal();
+        }
+      }
+    }
+
+    if (moved) {
+      x += dxa; y += dya;
+      phase += STEP_RATE * k;
+      if (dxa) faceFlip = dxa < 0 ? -1 : 1;   // face travel; hold facing on vertical legs
+    }
+    // stride flattens out when travel is mostly vertical — no sideways moonwalk
+    renderGait(moved, k, 0.35 + 0.65 * Math.abs(hx / hl));
+
+    // anti-corner: if we haven't closed in on the goal for a while, pick a new one
+    var d = Math.hypot(goal.x - x, goal.y - y);
+    if (d < stuckBest - 1) { stuckBest = d; stuckFrames = 0; }
+    else { stuckFrames += k; if (stuckFrames > 150) newGoal(); }
+
+    render();
+    requestAnimationFrame(step);
+  }
+
+  // Recompute the box map whenever the slide or geometry changes — once right
+  // away, and again after the .42s slide-enter transition settles. Measuring
+  // only mid-flight records every box up to 14px off its resting spot (the
+  // slide animates translateY(14px) → 0), which is how Clawd got caught
+  // against phantom edges between slides.
+  var rebuildSoon = (function () {
+    var t1, t2, t3;
+    return function () {
+      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
+      t1 = setTimeout(rebuild, 60);
+      t2 = setTimeout(rebuild, 520);
+      t3 = setTimeout(rebuild, 1150);   // after the staggered item entrances settle
+    };
+  })();
+  new MutationObserver(rebuildSoon).observe(stage, {
+    subtree: true, attributes: true, attributeFilter: ['class']
+  });
+  window.addEventListener('resize', rebuildSoon);
+  window.addEventListener('hashchange', rebuildSoon);
+
+  // ---- Speech bubbles: pick a random line, show it now and then ----
+  var MESSAGES = [
+    "Hey Cam, can PowerPoint Slides do this?",
+    "Look Djoo, I can do backflips too...",
+    "Jamie, I am going to miss you",
+    "Boo Red Hat...be a team player",
+    "Hey quick question, which is better, Anthropic or OpenAI and why is it Anthropic?",
+    "Coffee in Sydney is waaaaaaayy better...",
+    "Tony, when are you getting a sub 2 hour half marathon?",
+    "How many minutes do we have left?"
+  ];
+  var speakTimer = null, hideTimer = null, flipTimer = null, cartTimer = null,
+      trickTimer = null, tadaTimer = null;
+  var WORD_MS = 130;                      // speaking cadence, per word
+
+  // Words pop in one at a time so he reads as *saying* the line, not
+  // presenting it. The bubble is laid out at full size up front (spans are
+  // just transparent until their turn), so it never jumps mid-sentence.
+  function showBubble(text, holdMs) {
+    bubble.textContent = '';
+    var words = text.split(' ');
+    for (var i = 0; i < words.length; i++) {
+      var w = document.createElement('span');
+      w.className = 'bw';
+      w.textContent = words[i];
+      w.style.animationDelay = (i * WORD_MS) + 'ms';
+      bubble.appendChild(w);
+      if (i < words.length - 1) bubble.appendChild(document.createTextNode(' '));
+    }
+    clawd.classList.add('talking');
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(function () { clawd.classList.remove('talking'); },
+                           holdMs + words.length * WORD_MS);   // hold starts after the line is out
+  }
+
+  function doFlip() {
+    pause = Math.max(pause, 66);          // plant the feet for the ~1s flip
+    clawd.classList.remove('flip');
+    void clawd.offsetWidth;               // restart the animation
+    clawd.classList.add('flip');
+    clearTimeout(flipTimer);
+    flipTimer = setTimeout(function () { clawd.classList.remove('flip'); }, 1000);
+    // pop a triumphant "Ta-Da!" as he lands
+    clearTimeout(tadaTimer);
+    tadaTimer = setTimeout(function () { showBubble("Ta-Da!", 2400); }, 950);
+  }
+
+  function doCartwheel() {
+    // wheel off in the direction he's facing — unless that side is blocked
+    cartDir = faceFlip;
+    var probe = x + cartDir * 92;
+    if (probe < 0 || probe + S > W || !clearAt(probe, y, 4)) cartDir = -cartDir;
+    clawd.style.setProperty('--cd', cartDir);
+    clawd.classList.remove('cartwheel');
+    void clawd.offsetWidth;               // restart the animation
+    clawd.classList.add('cartwheel');
+    cart = 56;                            // ~0.95s of sideways travel under the spin
+    clearTimeout(cartTimer);
+    cartTimer = setTimeout(function () { clawd.classList.remove('cartwheel'); }, 980);
+    clearTimeout(tadaTimer);
+    tadaTimer = setTimeout(function () { showBubble("Ta-Da!", 2400); }, 930);
+  }
+
+  // Lines that come with a party trick. Cam gets the cartwheel; the
+  // backflip now belongs to Djoo.
+  var TRICKS = {
+    "Hey Cam, can PowerPoint Slides do this?": doCartwheel,
+    "Look Djoo, I can do backflips too...": doFlip
+  };
+  var gagUntil = 0;                       // random chatter is muted until then
+
+  function playGag(line) {
+    gagUntil = performance.now() + 8200;  // read + trick + ta-da, with margin
+    showBubble(line, 7000);               // keep the line up through the whole act
+    clearTimeout(trickTimer);
+    trickTimer = setTimeout(TRICKS[line], 2800);   // beat so the audience reads it first
+  }
+
+  function speak() {
+    if (!running) return;
+    if (performance.now() < gagUntil) return;   // never talk over a gag in progress
+    var msg = MESSAGES[Math.floor(Math.random() * MESSAGES.length)];
+    if (TRICKS[msg]) playGag(msg);
+    else showBubble(msg, 4600);          // ~1s longer so the whole line can be read
+  }
+
+  function scheduleSpeak() {
+    clearTimeout(speakTimer);
+    speakTimer = setTimeout(function () {
+      speak();
+      scheduleSpeak();
+    }, 7000 + Math.random() * 9000);   // every ~7–16s
+  }
+
+  // 'm' toggles Clawd on/off during a talk; 'c' / 'b' fire the cartwheel and
+  // backflip gags on cue (handy when the right person is in the room).
+  document.addEventListener('keydown', function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if ((e.key === 'c' || e.key === 'b') && running) {
+      playGag(e.key === 'c'
+        ? "Hey Cam, can PowerPoint Slides do this?"
+        : "Look Djoo, I can do backflips too...");
+    }
+    if (e.key === 'm' || e.key === 'M') {
+      running = !running;
+      clawd.classList.toggle('hidden', !running);
+      clawd.classList.remove('talking');
+      clawd.classList.remove('flip');
+      clawd.classList.remove('cartwheel');
+      cart = 0;
+      if (running) { lastTs = 0; rebuild(); newGoal(); requestAnimationFrame(step); scheduleSpeak(); }
+      else {
+        clearTimeout(speakTimer); clearTimeout(hideTimer); clearTimeout(flipTimer);
+        clearTimeout(cartTimer); clearTimeout(trickTimer); clearTimeout(tadaTimer);
+      }
+    }
+  });
+
+  setTimeout(function () {
+    rebuild();
+    for (var t = 0; t < 200; t++) {     // spawn somewhere clear
+      var sx = MARGIN_X + Math.random() * (W - S - 2 * MARGIN_X);
+      var sy = MARGIN_T + Math.random() * (H - S - MARGIN_T - MARGIN_B);
+      if (clearAt(sx, sy, 6)) { x = sx; y = sy; break; }
+    }
+    newGoal();
+    poof();                               // pop in rather than blink in
+    requestAnimationFrame(step);
+    scheduleSpeak();
+  }, 400);
+})();
+</script>
+</body>
+</html>
