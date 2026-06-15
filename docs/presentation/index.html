@@ -125,6 +125,10 @@
 
   .body-area { flex: 1; display: flex; flex-direction: column; justify-content: center; min-height: 0; }
 
+  /* Title slide: lift the title into the upper third, subtitle sits beneath it */
+  .title-slide .body-area { justify-content: flex-start; padding-top: 92px; }
+  .title-slide .title-sub { margin: 30px 0 0; }
+
   /* ---------- Cards & chips ---------- */
   .card {
     background: var(--ivory);
@@ -637,12 +641,12 @@
     </svg>
 
     <!-- 1 ─ Title -->
-    <section class="slide" data-name="Title">
-      <div class="overline reveal d1">what I built, what broke, what I learned</div>
+    <section class="slide title-slide" data-name="Title">
       <div class="body-area">
-        <h1 class="reveal d2">A story about a chiropractor,<br>
+        <h1 class="reveal d1">A story about a chiropractor,<br>
           LLMs and <span class="uline">nine days<svg viewBox="0 0 200 12" preserveAspectRatio="none"><path d="M3 9 C 40 3, 80 11, 120 6 S 185 4, 197 8"/></svg></span>
         </h1>
+        <div class="overline title-sub reveal d2">what I built, what broke, what I learned</div>
       </div>
     </section>
 
@@ -651,8 +655,8 @@
       <h2>The day in the life of a medical professional</h2>
       <div class="body-area">
         <p class="lede" style="margin-bottom:6px">
-          My wife is a chiro, and after every patient she turns the conversation into a
-          SOAP note, trying to remember all the intricate details from <strong style="color:var(--near-black); font-weight:600">memory</strong>.
+          My wife is a chiropractor. After every patient, the entire visit lives in just one
+          place… her&nbsp;<strong style="color:var(--near-black); font-weight:600">memory</strong>, until she writes it into a SOAP note, by hand.
         </p>
         <div class="pain">
           <div class="pain-card">
@@ -685,7 +689,7 @@
 
     <!-- 4 ─ Why, part 2 -->
     <section class="slide" data-name="Why · 2">
-      <h2>Why a local LLM?</h2>
+      <h2>Why not just use ChatGPT?</h2>
       <div class="body-area why-split">
         <div class="why-text">
           <div class="points single">
@@ -864,8 +868,8 @@
             <h3>Make the AI test its own work</h3>
             <p>The test suite is what turns "plausible" into "true". Never accept agent code without the test that would catch its lie.</p></div>
           <div class="lesson"><span class="ln">3</span>
-            <h3>A second AI reviewer isn't a gimmick</h3>
-            <p>Writer and reviewer from different vendors disagree in useful ways. The disagreement is the value.</p></div>
+            <h3>Let two AIs bring different ideas</h3>
+            <p>Writer and reviewer from rival vendors carry different context and catch what one model alone would miss. Two perspectives beat one.</p></div>
           <div class="lesson"><span class="ln">4</span>
             <h3>Small PRs beat clever prompts</h3>
             <p>The 23-minute merge loop did more for quality than any prompt engineering. Keep the unit of work reviewable.</p></div>
@@ -1483,10 +1487,12 @@
     "Hey quick question, which is better, Anthropic or OpenAI and why is it Anthropic?",
     "Coffee in Sydney is waaaaaaayy better...",
     "Tony, when are you getting a sub 2 hour half marathon?",
-    "How many minutes do we have left?"
+    "How many minutes do we have left?",
+    "Pat, where is Jamie's motor bike as a departing gift?",
+    "Okay Aaron, time to shut up now"
   ];
   var speakTimer = null, hideTimer = null, flipTimer = null, cartTimer = null,
-      trickTimer = null, tadaTimer = null;
+      trickTimer = null, tadaTimer = null, followTimer = null;
   var WORD_MS = 130;                      // speaking cadence, per word
 
   // Words pop in one at a time so he reads as *saying* the line, not
@@ -1552,11 +1558,27 @@
     trickTimer = setTimeout(TRICKS[line], 2800);   // beat so the audience reads it first
   }
 
+  // Lines that come with a scripted second beat: the punchline lands a moment
+  // after the setup, and random chatter stays muted across both bubbles.
+  var FOLLOWUPS = {
+    "Okay Aaron, time to shut up now": "Give Simon more time would you!"
+  };
+
+  function playFollowup(line) {
+    var next = FOLLOWUPS[line];
+    var setupMs = 3200 + line.split(' ').length * WORD_MS;   // setup shows, then holds
+    gagUntil = performance.now() + setupMs + 6000;           // mute chatter through both beats
+    showBubble(line, 3200);
+    clearTimeout(followTimer);
+    followTimer = setTimeout(function () { showBubble(next, 4400); }, setupMs + 600);
+  }
+
   function speak() {
     if (!running) return;
     if (performance.now() < gagUntil) return;   // never talk over a gag in progress
     var msg = MESSAGES[Math.floor(Math.random() * MESSAGES.length)];
     if (TRICKS[msg]) playGag(msg);
+    else if (FOLLOWUPS[msg]) playFollowup(msg);
     else showBubble(msg, 4600);          // ~1s longer so the whole line can be read
   }
 
@@ -1569,13 +1591,17 @@
   }
 
   // 'm' toggles Clawd on/off during a talk; 'c' / 'b' fire the cartwheel and
-  // backflip gags on cue (handy when the right person is in the room).
+  // backflip gags on cue; 'a' fires the closing two-beat ("time to shut up
+  // now" → "give Simon more time") for the wrap-up (handy on cue).
   document.addEventListener('keydown', function (e) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if ((e.key === 'c' || e.key === 'b') && running) {
       playGag(e.key === 'c'
         ? "Hey Cam, can PowerPoint Slides do this?"
         : "Look Djoo, I can do backflips too...");
+    }
+    if ((e.key === 'a' || e.key === 'A') && running) {
+      playFollowup("Okay Aaron, time to shut up now");
     }
     if (e.key === 'm' || e.key === 'M') {
       running = !running;
@@ -1588,6 +1614,7 @@
       else {
         clearTimeout(speakTimer); clearTimeout(hideTimer); clearTimeout(flipTimer);
         clearTimeout(cartTimer); clearTimeout(trickTimer); clearTimeout(tadaTimer);
+        clearTimeout(followTimer);
       }
     }
   });
