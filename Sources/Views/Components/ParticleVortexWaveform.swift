@@ -58,6 +58,8 @@ struct ParticleVortexWaveform: View {
 
     private let maxParticles = 40
     private let minParticles = 8
+    private let maxTrailSegments = 4
+    private let maxCanvasFillsPerFrame = 120
     private let baseOrbitalSpeed: Double = 0.02
     private let maxOrbitalSpeed: Double = 0.08
     private let particleFadeSpeed: Double = 0.1
@@ -87,15 +89,18 @@ struct ParticleVortexWaveform: View {
             // Draw background glow
             drawBackgroundGlow(context: context, center: center, radius: maxRadius, level: effectiveLevel)
 
-            // Draw particle trails and particles
-            for particle in particles where particle.isActive {
-                drawParticle(
+            // Draw particle trails and particles (fill budget capped — PRF-7)
+            var fillBudget = maxCanvasFillsPerFrame
+            for particle in particles where particle.isActive && fillBudget > 0 {
+                let spent = drawParticle(
                     context: context,
                     particle: particle,
                     center: center,
                     maxRadius: maxRadius,
-                    time: time
+                    time: time,
+                    fillBudget: fillBudget
                 )
+                fillBudget -= spent
             }
 
             // Draw center orb
@@ -254,13 +259,17 @@ struct ParticleVortexWaveform: View {
         )
     }
 
+    @discardableResult
     private func drawParticle(
         context: GraphicsContext,
         particle: Particle,
         center: CGPoint,
         maxRadius: CGFloat,
-        time: Double
-    ) {
+        time: Double,
+        fillBudget: Int
+    ) -> Int {
+        var fillsUsed = 0
+        guard fillBudget > 0 else { return 0 }
         let currentRadius = maxRadius * particle.radius
 
         // Calculate position with Bezier-like curve influence
@@ -286,9 +295,11 @@ struct ParticleVortexWaveform: View {
         let baseSize: CGFloat = 4 + CGFloat(smoothLevel) * 6
         let particleSize = baseSize * particle.size
 
-        // Draw glow/trail effect
-        let trailLength = 3 + Int(Double(smoothLevel) * 4)
+        // Draw glow/trail effect (capped trail segments — PRF-7)
+        let requestedTrail = 3 + Int(Double(smoothLevel) * 4)
+        let trailLength = min(requestedTrail, maxTrailSegments, fillBudget - 2)
         for trailIndex in 0..<trailLength {
+            guard fillsUsed < fillBudget else { break }
             let trailFactor = 1.0 - Double(trailIndex) / Double(trailLength)
             let trailAngle = particle.angle - Double(trailIndex) * 0.05 * (1 + Double(smoothLevel))
             let trailRadius = adjustedRadius * (1 - Double(trailIndex) * 0.02)
@@ -307,8 +318,10 @@ struct ParticleVortexWaveform: View {
                 )),
                 with: .color(particleColor.opacity(trailOpacity))
             )
+            fillsUsed += 1
         }
 
+        guard fillsUsed < fillBudget else { return fillsUsed }
         // Draw main particle with glow
         var glowContext = context
         glowContext.blendMode = .plusLighter
@@ -333,6 +346,9 @@ struct ParticleVortexWaveform: View {
                 endRadius: glowSize / 2
             )
         )
+        fillsUsed += 1
+
+        guard fillsUsed < fillBudget else { return fillsUsed }
 
         // Core particle
         context.fill(
@@ -344,6 +360,9 @@ struct ParticleVortexWaveform: View {
             )),
             with: .color(particleColor.opacity(particle.opacity))
         )
+        fillsUsed += 1
+
+        guard fillsUsed < fillBudget else { return fillsUsed }
 
         // Bright center highlight
         let highlightSize = particleSize * 0.4
@@ -356,6 +375,8 @@ struct ParticleVortexWaveform: View {
             )),
             with: .color(.white.opacity(particle.opacity * 0.7))
         )
+        fillsUsed += 1
+        return fillsUsed
     }
 
     private func calculateHue(for particle: Particle, time: Double) -> Double {
