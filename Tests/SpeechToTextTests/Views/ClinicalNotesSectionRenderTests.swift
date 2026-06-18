@@ -36,8 +36,7 @@ final class ClinicalNotesSectionRenderTests: XCTestCase {
             userDefaults: makeUserDefaults()
         )
         // Probe will never fire in render-only tests — we don't call save/test.
-        let probe = ClinikoAuthProbe(session: .shared)
-        return ClinicalNotesSectionViewModel(credentialStore: store, authProbe: probe)
+        return ClinicalNotesSectionViewModel(credentialStore: store, urlSession: .shared)
     }
 
     func test_clinicalNotesSection_instantiatesWithoutCrash() {
@@ -79,8 +78,7 @@ final class ClinicalNotesSectionRenderTests: XCTestCase {
             userDefaults: makeUserDefaults()
         )
         try await store.saveCredentials(apiKey: "MS-test-au1", shard: .au1)
-        let probe = ClinikoAuthProbe(session: .shared)
-        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: probe)
+        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: .shared)
         await viewModel.refreshState()
 
         let view = ClinicalNotesSection(
@@ -129,8 +127,7 @@ final class ClinicalNotesSectionRenderTests: XCTestCase {
             userDefaults: makeUserDefaults()
         )
         try await store.saveCredentials(apiKey: "MS-test-au1", shard: .au1)
-        let probe = ClinikoAuthProbe(session: .shared)
-        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: probe)
+        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: .shared)
         await viewModel.refreshState()
         XCTAssertTrue(viewModel.hasStoredCredentials)
 
@@ -153,8 +150,7 @@ final class ClinicalNotesSectionRenderTests: XCTestCase {
             userDefaults: makeUserDefaults()
         )
         try await store.saveCredentials(apiKey: "MS-test-au1", shard: .au1)
-        let probe = ClinikoAuthProbe(session: .shared)
-        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: probe)
+        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: .shared)
         await viewModel.refreshState()
         XCTAssertTrue(viewModel.hasStoredCredentials)
 
@@ -218,8 +214,7 @@ final class ClinicalNotesSectionRenderTests: XCTestCase {
             secureStore: InMemorySecureStore(),
             userDefaults: userDefaults
         )
-        let probe = ClinikoAuthProbe(session: .shared)
-        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: probe)
+        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: .shared)
 
         viewModel.contactEmailDraft = "doctor@example.test"
 
@@ -233,8 +228,7 @@ final class ClinicalNotesSectionRenderTests: XCTestCase {
             secureStore: InMemorySecureStore(),
             userDefaults: userDefaults
         )
-        let probe = ClinikoAuthProbe(session: .shared)
-        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: probe)
+        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: .shared)
 
         // Simulate an external write (a different settings tab / process /
         // earlier session that persisted a value before the VM was created).
@@ -264,8 +258,7 @@ final class ClinicalNotesSectionRenderTests: XCTestCase {
             secureStore: InMemorySecureStore(),
             userDefaults: userDefaults
         )
-        let probe = ClinikoAuthProbe(session: .shared)
-        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: probe)
+        let viewModel = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: .shared)
 
         viewModel.contactEmailDraft = "doctor@example.test"
         await viewModel.refreshState()

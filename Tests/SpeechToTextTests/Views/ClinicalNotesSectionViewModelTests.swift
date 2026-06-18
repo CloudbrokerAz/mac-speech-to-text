@@ -34,23 +34,22 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
         return (store, secureStore, userDefaults)
     }
 
-    private func makeProbe(
+    private func makeSession(
         responder: @escaping URLProtocolStub.Responder
-    ) -> ClinikoAuthProbe {
+    ) -> URLSession {
         let config = URLProtocolStub.install(responder)
-        let session = URLSession(configuration: config)
-        return ClinikoAuthProbe(session: session, userAgent: "vm-tests/1.0")
+        return URLSession(configuration: config)
     }
 
-    private func neverInvokedProbe(file: StaticString = #file, line: UInt = #line) -> ClinikoAuthProbe {
-        makeProbe { _ in
-            XCTFail("probe must not be invoked", file: file, line: line)
+    private func neverInvokedSession(file: StaticString = #file, line: UInt = #line) -> URLSession {
+        makeSession { _ in
+            XCTFail("ClinikoClient must not be invoked", file: file, line: line)
             throw URLError(.cannotConnectToHost)
         }
     }
 
-    private func httpResponseProbe(status: Int) -> ClinikoAuthProbe {
-        makeProbe { request in
+    private func httpResponseSession(status: Int) -> URLSession {
+        makeSession { request in
             let response = HTTPURLResponse(
                 url: request.url!,
                 statusCode: status,
@@ -65,7 +64,7 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
 
     func test_initial_state_isClean() {
         let (store, _, _) = makeStore()
-        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: neverInvokedProbe())
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: neverInvokedSession())
         XCTAssertEqual(vm.apiKeyDraft, "")
         XCTAssertEqual(vm.selectedShard, .default)
         XCTAssertFalse(vm.hasStoredCredentials)
@@ -79,7 +78,7 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
 
     func test_isApiKeyDraftValid_reflectsTrimmedDraft() {
         let (store, _, _) = makeStore()
-        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: neverInvokedProbe())
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: neverInvokedSession())
 
         XCTAssertFalse(vm.isApiKeyDraftValid, "empty draft is invalid")
 
@@ -101,7 +100,7 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
         let (store, _, _) = makeStore(secureStore: secureStore, userDefaults: userDefaults)
         try await store.saveCredentials(apiKey: "MS-key-uk2", shard: .uk2)
 
-        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: neverInvokedProbe())
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: neverInvokedSession())
         await vm.refreshState()
 
         XCTAssertTrue(vm.hasStoredCredentials)
@@ -113,7 +112,7 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
 
     func test_refresh_keychainReadFailure_doesNotCollapseToAbsent() async {
         let (store, _, _) = makeStore(secureStore: ThrowingSecureStore())
-        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: neverInvokedProbe())
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: neverInvokedSession())
 
         await vm.refreshState()
 
@@ -135,7 +134,7 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
 
     func test_refresh_emptyStore_marksAbsent() async {
         let (store, _, _) = makeStore()
-        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: neverInvokedProbe())
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: neverInvokedSession())
 
         await vm.refreshState()
 
@@ -150,7 +149,7 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
     func test_saveAndTest_withValidKey_storesAndReportsSuccess() async throws {
         let secureStore = InMemorySecureStore()
         let (store, _, userDefaults) = makeStore(secureStore: secureStore)
-        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: httpResponseProbe(status: 200))
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: httpResponseSession(status: 200))
         vm.apiKeyDraft = "MS-test-au1"
         vm.selectedShard = .au1
 
@@ -170,7 +169,7 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
     func test_saveAndTest_with401_keepsKeyButReportsFailureAndStaysUnverified() async throws {
         let secureStore = InMemorySecureStore()
         let (store, _, _) = makeStore(secureStore: secureStore)
-        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: httpResponseProbe(status: 401))
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: httpResponseSession(status: 401))
         vm.apiKeyDraft = "MS-bad-au1"
 
         await vm.saveAndTest()
@@ -192,7 +191,7 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
     func test_saveAndTest_with500_keepsKeyAndShowsHTTPMessage() async throws {
         let secureStore = InMemorySecureStore()
         let (store, _, _) = makeStore(secureStore: secureStore)
-        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: httpResponseProbe(status: 500))
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: httpResponseSession(status: 500))
         vm.apiKeyDraft = "MS-test-au1"
 
         await vm.saveAndTest()
@@ -208,8 +207,8 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
     func test_saveAndTest_offlineProbe_keepsKeyAndOffersNetworkGuidance() async throws {
         let secureStore = InMemorySecureStore()
         let (store, _, _) = makeStore(secureStore: secureStore)
-        let probe = makeProbe { _ in throw URLError(.notConnectedToInternet) }
-        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: probe)
+        let session = makeSession { _ in throw URLError(.notConnectedToInternet) }
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: session)
         vm.apiKeyDraft = "MS-test-au1"
 
         await vm.saveAndTest()
@@ -223,8 +222,8 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
     func test_saveAndTest_dnsFailure_offersRegionHint() async throws {
         let secureStore = InMemorySecureStore()
         let (store, _, _) = makeStore(secureStore: secureStore)
-        let probe = makeProbe { _ in throw URLError(.cannotFindHost) }
-        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: probe)
+        let session = makeSession { _ in throw URLError(.cannotFindHost) }
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: session)
         vm.apiKeyDraft = "MS-test-au1"
         vm.selectedShard = .au1
 
@@ -239,7 +238,7 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
     func test_saveAndTest_emptyKey_failsWithoutWriting() async throws {
         let secureStore = InMemorySecureStore()
         let (store, _, _) = makeStore(secureStore: secureStore)
-        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: neverInvokedProbe())
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: neverInvokedSession())
         vm.apiKeyDraft = "  "
 
         await vm.saveAndTest()
@@ -252,7 +251,7 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
 
     func test_saveAndTest_secureStoreWriteFailure_reportsFailureNoKeyStored() async {
         let (store, _, _) = makeStore(secureStore: ThrowingSecureStore())
-        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: neverInvokedProbe())
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: neverInvokedSession())
         vm.apiKeyDraft = "MS-test-au1"
 
         await vm.saveAndTest()
@@ -272,7 +271,7 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
 
         let vm = ClinicalNotesSectionViewModel(
             credentialStore: store,
-            authProbe: makeProbe { request in
+            urlSession: makeSession { request in
                 XCTAssertEqual(request.url?.absoluteString, "https://api.uk1.cliniko.com/v1/user")
                 let response = HTTPURLResponse(
                     url: request.url!,
@@ -293,7 +292,7 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
 
     func test_testConnection_withoutCredentials_reportsFailure() async {
         let (store, _, _) = makeStore()
-        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: neverInvokedProbe())
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: neverInvokedSession())
 
         await vm.testConnection()
 
@@ -309,7 +308,7 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
         let (store, _, _) = makeStore(secureStore: secureStore, userDefaults: userDefaults)
         try await store.saveCredentials(apiKey: "MS-test-au2", shard: .au2)
 
-        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: neverInvokedProbe())
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: neverInvokedSession())
         await vm.refreshState()
         vm.apiKeyDraft = "leftover"
 
@@ -335,7 +334,7 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
             userDefaults: userDefaults
         )
 
-        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: neverInvokedProbe())
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: neverInvokedSession())
         vm.apiKeyDraft = "leftover"
         // Refresh will fail (read failure) and mark .readFailed.
         await vm.refreshState()
@@ -361,7 +360,7 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
         let (store, _, _) = makeStore(secureStore: secureStore, userDefaults: userDefaults)
         try await store.saveCredentials(apiKey: "k", shard: .au1)
 
-        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: neverInvokedProbe())
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: neverInvokedSession())
         await vm.refreshState()
         XCTAssertEqual(vm.selectedShard, .au1)
 
@@ -377,7 +376,7 @@ final class ClinicalNotesSectionViewModelTests: XCTestCase {
     func test_shardPickerChange_doesNotPersistBeforeCredentialsSaved() {
         let userDefaults = makeUserDefaults()
         let (store, _, _) = makeStore(userDefaults: userDefaults)
-        let vm = ClinicalNotesSectionViewModel(credentialStore: store, authProbe: neverInvokedProbe())
+        let vm = ClinicalNotesSectionViewModel(credentialStore: store, urlSession: neverInvokedSession())
 
         vm.selectedShard = .uk2
 

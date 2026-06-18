@@ -588,7 +588,7 @@ struct ClinicalNotesSection: View {
 // MARK: - ViewModel
 
 /// State + side-effects for `ClinicalNotesSection`. Owns a
-/// `ClinikoCredentialStore` and `ClinikoAuthProbe`; never reads the API key
+/// `ClinikoCredentialStore` and `ClinikoClient.send(.usersMe)`; never reads the API key
 /// back from Keychain into VM-visible state. Both dependencies are actor
 /// existentials and live behind `@ObservationIgnored` per the project's
 /// concurrency rule (`@Observable` + actor existential without
@@ -714,15 +714,16 @@ final class ClinicalNotesSectionViewModel {
     }
 
     @ObservationIgnored private let credentialStore: ClinikoCredentialStore
-    @ObservationIgnored private let authProbe: ClinikoAuthProbe
+    /// Injected for tests (`URLProtocolStub`); production uses `.shared`.
+    @ObservationIgnored private let urlSession: URLSession
     @ObservationIgnored private var isApplyingExternalUpdate: Bool = false
 
     init(
         credentialStore: ClinikoCredentialStore = ClinikoCredentialStore(),
-        authProbe: ClinikoAuthProbe = ClinikoAuthProbe()
+        urlSession: URLSession = .shared
     ) {
         self.credentialStore = credentialStore
-        self.authProbe = authProbe
+        self.urlSession = urlSession
     }
 
     /// Refresh `credentialState` + `selectedShard` from the persisted store.
@@ -919,36 +920,38 @@ final class ClinicalNotesSectionViewModel {
         }
 
         do {
-            try await authProbe.ping(credentials: credentials)
+            let client = ClinikoClient(
+                credentials: credentials,
+                session: urlSession,
+                retryPolicy: .immediate
+            )
+            let _: EmptyResponse = try await client.send(.usersMe)
             verificationStatus = .verified
             connectionStatus = .success
             statusMessage = "Connected to Cliniko (\(credentials.shard.displayName))."
-        } catch ClinikoAuthProbeError.unauthorized {
+        } catch ClinikoError.unauthenticated, ClinikoError.forbidden {
             verificationStatus = .unverified
             connectionStatus = .failure
             statusMessage = "Cliniko rejected the API key. Double-check the key and the selected region."
-        } catch ClinikoAuthProbeError.http(let status) {
+        } catch ClinikoError.server(let status) {
             verificationStatus = .unverified
             connectionStatus = .failure
             statusMessage = "Cliniko responded with HTTP \(status). Try again, or contact Cliniko support."
-        } catch ClinikoAuthProbeError.transport(let code) {
+        } catch ClinikoError.transport(let code) {
             verificationStatus = .unverified
             connectionStatus = .failure
             statusMessage = transportFailureMessage(for: code)
-        } catch ClinikoAuthProbeError.cancelled {
+        } catch ClinikoError.cancelled {
             // User navigated away or session was invalidated. Don't render
             // a misleading "could not reach Cliniko" message.
             verificationStatus = .unverified
             connectionStatus = .idle
             statusMessage = nil
-        } catch ClinikoAuthProbeError.nonHTTPResponse {
+        } catch ClinikoError.nonHTTPResponse {
             verificationStatus = .unverified
             connectionStatus = .failure
             statusMessage = "Cliniko returned an unexpected response. Try again."
         } catch {
-            // Catches `.unknown(typeName:)` and any unexpected throw type
-            // with the same message — splitting them adds no UX value while
-            // duplicating the branch arm.
             verificationStatus = .unverified
             connectionStatus = .failure
             statusMessage = "Unexpected error contacting Cliniko."
