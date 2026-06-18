@@ -21,13 +21,19 @@ struct LiquidGlassContainer<Content: View>: View {
     var body: some View {
         ZStack {
             // Layer 1: Deep background glass with caustics
-            LiquidGlassBackground(time: time, audioLevel: audioLevel)
+            LiquidGlassBackground(audioLevel: audioLevel)
 
-            // Layer 2: Prismatic edge glow
-            PrismaticEdgeGlow(intensity: isActive ? 0.8 : 0.4, audioLevel: audioLevel)
+            // Layer 2: Prismatic edge glow (inner blurred stroke gated when inactive — PRF-6)
+            PrismaticEdgeGlow(
+                intensity: isActive ? 0.8 : 0.4,
+                audioLevel: audioLevel,
+                isActive: isActive
+            )
 
-            // Layer 3: Floating caustic highlights
-            CausticLightOverlay(time: time, intensity: Double(audioLevel))
+            // Layer 3: Floating caustic highlights (throttled below 60 Hz — PRF-6)
+            CausticTimelineLayer(intensity: Double(audioLevel)) { causticTime in
+                CausticLightOverlay(time: causticTime, intensity: Double(audioLevel))
+            }
 
             // Layer 4: Content
             content()
@@ -53,30 +59,31 @@ struct LiquidGlassContainer<Content: View>: View {
                     lineWidth: 1.5
                 )
         )
-        .overlay(
-            // Outer prismatic rim
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(
-                    AngularGradient(
-                        colors: [
-                            Color.liquidPrismaticPink.opacity(0.3),
-                            Color.liquidPrismaticBlue.opacity(0.3),
-                            Color.liquidPrismaticCyan.opacity(0.3),
-                            Color.liquidPrismaticGreen.opacity(0.2),
-                            Color.liquidPrismaticYellow.opacity(0.3),
-                            Color.liquidPrismaticPink.opacity(0.3)
-                        ],
-                        center: .center,
-                        angle: .degrees(time * 20)
-                    ),
-                    lineWidth: 2
-                )
-                .blur(radius: 2)
-        )
+        .overlay {
+            if isActive {
+                // Outer prismatic rim — only while active to avoid always-on blur compositing (PRF-6)
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(
+                        AngularGradient(
+                            colors: [
+                                Color.liquidPrismaticPink.opacity(0.3),
+                                Color.liquidPrismaticBlue.opacity(0.3),
+                                Color.liquidPrismaticCyan.opacity(0.3),
+                                Color.liquidPrismaticGreen.opacity(0.2),
+                                Color.liquidPrismaticYellow.opacity(0.3),
+                                Color.liquidPrismaticPink.opacity(0.3)
+                            ],
+                            center: .center,
+                            angle: .degrees(time * 20)
+                        ),
+                        lineWidth: 2
+                    )
+                    .blur(radius: 2)
+            }
+        }
+        .drawingGroup()
         .scaleEffect(breatheScale)
-        .shadow(color: Color.liquidGlassShadow.opacity(0.3), radius: 30, x: 0, y: 15)
-        .shadow(color: Color.liquidPrismaticBlue.opacity(0.15), radius: 40, x: -10, y: 20)
-        .shadow(color: Color.liquidPrismaticPink.opacity(0.1), radius: 40, x: 10, y: 20)
+        .shadow(color: Color.liquidGlassShadow.opacity(0.35), radius: 24, x: 0, y: 12)
         .onAppear {
             withAnimation(.linear(duration: 20).repeatForever(autoreverses: false)) {
                 time = 360
@@ -99,7 +106,6 @@ struct LiquidGlassContainer<Content: View>: View {
 
 /// Multi-layer glass background with depth and refraction
 struct LiquidGlassBackground: View {
-    let time: Double
     let audioLevel: Float
 
     var body: some View {
@@ -122,13 +128,30 @@ struct LiquidGlassBackground: View {
                     )
                 )
 
-            // Animated gradient mesh (simulated caustics)
-            CausticMesh(time: time, audioLevel: audioLevel)
-                .opacity(0.4)
+            // Animated gradient mesh (simulated caustics, throttled below 60 Hz — PRF-6)
+            CausticTimelineLayer(intensity: Double(audioLevel)) { causticTime in
+                CausticMesh(time: causticTime, audioLevel: audioLevel)
+            }
+            .opacity(0.4)
 
-            // Noise texture for glass depth
+            // Noise texture for glass depth (rasterized once — PRF-7)
             GlassNoiseTexture()
                 .opacity(0.03)
+        }
+        .drawingGroup()
+    }
+}
+
+// MARK: - Caustic Timeline Throttle
+
+/// Drives caustic animation at ~30 Hz instead of full display refresh (PRF-6).
+private struct CausticTimelineLayer<Content: View>: View {
+    let intensity: Double
+    @ViewBuilder let content: (Double) -> Content
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: intensity <= 0.001)) { timeline in
+            content(timeline.date.timeIntervalSinceReferenceDate)
         }
     }
 }
@@ -197,6 +220,7 @@ struct CausticMesh: View {
 struct PrismaticEdgeGlow: View {
     let intensity: Double
     let audioLevel: Float
+    let isActive: Bool
 
     @State private var rotation: Double = 0
 
@@ -216,18 +240,20 @@ struct PrismaticEdgeGlow: View {
                     .blur(radius: 25)
                     .opacity(intensity * 0.5)
 
-                // Inner concentrated glow
-                RoundedRectangle(cornerRadius: 26, style: .continuous)
-                    .stroke(
-                        AngularGradient(
-                            colors: prismaticColors,
-                            center: .center,
-                            angle: .degrees(-rotation * 0.7)
-                        ),
-                        lineWidth: 8 + CGFloat(audioLevel) * 8
-                    )
-                    .blur(radius: 10)
-                    .opacity(intensity * 0.6)
+                // Inner concentrated glow — second blurred stroke gated behind isActive (PRF-6)
+                if isActive {
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .stroke(
+                            AngularGradient(
+                                colors: prismaticColors,
+                                center: .center,
+                                angle: .degrees(-rotation * 0.7)
+                            ),
+                            lineWidth: 8 + CGFloat(audioLevel) * 8
+                        )
+                        .blur(radius: 10)
+                        .opacity(intensity * 0.6)
+                }
             }
             .frame(width: geo.size.width, height: geo.size.height)
         }
@@ -351,10 +377,15 @@ struct LiquidGlassShape: View {
 struct GlassNoiseTexture: View {
     var body: some View {
         Canvas { context, size in
-            for _ in 0..<800 {
-                let x = CGFloat.random(in: 0...size.width)
-                let y = CGFloat.random(in: 0...size.height)
-                let opacity = Double.random(in: 0.3...1.0)
+            guard size.width > 0, size.height > 0 else { return }
+            for index in 0..<800 {
+                // Deterministic pseudo-random layout — stable across redraws (PRF-7)
+                let xSeed = Double((index * 73) % 997) / 997.0
+                let ySeed = Double((index * 131) % 991) / 991.0
+                let opacitySeed = Double((index * 17) % 100) / 100.0
+                let x = CGFloat(xSeed) * size.width
+                let y = CGFloat(ySeed) * size.height
+                let opacity = 0.3 + opacitySeed * 0.7
 
                 context.fill(
                     Circle().path(in: CGRect(x: x, y: y, width: 1, height: 1)),
@@ -362,6 +393,7 @@ struct GlassNoiseTexture: View {
                 )
             }
         }
+        .drawingGroup()
     }
 }
 
