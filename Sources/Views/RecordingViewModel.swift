@@ -1001,16 +1001,27 @@ final class RecordingViewModel {
         await saveStatistics(session: updatedSession)
     }
 
-    /// Handle audio level update - detect talking and manage inactivity timer
-    private func handleAudioLevel(_ level: Double) {
-        audioLevel = level
+    /// Handle audio level update - detect talking and manage inactivity timer.
+    /// UI-facing `audioLevel` writes are throttled to ~30 Hz (#PRF-1) so the
+    /// recording modal body is not invalidated on every audio buffer.
+    private var lastAudioLevelPublish: ContinuousClock.Instant?
+    private let audioLevelPublishInterval: Duration = .milliseconds(33)
 
-        // Detect if user is talking (audio above threshold)
+    private func handleAudioLevel(_ level: Double) {
+        // Detect if user is talking (audio above threshold) — always evaluated.
         if level >= Constants.Audio.talkingThreshold {
             lastTalkingTime = Date()
             AppLogger.trace(AppLogger.viewModel, "[\(viewModelId)] Talking detected, level=\(String(format: "%.3f", level))")
         }
-        // Note: Legacy short-pause silence timer disabled in favor of 30-second inactivity timeout
+
+        let clock = ContinuousClock()
+        let now = clock.now
+        if let last = lastAudioLevelPublish,
+           now < last.advanced(by: audioLevelPublishInterval) {
+            return
+        }
+        lastAudioLevelPublish = now
+        audioLevel = level
     }
 
     /// Start the inactivity timer that checks for prolonged silence
