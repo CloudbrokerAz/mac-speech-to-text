@@ -61,8 +61,9 @@ enum AppLogger {
     ) {
         guard currentLevel >= .trace else { return }
         let fileName = (file as NSString).lastPathComponent
+        let evaluated = message()
         logger.debug(
-            "TRACE [\(fileName, privacy: .public):\(line, privacy: .public)] \(function, privacy: .private) - \(message(), privacy: .private)"
+            "TRACE [\(fileName, privacy: .public):\(line, privacy: .public)] \(function, privacy: .private) - \(evaluated, privacy: .private)"
         )
     }
 
@@ -74,7 +75,8 @@ enum AppLogger {
     ) {
         guard currentLevel >= .debug else { return }
         let fileName = (file as NSString).lastPathComponent
-        logger.debug("DEBUG [\(fileName, privacy: .public):\(line, privacy: .public)] \(message(), privacy: .private)")
+        let evaluated = message()
+        logger.debug("DEBUG [\(fileName, privacy: .public):\(line, privacy: .public)] \(evaluated, privacy: .private)")
     }
 
     static func info(
@@ -85,7 +87,8 @@ enum AppLogger {
     ) {
         guard currentLevel >= .info else { return }
         let fileName = (file as NSString).lastPathComponent
-        logger.info("INFO [\(fileName, privacy: .public):\(line, privacy: .public)] \(message(), privacy: .private)")
+        let evaluated = message()
+        logger.info("INFO [\(fileName, privacy: .public):\(line, privacy: .public)] \(evaluated, privacy: .private)")
     }
 
     static func warning(
@@ -96,7 +99,8 @@ enum AppLogger {
     ) {
         guard currentLevel >= .warning else { return }
         let fileName = (file as NSString).lastPathComponent
-        logger.warning("WARN [\(fileName, privacy: .public):\(line, privacy: .public)] \(message(), privacy: .private)")
+        let evaluated = message()
+        logger.warning("WARN [\(fileName, privacy: .public):\(line, privacy: .public)] \(evaluated, privacy: .private)")
     }
 
     static func error(
@@ -106,7 +110,8 @@ enum AppLogger {
         line: Int = #line
     ) {
         let fileName = (file as NSString).lastPathComponent
-        logger.error("ERROR [\(fileName, privacy: .public):\(line, privacy: .public)] \(message(), privacy: .private)")
+        let evaluated = message()
+        logger.error("ERROR [\(fileName, privacy: .public):\(line, privacy: .public)] \(evaluated, privacy: .private)")
     }
 
     static func lifecycle(
@@ -120,8 +125,9 @@ enum AppLogger {
         let fileName = (file as NSString).lastPathComponent
         let typeName = String(describing: type(of: object))
         let address = Unmanaged.passUnretained(object).toOpaque()
+        let evaluated = event()
         logger.debug(
-            "LIFECYCLE [\(fileName, privacy: .public):\(line, privacy: .public)] \(typeName, privacy: .public)@\(String(describing: address), privacy: .public) - \(event(), privacy: .private)"
+            "LIFECYCLE [\(fileName, privacy: .public):\(line, privacy: .public)] \(typeName, privacy: .public)@\(String(describing: address), privacy: .public) - \(evaluated, privacy: .private)"
         )
     }
 

@@ -330,7 +330,7 @@ final class ClinicalNotesModelLifecycleController {
         let token = UUID()
         let task: Task<Void, Never> = Task { @MainActor [weak self] in
             guard let self else { return }
-            await host.runDownloadAndWarmup(downloader: downloader, provider: mlxProvider)
+            await self.runDownloadAndWarmup(downloader: downloader, provider: mlxProvider)
         }
         host.clinicalNotesDownloadTask = (token: token, task: task)
         await task.value

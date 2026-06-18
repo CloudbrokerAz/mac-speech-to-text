@@ -296,7 +296,7 @@ public actor ModelDownloader {
     }
 
     private func persistReceipt(into modelDir: URL) async throws {
-        guard var receipt = loadedReceipt else {
+        if loadedReceipt == nil {
             // Build receipt from manifest files that exist on disk.
             var entries: [ModelVerificationReceipt.Entry] = []
             for file in manifest.files {
@@ -320,13 +320,13 @@ public actor ModelDownloader {
                 ))
             }
             guard entries.count == manifest.files.count else { return }
-            receipt = ModelVerificationReceipt(
+            loadedReceipt = ModelVerificationReceipt(
                 manifestRevision: manifest.revision,
                 modelId: manifest.modelId,
                 files: entries
             )
-            loadedReceipt = receipt
         }
+        guard let receipt = loadedReceipt else { return }
         let dest = modelDir.appendingPathComponent(ModelVerificationReceipt.fileName)
         let data = try JSONEncoder().encode(receipt)
         try data.write(to: dest, options: .atomic)

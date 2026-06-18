@@ -20,7 +20,7 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/FluidInference/FluidAudio.git",
-            revision: "4b4e3ddfa321085f7c0ac83ab6c4edd29bbc233f"
+            revision: "82a17b90d2b54c82b4562b776b0b61fb0ff964fe"
         ),
         .package(
             url: "https://github.com/nalexn/ViewInspector.git",

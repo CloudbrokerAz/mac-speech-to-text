@@ -10,7 +10,7 @@ struct AppLoggerPrivacyTests {
         let source = try loadLoggerSource()
         let publicMessageCount = source.components(separatedBy: "message, privacy: .public").count - 1
         #expect(publicMessageCount == 0)
-        #expect(source.contains("message(), privacy: .private)"))
+        #expect(source.contains("evaluated, privacy: .private)"))
     }
 
     @Test("Release builds default currentLevel to info")
