@@ -190,7 +190,9 @@ not a feature.
 
 ## CI skip list (current)
 
-CI runs the XCTest suite minus these classes (hardware-dependent). When
+Keep this list in lockstep with the `--skip` flags in
+`.github/workflows/ci.yml`'s `Run unit tests` step. CI runs the XCTest
+suite minus these classes (hardware-dependent or host-sensitive). When
 an XCTest class migrates to Swift Testing and picks up
 `.requiresHardware`, remove it from the list:
 
@@ -199,6 +201,8 @@ an XCTest class migrates to Swift Testing and picks up
 - `TextInsertionServiceTests` — `CGEventPost` + display server
 - `VoiceTriggerMonitoringServiceTests` — transitively needs real mic
 - `WakeWordServiceTests` — reads real WAV fixtures
+- `KeychainSecureStoreTests` — real macOS Keychain (Swift Testing
+  `.requiresHardware`; skipped by name until #31 lands `--skip-tag`)
 - `GeneralSectionPersistenceTests` — shared-UserDefaults race under `--parallel` (fix tracked in #32)
 - `SafetyDisclaimerSnapshotTests` — PNG goldens recorded on macOS-26; CI is macOS-15
 - `ReviewScreenSnapshotTests` — same as above

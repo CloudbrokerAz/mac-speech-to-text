@@ -158,10 +158,10 @@ jobs:
 
       # Unit tests — the GitHub Actions runner has no microphone, no
       # Accessibility (TCC) grant, no display server, and no user keychain.
-      # Classes that exercise those APIs are skipped here and run on the
-      # remote Mac via the pre-push hook instead. The by-name skip list is
-      # temporary; it migrates to a tag filter once the Swift Testing tag
-      # scheme lands (see the testing framework EPIC).
+      # Hardware-dependent and host-sensitive classes are skipped here and
+      # run on the remote Mac via the pre-push hook instead. Keep this list
+      # in lockstep with `.claude/references/testing-conventions.md` §
+      # "CI skip list (current)" until #31 lands `--skip-tag requiresHardware`.
       #
       # Skipped classes and why:
       #   AudioCaptureServiceTests          AVAudioEngine.start (real mic)
@@ -169,9 +169,10 @@ jobs:
       #   TextInsertionServiceTests         CGEventPost + display server
       #   VoiceTriggerMonitoringServiceTests transitively needs real mic
       #   WakeWordServiceTests              reads real WAV fixtures from models
-      #   KeychainSecureStoreTests          real macOS Keychain — Swift Testing suite
-      #                                     tagged .requiresHardware; will migrate to
-      #                                     --skip-tag requiresHardware once #31 lands.
+      #   KeychainSecureStoreTests          real macOS Keychain — Swift Testing
+      #                                     suite tagged .requiresHardware
+      #   GeneralSectionPersistenceTests    shared-UserDefaults race under
+      #                                     --parallel (fix tracked in #32)
       #   SafetyDisclaimerSnapshotTests     PNG goldens recorded on macOS-26 dev /
       #   ReviewScreenSnapshotTests         remote-Mac pre-push host; CI runner is
       #                                     macos-15 so font hinting + Core Animation
@@ -192,6 +193,7 @@ jobs:
             --skip VoiceTriggerMonitoringServiceTests \
             --skip WakeWordServiceTests \
             --skip KeychainSecureStoreTests \
+            --skip GeneralSectionPersistenceTests \
             --skip SafetyDisclaimerSnapshotTests \
             --skip ReviewScreenSnapshotTests 2>&1 | tee test.log
 
