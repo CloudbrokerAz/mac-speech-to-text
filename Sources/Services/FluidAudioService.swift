@@ -118,6 +118,12 @@ actor FluidAudioService: FluidAudioServiceProtocol {
     private var transcribeInFlight: Bool = false
     private var transcribeWaiters: [CheckedContinuation<Void, Error>] = []
 
+    /// Coalesces concurrent `initialize` callers onto one load task (CON-4).
+    /// Without this, two overlapping callers both pass `guard !isInitialized`
+    /// before the first `await AsrModels.downloadAndLoad` and each run the
+    /// full multi-hundred-MB model fetch.
+    private var initializeInFlight: Task<Void, Error>?
+
     private var currentLanguage: String = "en"
     private var models: AsrModels?
     private var isInitialized = false
@@ -134,6 +140,13 @@ actor FluidAudioService: FluidAudioServiceProtocol {
     /// `.zero` in production via the public `init()`.
     private let transcribeSimulatedDelay: Duration
 
+    /// Test-only delay injected at the top of `runInitialize` (after slot
+    /// acquisition). When non-zero, the active initialize holds the
+    /// in-flight task long enough for coalescing tests to force a second
+    /// caller onto the wait path. Always `.zero` in production via the
+    /// public `init()`.
+    private let initializeSimulatedDelay: Duration
+
     init() {
         self.init(simulatedError: LaunchArguments.simulatedError)
     }
@@ -144,11 +157,13 @@ actor FluidAudioService: FluidAudioServiceProtocol {
     /// past the slot synchronously).
     internal init(
         simulatedError: SimulatedErrorType?,
-        transcribeSimulatedDelay: Duration = .zero
+        transcribeSimulatedDelay: Duration = .zero,
+        initializeSimulatedDelay: Duration = .zero
     ) {
         serviceId = UUID().uuidString.prefix(8).description
         self.simulatedError = simulatedError
         self.transcribeSimulatedDelay = transcribeSimulatedDelay
+        self.initializeSimulatedDelay = initializeSimulatedDelay
         AppLogger.service.debug("FluidAudioService[\(self.serviceId, privacy: .public)] created")
         if let error = simulatedError {
             AppLogger.service.debug("FluidAudioService[\(self.serviceId, privacy: .public)] will simulate error: \(error.rawValue, privacy: .public)")
@@ -157,7 +172,27 @@ actor FluidAudioService: FluidAudioServiceProtocol {
 
     /// Initialize FluidAudio with specified language
     func initialize(language: String = "en") async throws {
+        if let inFlight = initializeInFlight {
+            try await inFlight.value
+            return
+        }
+
+        let task = Task<Void, Error> {
+            try await self.runInitialize(language: language)
+        }
+        initializeInFlight = task
+        defer { initializeInFlight = nil }
+        try await task.value
+    }
+
+    /// Body of `initialize(language:)`. Always reached via the in-flight
+    /// task coalescer above — never call directly.
+    private func runInitialize(language: String) async throws {
         AppLogger.info(AppLogger.service, "[\(serviceId)] initialize(language: \(language)) called")
+
+        // Test-only: hold the in-flight task long enough for coalescing
+        // tests to force a second caller onto the shared task.
+        try await applyInitializeSimulatedDelay()
 
         // Check for simulated model loading error
         if simulatedError == .modelLoading {
@@ -400,6 +435,13 @@ actor FluidAudioService: FluidAudioServiceProtocol {
         try await Task.sleep(for: transcribeSimulatedDelay)
     }
 
+    /// Test-only seam used by `runInitialize` to hold the in-flight task
+    /// for `initializeSimulatedDelay` before doing any work.
+    private func applyInitializeSimulatedDelay() async throws {
+        guard initializeSimulatedDelay != .zero else { return }
+        try await Task.sleep(for: initializeSimulatedDelay)
+    }
+
     /// Switch to a different language
     /// Note: Parakeet TDT v3 is multilingual, so no model reload is needed
     func switchLanguage(to language: String) async throws {
@@ -449,6 +491,7 @@ actor FluidAudioService: FluidAudioServiceProtocol {
         asrManager = nil
         models = nil
         isInitialized = false
+        initializeInFlight = nil
         currentLanguage = "en"
         AppLogger.debug(AppLogger.service, "[\(serviceId)] Shutdown complete")
     }
