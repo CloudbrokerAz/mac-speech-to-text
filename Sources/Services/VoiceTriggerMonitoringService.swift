@@ -83,12 +83,12 @@ final class VoiceTriggerMonitoringService {
     @ObservationIgnored private let serviceId: String
 
     /// Flag to prevent double state transitions
-    @ObservationIgnored private var isTransitioning: Bool = false
+    @ObservationIgnored private var internalGuard: VoiceTriggerInternalGuard = .none
 
     /// Synchronous guard against multiple silence/max-duration timers
     /// enqueueing `handleSilenceTimeout` before the first handler runs
     /// (CON-5). Set before spawning the handler Task; cleared in defer.
-    @ObservationIgnored private var isHandlingTimeout: Bool = false
+    /// Folded into `internalGuard` (#ARC-10).
 
     /// Current voice trigger configuration (cached)
     @ObservationIgnored private var configuration: VoiceTriggerConfiguration = .default
@@ -160,7 +160,7 @@ final class VoiceTriggerMonitoringService {
     func startMonitoring() async throws {
         AppLogger.info(AppLogger.service, "[\(serviceId)] startMonitoring() called, state=\(state.description)")
 
-        guard !isTransitioning else {
+        guard internalGuard != .transitioning else {
             AppLogger.warning(AppLogger.service, "[\(serviceId)] startMonitoring: transition in progress")
             throw VoiceTriggerError.wakeWordInitFailed("Transition already in progress")
         }
@@ -170,8 +170,8 @@ final class VoiceTriggerMonitoringService {
             throw VoiceTriggerError.wakeWordInitFailed("Already monitoring")
         }
 
-        isTransitioning = true
-        defer { isTransitioning = false }
+        internalGuard = .transitioning
+        defer { internalGuard = .none }
 
         // Load configuration
         let settings = settingsService.load()
@@ -280,7 +280,7 @@ final class VoiceTriggerMonitoringService {
         recoveryTask?.cancel()
         recoveryTask = nil
 
-        isHandlingTimeout = false
+        internalGuard = .none
 
         cancelFluidAudioIdleEviction()
 
@@ -568,8 +568,8 @@ final class VoiceTriggerMonitoringService {
         }
 
         if silenceDuration >= threshold {
-            guard !isHandlingTimeout else { return }
-            isHandlingTimeout = true
+            guard self?.internalGuard != .handlingTimeout else { return }
+            self?.internalGuard = .handlingTimeout
             silenceLogCounter = 0
             AppLogger.info(
                 AppLogger.service,
@@ -586,7 +586,11 @@ final class VoiceTriggerMonitoringService {
             deinitMaxDurationTimer = nil
 
             Task { @MainActor [weak self] in
-                defer { self?.isHandlingTimeout = false }
+                defer {
+                    if self?.internalGuard == .handlingTimeout {
+                        self?.internalGuard = .none
+                    }
+                }
                 await self?.handleSilenceTimeout()
             }
         }
@@ -621,8 +625,8 @@ final class VoiceTriggerMonitoringService {
         let timer = Timer.scheduledTimer(withTimeInterval: configuration.maxRecordingDuration, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                guard !self.isHandlingTimeout else { return }
-                self.isHandlingTimeout = true
+                guard self.internalGuard != .handlingTimeout else { return }
+                self.internalGuard = .handlingTimeout
                 AppLogger.info(AppLogger.service, "[\(self.serviceId)] Max recording duration reached")
 
                 self.silenceTimer?.invalidate()
@@ -632,7 +636,11 @@ final class VoiceTriggerMonitoringService {
                 self.maxDurationTimer = nil
                 self.deinitMaxDurationTimer = nil
 
-                defer { self.isHandlingTimeout = false }
+                defer {
+                    if self.internalGuard == .handlingTimeout {
+                        self.internalGuard = .none
+                    }
+                }
                 await self.handleSilenceTimeout()
             }
         }
