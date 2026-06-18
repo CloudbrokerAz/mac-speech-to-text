@@ -108,6 +108,39 @@ struct ModelDownloaderTests {
         }
     }
 
+    @Test("verification receipt written on successful ensure")
+    func verificationReceipt_persistedAfterEnsure() async throws {
+        let base = try Self.makeTempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let modelDir = base.appendingPathComponent("hello-model", isDirectory: true)
+        try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
+        let weightsURL = modelDir.appendingPathComponent("weights.bin")
+        try Self.helloPayload.write(to: weightsURL)
+
+        try await URLProtocolStubGate.shared.withGate {
+            let config = URLProtocolStub.install { _ in
+                Issue.record("Downloader should not have made any requests")
+                throw URLError(.cancelled)
+            }
+            defer { URLProtocolStub.reset() }
+
+            let downloader = ModelDownloader(
+                manifest: Self.helloManifest(),
+                baseDirectory: base,
+                session: URLSession(configuration: config)
+            )
+            _ = try await downloader.ensureModelDownloaded()
+
+            let receiptURL = modelDir.appendingPathComponent(ModelVerificationReceipt.fileName)
+            #expect(FileManager.default.fileExists(atPath: receiptURL.path))
+            let data = try Data(contentsOf: receiptURL)
+            let receipt = try JSONDecoder().decode(ModelVerificationReceipt.self, from: data)
+            #expect(receipt.files.count == 1)
+            #expect(receipt.files[0].path == "weights.bin")
+        }
+    }
+
     @Test("emits .completed exactly once on the no-download path")
     func noDownloadProgressEvents() async throws {
         let base = try Self.makeTempBase()

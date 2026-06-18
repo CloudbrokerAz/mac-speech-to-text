@@ -82,6 +82,10 @@ public actor ModelDownloader {
     private let session: URLSession
     private let logger: Logger
 
+    /// Cached verification receipt for the active model directory (PRF-3).
+    /// Avoids re-hashing multi-GB weights when size + mtime + revision unchanged.
+    private var loadedReceipt: ModelVerificationReceipt?
+
     /// - Parameters:
     ///   - manifest: pinned `ModelManifest` (typically loaded from
     ///     `Resources/Models/<model-dir>/manifest.json` via `Bundle.main`).
@@ -151,8 +155,10 @@ public actor ModelDownloader {
         progress: ProgressCallback? = nil
     ) async throws -> URL {
         let modelDir = try makeModelDirectory()
+        loadedReceipt = Self.loadReceipt(from: modelDir)
         let needsBytes = try await bytesToDownload(into: modelDir)
         if needsBytes == 0 {
+            try await persistReceipt(into: modelDir)
             logger.info("Model already complete at \(modelDir.path, privacy: .public)")
             progress?(.completed(directory: modelDir))
             return modelDir
@@ -173,6 +179,7 @@ public actor ModelDownloader {
             progress?(.fileVerified(path: file.path))
         }
 
+        try await persistReceipt(into: modelDir)
         progress?(.completed(directory: modelDir))
         logger.info("Model download verified at \(modelDir.path, privacy: .public)")
         return modelDir
@@ -232,11 +239,103 @@ public actor ModelDownloader {
         guard let size = attrs?[.size] as? Int64, size == file.size else {
             return false
         }
+
+        if let receipt = loadedReceipt,
+           receipt.manifestRevision == manifest.revision,
+           receipt.modelId == manifest.modelId,
+           let entry = receipt.files.first(where: { $0.path == file.path }),
+           entry.size == size {
+            let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+            if abs(mtime - entry.modificationTime) < 1.0 {
+                if let expectedHash = file.sha256, !expectedHash.isEmpty {
+                    if let recorded = entry.sha256,
+                       recorded.caseInsensitiveCompare(expectedHash) == .orderedSame {
+                        return true
+                    }
+                } else {
+                    return true
+                }
+            }
+        }
+
         guard let expectedHash = file.sha256, !expectedHash.isEmpty else {
             return true
         }
         let actual = try await Self.sha256Hex(of: url)
-        return actual.caseInsensitiveCompare(expectedHash) == .orderedSame
+        let matches = actual.caseInsensitiveCompare(expectedHash) == .orderedSame
+        if matches {
+            recordVerifiedFile(file, at: url, sha256: actual)
+        }
+        return matches
+    }
+
+    private func recordVerifiedFile(_ file: ModelFile, at url: URL, sha256: String?) {
+        let mtime = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        let entry = ModelVerificationReceipt.Entry(
+            path: file.path,
+            size: file.size,
+            modificationTime: mtime?.timeIntervalSince1970 ?? 0,
+            sha256: sha256
+        )
+        if loadedReceipt == nil {
+            loadedReceipt = ModelVerificationReceipt(
+                manifestRevision: manifest.revision,
+                modelId: manifest.modelId,
+                files: [entry]
+            )
+        } else {
+            var files = loadedReceipt?.files ?? []
+            files.removeAll { $0.path == file.path }
+            files.append(entry)
+            loadedReceipt = ModelVerificationReceipt(
+                manifestRevision: manifest.revision,
+                modelId: manifest.modelId,
+                files: files
+            )
+        }
+    }
+
+    private func persistReceipt(into modelDir: URL) async throws {
+        guard var receipt = loadedReceipt else {
+            // Build receipt from manifest files that exist on disk.
+            var entries: [ModelVerificationReceipt.Entry] = []
+            for file in manifest.files {
+                let url = modelDir.appendingPathComponent(file.path)
+                guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+                      let size = attrs[.size] as? Int64, size == file.size else {
+                    continue
+                }
+                let mtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+                let hash: String?
+                if let expected = file.sha256, !expected.isEmpty {
+                    hash = expected
+                } else {
+                    hash = nil
+                }
+                entries.append(ModelVerificationReceipt.Entry(
+                    path: file.path,
+                    size: size,
+                    modificationTime: mtime,
+                    sha256: hash
+                ))
+            }
+            guard entries.count == manifest.files.count else { return }
+            receipt = ModelVerificationReceipt(
+                manifestRevision: manifest.revision,
+                modelId: manifest.modelId,
+                files: entries
+            )
+            loadedReceipt = receipt
+        }
+        let dest = modelDir.appendingPathComponent(ModelVerificationReceipt.fileName)
+        let data = try JSONEncoder().encode(receipt)
+        try data.write(to: dest, options: .atomic)
+    }
+
+    private static func loadReceipt(from modelDir: URL) -> ModelVerificationReceipt? {
+        let url = modelDir.appendingPathComponent(ModelVerificationReceipt.fileName)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(ModelVerificationReceipt.self, from: data)
     }
 
     /// Download + verify + atomic-rename a single file.
@@ -375,6 +474,21 @@ public actor ModelDownloader {
                 try? FileManager.default.removeItem(at: partialURL)
                 throw DownloaderError.hashMismatch(path: file.path)
             }
+            let dest = modelDir.appendingPathComponent(file.path)
+            do {
+                if FileManager.default.fileExists(atPath: dest.path) {
+                    try FileManager.default.removeItem(at: dest)
+                }
+                try FileManager.default.moveItem(at: partialURL, to: dest)
+            } catch {
+                try? FileManager.default.removeItem(at: partialURL)
+                throw DownloaderError.io(
+                    path: file.path,
+                    kind: String(describing: type(of: error))
+                )
+            }
+            recordVerifiedFile(file, at: dest, sha256: actualHex)
+            return
         }
 
         let dest = modelDir.appendingPathComponent(file.path)
@@ -393,6 +507,7 @@ public actor ModelDownloader {
                 kind: String(describing: type(of: error))
             )
         }
+        recordVerifiedFile(file, at: dest, sha256: nil)
     }
 
     /// Common HTTP-success guard. Pulled out so the parent download
@@ -550,5 +665,24 @@ public actor ModelDownloader {
             let digest = hasher.finalize()
             return digest.map { String(format: "%02x", $0) }.joined()
         }.value
+    }
+}
+
+// MARK: - Verification receipt (PRF-3)
+
+/// On-disk receipt keyed on manifest revision + per-file size/mtime/sha256
+/// so repeat launches skip re-hashing intact multi-GB weights.
+struct ModelVerificationReceipt: Codable, Sendable, Equatable {
+    static let fileName = ".verification-receipt.json"
+
+    let manifestRevision: String
+    let modelId: String
+    let files: [Entry]
+
+    struct Entry: Codable, Sendable, Equatable {
+        let path: String
+        let size: Int64
+        let modificationTime: TimeInterval
+        let sha256: String?
     }
 }
