@@ -116,8 +116,8 @@ enum AccessibilityIDs {
         static let container = "glassRecordingOverlayContainer"
         static let statusText = "overlayStatusText"
         static let timer = "overlayTimer"
-        /// Canonical name for the waveform view (resolves naming inconsistency)
-        static let waveform = "dynamicWaveformView"
+        /// Canonical waveform accessibility identifier on LiquidGlassRecordingModal
+        static let waveform = "waveformView"
         static let recordingDot = "recordingIndicatorDot"
         static let transcribingSpinner = "transcribingSpinner"
     }
