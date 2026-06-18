@@ -1036,7 +1036,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let contentView = LiquidGlassRecordingModal(viewModel: viewModel)
             .onDisappear { [weak self] in
                 AppLogger.app.debug("showRecordingModal: LiquidGlassRecordingModal disappeared")
-                AppLogger.app.info("[#109-probe] modal.onDisappear: isEnabled(.clinicalNotesRecord)=\(KeyboardShortcuts.isEnabled(for: .clinicalNotesRecord), privacy: .public) clinicalMode=\(clinicalMode, privacy: .public)")
                 // Belt: trigger the same cleanup the willClose observer runs.
                 // Either path may fire first; the cleanup is idempotent.
                 // .onDisappear is the SwiftUI-native path but is unreliable
@@ -1135,8 +1134,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// first; the second is a fast no-op once `recordingWindow` is nil. #109.
     @MainActor
     private func cleanupAfterRecordingModalClose(reason: String) {
-        AppLogger.app.info("[#109-probe] cleanupAfterRecordingModalClose: reason=\(reason, privacy: .public) recordingWindow==nil=\(self.recordingWindow == nil, privacy: .public) isEnabled(.clinicalNotesRecord)=\(KeyboardShortcuts.isEnabled(for: .clinicalNotesRecord), privacy: .public)")
-
         // Drop the willClose observer first so a re-entrant close (e.g.
         // .onDisappear → window.close() → willClose fires after we already
         // ran via .onDisappear) can't queue a second cleanup.
