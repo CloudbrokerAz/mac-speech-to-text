@@ -1,0 +1,16 @@
+Here is the draft note:
+
+```json
+{
+  "subjective": "Synthetic subjective line.",
+  "objective": "Synthetic objective line.",
+  "assessment": "Synthetic assessment line.",
+  "plan": "Synthetic plan line.",
+  "manipulations": [
+    { "name": "Activator", "confidence": 0.75 }
+  ],
+  "excluded_content": []
+}
+```
+
+Let me know if you need changes.
