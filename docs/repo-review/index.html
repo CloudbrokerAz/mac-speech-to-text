@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Repo Review — mac-speech-to-text — June 2026</title>
+<style>
+  /* ============================================================
+     Theme: matches docs/presentation/index.html
+     Warm parchment canvas, terracotta accent, serif-500 headlines,
+     warm-only neutrals, ring shadows. No cool grays. No gradients.
+     ============================================================ */
+  :root {
+    --parchment:   #f5f4ed;
+    --ivory:       #faf9f5;
+    --white:       #ffffff;
+    --sand:        #e8e6dc;
+    --near-black:  #141413;
+    --dark-surface:#30302e;
+    --terracotta:  #c96442;
+    --coral:       #d97757;
+    --charcoal:    #4d4c48;
+    --olive:       #5e5d59;
+    --stone:       #87867f;
+    --dark-warm:   #3d3d3a;
+    --silver:      #b0aea5;
+    --border-cream:#f0eee6;
+    --border-warm: #e8e6dc;
+    --ring-warm:   #d1cfc5;
+    --focus-blue:  #3898ec;
+    --serif: Georgia, 'Iowan Old Style', 'Times New Roman', serif;
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --mono: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+    --spring: cubic-bezier(0.34, 1.18, 0.64, 1);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--parchment);
+    color: var(--near-black);
+    font-family: var(--sans);
+    line-height: 1.6;
+  }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 36px; }
+
+  /* ---------- Type ---------- */
+  .overline {
+    font: 400 12px/1.6 var(--sans);
+    letter-spacing: 2.2px;
+    text-transform: uppercase;
+    color: var(--stone);
+    margin-bottom: 22px;
+  }
+  .overline b { color: var(--terracotta); font-weight: 500; }
+
+  h1 { font: 500 56px/1.12 var(--serif); letter-spacing: -0.5px; max-width: 900px; }
+  h2 { font: 500 38px/1.18 var(--serif); letter-spacing: -0.3px; margin-bottom: 10px; }
+  .lede { font: 400 19px/1.65 var(--sans); color: var(--olive); max-width: 780px; }
+
+  .uline { position: relative; white-space: nowrap; }
+  .uline svg {
+    position: absolute; left: -1%; bottom: -0.16em;
+    width: 102%; height: 0.34em; overflow: visible;
+  }
+  .uline svg path { fill: none; stroke: var(--terracotta); stroke-width: 5; stroke-linecap: round; }
+
+  .mono {
+    font: 400 13.5px/1.6 var(--mono);
+    letter-spacing: -0.32px;
+    background: var(--ivory);
+    border-radius: 8px;
+    padding: 2px 8px;
+    box-shadow: var(--ring-warm) 0 0 0 1px;
+    color: var(--charcoal);
+  }
+  code {
+    font: 400 0.92em/1.5 var(--mono);
+    background: var(--parchment);
+    border-radius: 5px;
+    padding: 1px 5px;
+    color: var(--charcoal);
+  }
+
+  /* ---------- Hero ---------- */
+  header.hero { padding: 84px 0 48px; }
+  .title-foot {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    font: 400 15px/1.4 var(--sans); color: var(--olive); margin-top: 30px;
+  }
+  .title-foot .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--ring-warm); }
+
+  .reveal { opacity: 0; transform: translateY(12px); animation: rise .6s var(--spring) forwards; }
+  .reveal.d1 { animation-delay: .08s; } .reveal.d2 { animation-delay: .2s; }
+  .reveal.d3 { animation-delay: .34s; } .reveal.d4 { animation-delay: .5s; }
+  @keyframes rise { to { opacity: 1; transform: translateY(0); } }
+
+  /* ---------- Stat grid ---------- */
+  .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin: 34px 0 8px; }
+  .stat {
+    background: var(--ivory);
+    border: 1px solid var(--border-cream);
+    border-radius: 12px;
+    padding: 18px 20px 15px;
+  }
+  .stat .v { font: 500 36px/1.1 var(--serif); letter-spacing: -0.5px; }
+  .stat.hot .v { color: var(--terracotta); }
+  .stat.dark { background: var(--dark-surface); border-color: var(--dark-surface); }
+  .stat.dark .v { color: var(--coral); }
+  .stat.dark .k { color: var(--silver); }
+  .stat .k { font: 400 13.5px/1.4 var(--sans); color: var(--olive); margin-top: 5px; }
+
+  /* ---------- Sticky nav ---------- */
+  nav#topnav {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(245,244,237,0.92);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border-warm);
+    padding: 12px 0;
+  }
+  nav#topnav .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  nav#topnav a {
+    font: 500 13.5px/1.25 var(--sans);
+    color: var(--charcoal); text-decoration: none;
+    padding: 7px 14px; border-radius: 20px;
+  }
+  nav#topnav a:hover { background: var(--sand); }
+  nav#topnav .spacer { flex: 1; }
+
+  /* ---------- Severity filter chips ---------- */
+  .filter-chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: var(--ivory); color: var(--charcoal);
+    font: 500 13px/1.25 var(--sans);
+    padding: 6px 13px; border-radius: 20px;
+    box-shadow: var(--ring-warm) 0 0 0 1px;
+    border: none; cursor: pointer; transition: all .18s ease;
+  }
+  .filter-chip::before { content: ''; width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .filter-chip[data-sev="critical"]::before { background: var(--near-black); }
+  .filter-chip[data-sev="high"]::before { background: var(--terracotta); }
+  .filter-chip[data-sev="medium"]::before { background: var(--coral); opacity: .55; }
+  .filter-chip[data-sev="low"]::before { background: var(--silver); }
+  .filter-chip.off { opacity: 0.38; box-shadow: var(--border-warm) 0 0 0 1px; }
+  .filter-chip:focus-visible { outline: 2px solid var(--focus-blue); outline-offset: 1px; }
+
+  /* ---------- Sections ---------- */
+  section.dim { padding: 56px 0 12px; }
+  section.dim .head { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  section.dim .count { font: 400 15px/1.4 var(--sans); color: var(--stone); }
+  section.dim .blurb { font: 400 16px/1.6 var(--sans); color: var(--olive); max-width: 820px; margin: 6px 0 26px; }
+
+  /* ---------- Finding cards ---------- */
+  .findings { display: flex; flex-direction: column; gap: 14px; }
+  .finding {
+    background: var(--ivory);
+    border: 1px solid var(--border-cream);
+    border-radius: 14px;
+    box-shadow: rgba(0,0,0,0.04) 0 3px 18px;
+    padding: 20px 24px 18px;
+  }
+  .finding.hidden { display: none; }
+  .f-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .sev {
+    font: 500 11.5px/1 var(--sans); letter-spacing: 1px; text-transform: uppercase;
+    padding: 5px 11px; border-radius: 16px;
+  }
+  .sev.critical { background: var(--near-black); color: var(--coral); }
+  .sev.high { background: var(--terracotta); color: var(--ivory); }
+  .sev.medium { background: var(--sand); color: var(--charcoal); box-shadow: var(--ring-warm) 0 0 0 1px; }
+  .sev.low { background: var(--ivory); color: var(--stone); box-shadow: var(--ring-warm) 0 0 0 1px; }
+  .f-cat { font: 500 12px/1.4 var(--sans); letter-spacing: 1.2px; text-transform: uppercase; color: var(--stone); }
+  .f-effort { margin-left: auto; font: 500 12px/1 var(--mono); color: var(--stone); background: var(--parchment); padding: 5px 10px; border-radius: 14px; box-shadow: var(--border-warm) 0 0 0 1px; white-space: nowrap; }
+  .finding h3 { font: 500 21px/1.3 var(--serif); margin-bottom: 5px; }
+  .f-loc { font: 400 12.5px/1.6 var(--mono); color: var(--terracotta); letter-spacing: -0.2px; margin-bottom: 9px; word-break: break-all; }
+  .finding p { font: 400 14.5px/1.6 var(--sans); color: var(--olive); max-width: 920px; }
+  .finding p.fix { margin-top: 8px; color: var(--charcoal); }
+  .finding p.fix b { font-weight: 600; color: var(--near-black); }
+  .f-xref { margin-top: 9px; font: 400 12.5px/1.5 var(--sans); color: var(--stone); font-style: italic; }
+
+  /* ---------- Roadmap ---------- */
+  .roadmap { display: flex; flex-direction: column; gap: 10px; margin-top: 26px; }
+  .road-item {
+    display: flex; align-items: baseline; gap: 18px;
+    background: var(--ivory); border: 1px solid var(--border-cream);
+    border-radius: 12px; padding: 15px 22px 13px;
+  }
+  .road-item .n { font: 500 22px/1 var(--serif); color: var(--terracotta); flex: none; width: 34px; }
+  .road-item h4 { font: 500 17.5px/1.35 var(--serif); }
+  .road-item p { font: 400 13.5px/1.55 var(--sans); color: var(--olive); }
+  .road-item .tag { margin-left: auto; flex: none; font: 500 11.5px/1 var(--mono); color: var(--stone); background: var(--parchment); padding: 5px 10px; border-radius: 12px; box-shadow: var(--border-warm) 0 0 0 1px; white-space: nowrap; }
+
+  /* ---------- Good practices (dark band) ---------- */
+  section#good { background: var(--near-black); color: var(--ivory); padding: 64px 0 72px; margin-top: 64px; }
+  section#good .overline { color: var(--silver); }
+  section#good .overline b { color: var(--coral); }
+  section#good h2 { color: var(--ivory); }
+  section#good .blurb { color: var(--silver); font: 400 16px/1.6 var(--sans); max-width: 820px; margin: 6px 0 28px; }
+  .good-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .good {
+    background: var(--dark-surface);
+    border: 1px solid #3d3d3a;
+    border-radius: 14px;
+    padding: 18px 22px 16px;
+  }
+  .good h3 { font: 500 18px/1.3 var(--serif); color: var(--ivory); margin-bottom: 5px; }
+  .good h3 .tick { color: var(--coral); margin-right: 8px; }
+  .good p { font: 400 13.5px/1.55 var(--sans); color: var(--silver); }
+  .good .ref { font: 400 12px/1.5 var(--mono); color: var(--stone); letter-spacing: -0.2px; }
+
+  /* ---------- Methodology / footer ---------- */
+  footer { padding: 56px 0 80px; }
+  footer .card {
+    background: var(--ivory); border: 1px solid var(--border-cream);
+    border-radius: 16px; box-shadow: rgba(0,0,0,0.05) 0 4px 24px;
+    padding: 28px 34px;
+  }
+  footer h3 { font: 500 22px/1.3 var(--serif); margin-bottom: 10px; }
+  footer p, footer li { font: 400 14.5px/1.65 var(--sans); color: var(--olive); }
+  footer ul { list-style: none; margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+  footer li { padding-left: 18px; position: relative; }
+  footer li::before { content: '—'; position: absolute; left: 0; color: var(--ring-warm); }
+  footer .foot-meta { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 28px; font: 400 13.5px/1.4 var(--sans); color: var(--stone); }
+  footer .foot-meta .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--ring-warm); }
+
+  @media (max-width: 880px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .good-grid { grid-template-columns: 1fr; }
+    h1 { font-size: 42px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="overline reveal d1"><b>Repo review</b> · five parallel reviewers · security · concurrency · performance · architecture · testing</div>
+    <h1 class="reveal d2">Seventy findings,<br>
+      <span class="uline">one afternoon.<svg viewBox="0 0 200 12" preserveAspectRatio="none"><path d="M3 9 C 40 3, 80 11, 120 6 S 185 4, 197 8"/></svg></span>
+    </h1>
+    <p class="lede reveal d3" style="margin-top:26px">
+      <strong style="color:var(--near-black); font-weight:500">mac-speech-to-text</strong> — full-repo review of the
+      local-first speech-to-text app and its Clinical Notes Mode. Five independent review passes,
+      findings deduplicated and cross-validated. The headline: no critical security exposure,
+      but a handful of PHI hygiene gaps that are cheap to close, one real concurrency bug in the
+      wake-word path, and two lint guardrails that quietly aren't running.
+    </p>
+    <div class="title-foot reveal d4">
+      <span>Aaron Evans · Claude Code</span><span class="dot"></span><span>12 June 2026</span><span class="dot"></span>
+      <span class="mono">github.com/CloudbrokerAz/mac-speech-to-text</span>
+    </div>
+
+    <div class="stats reveal d4">
+      <div class="stat dark"><div class="v" id="stat-critical">–</div><div class="k">Critical</div></div>
+      <div class="stat hot"><div class="v" id="stat-high">–</div><div class="k">High</div></div>
+      <div class="stat"><div class="v" id="stat-medium">–</div><div class="k">Medium</div></div>
+      <div class="stat"><div class="v" id="stat-low">–</div><div class="k">Low</div></div>
+      <div class="stat hot"><div class="v" id="stat-quick">–</div><div class="k">Small-effort fixes (quick wins)</div></div>
+    </div>
+  </div>
+</header>
+
+<nav id="topnav">
+  <div class="wrap row">
+    <a href="#roadmap">Start here</a>
+    <a href="#security">Security &amp; PHI</a>
+    <a href="#concurrency">Concurrency</a>
+    <a href="#performance">Performance</a>
+    <a href="#architecture">Architecture</a>
+    <a href="#testing">Testing &amp; CI</a>
+    <a href="#good">Done well</a>
+    <span class="spacer"></span>
+    <button class="filter-chip" data-sev="critical">Critical</button>
+    <button class="filter-chip" data-sev="high">High</button>
+    <button class="filter-chip" data-sev="medium">Medium</button>
+    <button class="filter-chip" data-sev="low">Low</button>
+  </div>
+</nav>
+
+<!-- ════════ Start here ════════ -->
+<section class="dim" id="roadmap">
+  <div class="wrap">
+    <div class="overline">Chapter one — <b>start here</b></div>
+    <h2>Ten moves, ordered by impact over effort</h2>
+    <p class="blurb">If only one PR comes out of this report, make it #1 — it closes the only live PHI exposures and is almost entirely deletion.</p>
+    <div class="roadmap">
+      <div class="road-item"><div class="n">01</div><div><h4>Strip PHI from debug output</h4><p>Remove the transcript-leaking <code>print()</code> lines and the OSLog <code>text=</code> fragment (SEC-1, SEC-2). ~90 mechanical deletions; the safe <code>AppLogger</code> calls already exist beside them.</p></div><span class="tag">S · High</span></div>
+      <div class="road-item"><div class="n">02</div><div><h4>Wire up PHI clearing on quit + idle</h4><p>Call <code>sessionStore.clear()</code> from a <code>willTerminate</code> observer and drive the already-written <code>checkIdleTimeout()</code> from something real (SEC-4, SEC-5).</p></div><span class="tag">S–M · High</span></div>
+      <div class="road-item"><div class="n">03</div><div><h4>Flip AppLogger's privacy default</h4><p>Wrappers currently force <code>privacy: .public</code> on every message — the root cause behind finding #1. Default the dynamic message to <code>.private</code> (SEC-3).</p></div><span class="tag">M · High</span></div>
+      <div class="road-item"><div class="n">04</div><div><h4>Fix the wake-word reconfiguration race</h4><p>The one Critical: <code>updateKeywords</code> tears down the spotter across an <code>await</code> while frames keep arriving. Single-flight guard + ordered frame consumer fixes both CON-1 and CON-2.</p></div><span class="tag">M · Critical</span></div>
+      <div class="road-item"><div class="n">05</div><div><h4>Repair the two custom SwiftLint rules</h4><p>One doesn't exist, the other is configured to match only comments. The concurrency guardrails the docs promise are not actually running (TST-1, TST-2).</p></div><span class="tag">S–M · High</span></div>
+      <div class="road-item"><div class="n">06</div><div><h4>Stop re-hashing 5.2 GB on every launch</h4><p>First Generate-Notes of each launch streams and hashes the full model file even when intact. Persist a verified receipt keyed on size/mtime/revision (PRF-3).</p></div><span class="tag">M · High</span></div>
+      <div class="road-item"><div class="n">07</div><div><h4>Debounce settings writes, delete <code>synchronize()</code></h4><p>A slider drag is ~10–20 full-blob synchronous disk flushes (PRF-4). Smallest effort-to-win ratio in the performance set.</p></div><span class="tag">S · High</span></div>
+      <div class="road-item"><div class="n">08</div><div><h4>Pin FluidAudio</h4><p>The ASR engine tracks <code>branch: "main"</code> — flagged independently by three reviewers. Pin to a tag or revision (ARC-2).</p></div><span class="tag">S · High</span></div>
+      <div class="road-item"><div class="n">09</div><div><h4>Conceal the clipboard export path</h4><p>The SOAP-note copy fallback writes PHI to <code>NSPasteboard</code> with no concealed/transient type and no expiry — it outlives every other clearing mechanism (SEC-7).</p></div><span class="tag">S · Medium</span></div>
+      <div class="road-item"><div class="n">10</div><div><h4>Carve up AppState</h4><p>1,300 lines; ~700 are clinical-notes machinery. Extract a model-lifecycle controller and a Cliniko setup coordinator (ARC-1). The long-pole maintainability investment.</p></div><span class="tag">L · High</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════ Findings sections (rendered from data) ════════ -->
+<section class="dim" id="security">
+  <div class="wrap">
+    <div class="overline">Chapter two — <b>security &amp; PHI</b></div>
+    <div class="head"><h2>Security &amp; PHI</h2><span class="count" data-count="security"></span></div>
+    <p class="blurb">No committed secrets, no plaintext credentials, no non-TLS endpoints, and the Cliniko client's PHI discipline is genuinely good. The gaps are at the edges: debug logging, lifecycle clearing that was designed but never wired, and supply-chain hygiene in scripts and CI.</p>
+    <div class="findings" data-dim="security"></div>
+  </div>
+</section>
+
+<section class="dim" id="concurrency">
+  <div class="wrap">
+    <div class="overline">Chapter three — <b>concurrency</b></div>
+    <div class="head"><h2>Concurrency &amp; correctness</h2><span class="count" data-count="concurrency"></span></div>
+    <p class="blurb">The dreaded <code>@Observable</code> + actor-existential crash pattern is absent everywhere — the house rules are working. The real findings cluster in the wake-word path, plus a set of latent actor-reentrancy races currently masked by single-caller discipline in AppState.</p>
+    <div class="findings" data-dim="concurrency"></div>
+  </div>
+</section>
+
+<section class="dim" id="performance">
+  <div class="wrap">
+    <div class="overline">Chapter four — <b>performance</b></div>
+    <div class="head"><h2>Performance &amp; energy</h2><span class="count" data-count="performance"></span></div>
+    <p class="blurb">Two themes: multi-gigabyte ML models that are loaded carefully but never let go, and an always-on menu-bar app doing per-frame work it doesn't need to — eager log strings, polling timers, and whole-tree SwiftUI invalidation from audio-rate property writes.</p>
+    <div class="findings" data-dim="performance"></div>
+  </div>
+</section>
+
+<section class="dim" id="architecture">
+  <div class="wrap">
+    <div class="overline">Chapter five — <b>architecture</b></div>
+    <div class="head"><h2>Architecture &amp; enhancements</h2><span class="count" data-count="architecture"></span></div>
+    <p class="blurb">The service layer, error taxonomy, and type-safety patterns are strong. The debt is concentrated in one god object, ~2,600 lines of confirmed dead UI, and a set of user-facing gaps — localization, VoiceOver, software updates, and clinical onboarding — that matter for an app heading toward clinicians.</p>
+    <div class="findings" data-dim="architecture"></div>
+  </div>
+</section>
+
+<section class="dim" id="testing">
+  <div class="wrap">
+    <div class="overline">Chapter six — <b>testing &amp; CI</b></div>
+    <div class="head"><h2>Testing, CI &amp; tooling</h2><span class="count" data-count="testing"></span></div>
+    <p class="blurb">The test infrastructure is unusually sophisticated — but the two custom lint rules the docs lean on aren't actually enforcing anything, a few PHI/HTTP-bearing services lack direct tests, and several shell scripts have sharp edges.</p>
+    <div class="findings" data-dim="testing"></div>
+  </div>
+</section>
+
+<!-- ════════ Done well ════════ -->
+<section id="good">
+  <div class="wrap">
+    <div class="overline">Chapter seven — <b>credit where due</b></div>
+    <h2>What this codebase gets right</h2>
+    <p class="blurb">All five reviewers independently called out strengths. These patterns are worth protecting in review — several are better than what most production Swift apps ship.</p>
+    <div class="good-grid" id="good-grid"></div>
+  </div>
+</section>
+
+<!-- ════════ Methodology ════════ -->
+<footer>
+  <div class="wrap">
+    <div class="card">
+      <h3>Methodology</h3>
+      <p>Five independent review passes ran in parallel on 12 June 2026, each reading source directly (not just grepping), each scoped to one dimension and primed with the project's own hard rules from <span class="mono">AGENTS.md</span> and <span class="mono">.claude/references/</span>:</p>
+      <ul>
+        <li><b>Security &amp; PHI</b> — Cliniko layer, Keychain, logging tree, model-download integrity, scripts, CI, entitlements</li>
+        <li><b>Concurrency</b> — actors, <code>@Observable</code>, audio-thread callbacks, <code>nonisolated(unsafe)</code>, task lifecycle</li>
+        <li><b>Performance</b> — render loops, model residency, polling timers, audio pipeline, persistence I/O</li>
+        <li><b>Architecture</b> — layering, dead code, type safety, error surfacing, UX/a11y/i18n enhancement opportunities</li>
+        <li><b>Testing &amp; CI</b> — coverage gaps, test quality, workflow config, lint rules, shell scripts</li>
+      </ul>
+      <p style="margin-top:12px">Findings were deduplicated across reviewers; where two or more flagged the same issue independently it is noted on the card. Locked technical decisions (MLX runtime, Gemma 4, session-only persistence, Cliniko scope, testing stack) were excluded from scope — the one finding that touches a locked decision (PRF-2, model eviction) is explicitly marked as needing product sign-off. Every finding cites file:line and was confirmed in surrounding code; severities are the reviewers' calibrated ratings, not raw counts.</p>
+      <div class="foot-meta">
+        <span>Generated by Claude Code · five Opus subagents</span><span class="dot"></span>
+        <span>~118 source files · 94 test files · 20 scripts · 352-line CI workflow in scope</span><span class="dot"></span>
+        <span class="mono">docs/repo-review/index.html</span>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+const FINDINGS = [
+  /* ─────────── SECURITY & PHI ─────────── */
+  { id:"SEC-1", dim:"security", sev:"high", cat:"PHI leakage", effort:"S",
+    title:"Transcript text written to a public OSLog field",
+    loc:"Sources/Services/FluidAudioService.swift:375–378",
+    ev:"Every completed transcription logs <code>text=\\\"…\\\"</code> — the first 50 characters of the result. Because AppLogger stamps messages <code>privacy: .public</code> (SEC-3), clinical dictation lands in the unified log, persisted and readable via Console or <code>log collect</code>.",
+    fix:"Drop the <code>text=</code> fragment; log <code>chars=result.text.count</code> only." },
+  { id:"SEC-2", dim:"security", sev:"high", cat:"PHI leakage", effort:"M",
+    title:"Transcript and inserted text echoed to stdout via print()",
+    loc:"Sources/SpeechToTextApp/AppDelegate.swift:929 · Sources/Services/TextInsertionService.swift:41 · ~71 print() sites repo-wide",
+    ev:"<code>print(\"[DEBUG] Transcribed text: '…'\")</code> emits the entire transcript to stdout; the insert path leaks the first 50 chars. stdout has no OSLog privacy redaction. Most prints sit beside an existing safe AppLogger call — two parallel logging systems.",
+    fix:"Delete the [DEBUG] print/fflush lines (and the stale [#109-probe] instrumentation in HotkeyManager.swift:179–262). Where a value is needed, log only counts.",
+    xref:"Flagged independently by the security and architecture reviewers." },
+  { id:"SEC-3", dim:"security", sev:"high", cat:"PHI leakage — design footgun", effort:"M",
+    title:"AppLogger wrappers force privacy: .public on every message",
+    loc:"Sources/Utilities/Logger.swift:57–133",
+    ev:"Every convenience wrapper interpolates the caller's message as <code>\\(message, privacy: .public)</code>, inverting OSLog's safe default of .private. ~297 call sites currently pass structural values, but the type system offers no protection — this is what turns SEC-1 into a real leak.",
+    fix:"Default the dynamic message to <code>.private</code> (keep .public only on the structural file/line prefix), or require an explicit privacy parameter. Re-audit the three confirmed leak sites after." },
+  { id:"SEC-4", dim:"security", sev:"high", cat:"PHI lifecycle", effort:"S",
+    title:"In-memory PHI is not cleared on app quit",
+    loc:"Sources/SpeechToTextApp/AppDelegate.swift:193–263 · SessionStore.swift:11",
+    ev:"applicationWillTerminate runs eight cleanup steps but never calls <code>sessionStore.clear()</code> — SessionStore's own docs say it should. The only clear-on-teardown is ReviewWindow.windowWillClose, which isn't guaranteed on terminate, and doesn't cover an active session before the review window opens.",
+    fix:"Register an <code>NSApplication.willTerminateNotification</code> observer in AppState.init that calls clear() synchronously." },
+  { id:"SEC-5", dim:"security", sev:"high", cat:"PHI lifecycle", effort:"M",
+    title:"Idle-timeout PHI clearing is fully implemented dead code",
+    loc:"Sources/Services/ClinicalNotes/SessionStore.swift:182–191",
+    ev:"<code>checkIdleTimeout()</code> (30-minute default) has zero production callers — nothing observes resign-active and no timer polls it. An active ClinicalSession can sit in memory indefinitely; the documented 'cleared on inactivity' guarantee is unmet.",
+    fix:"Drive it from a <code>willResignActiveNotification</code> observer or a low-frequency timer owned by AppState/ReviewWindow." },
+  { id:"SEC-6", dim:"security", sev:"high", cat:"Supply chain", effort:"M",
+    title:"Remote installers and models fetched without checksum verification",
+    loc:".devcontainer/base-image/library-scripts/cloud-cli-tools.sh:54 · scripts/download-kws-model.sh:50–74",
+    ev:"<code>curl -sL … | sudo bash</code> from a redirector URL is root RCE on any MITM or endpoint compromise. The wake-word model tarball is fetched and extracted with no sha256 and no <code>--fail</code> — an HTTP error page or tampered artifact installs silently.",
+    fix:"Download → <code>sha256sum -c</code> against a pinned hash → install. Bring download-kws-model.sh up to llm-prefetch.sh's standard (which is exemplary)." },
+  { id:"SEC-7", dim:"security", sev:"medium", cat:"PHI leakage", effort:"S",
+    title:"SOAP note copied to NSPasteboard with no concealment and no expiry",
+    loc:"Sources/Services/ClinicalNotes/ExportFlowCoordinator.swift:118–122",
+    ev:"The export 'Copy to clipboard' fallback writes the full SOAP body to the general pasteboard. It survives session clear, quit, and idle timeout; is readable by clipboard managers; and can sync via Universal Clipboard. The one material deviation from the 'PHI in exactly two places' rule.",
+    fix:"Mark the write <code>org.nspasteboard.ConcealedType</code> (and TransientType), auto-clear after a timeout, and document the exception in phi-handling.md." },
+  { id:"SEC-8", dim:"security", sev:"medium", cat:"Command injection", effort:"S",
+    title:"eval of a dynamically built rsync command — carrying --delete",
+    loc:"scripts/remote-test.sh:142–148",
+    ev:"The rsync invocation is assembled into a string from env-overridable path/host variables and run through <code>eval</code>. A value with spaces or metacharacters enables injection or unintended deletion.",
+    fix:"Drop eval; invoke rsync as a normal argv array with quoted operands." },
+  { id:"SEC-9", dim:"security", sev:"medium", cat:"Identity leakage", effort:"M",
+    title:"Hardcoded Apple Developer Team ID committed",
+    loc:"SpeechToTextUITests.xcodeproj/project.pbxproj:204, 222",
+    ev:"<code>DEVELOPMENT_TEAM = 62G6AM6M49</code> appears twice, directly violating the AGENTS.md 'never commit entitlements with hardcoded team IDs' rule.",
+    fix:"Move DEVELOPMENT_TEAM to an untracked .xcconfig; scrub history if the repo will be public." },
+  { id:"SEC-10", dim:"security", sev:"medium", cat:"Insecure temp file", effort:"S",
+    title:"Predictable /tmp archive path for cross-host source sync",
+    loc:"scripts/remote-test.sh:201–218",
+    ev:"The source tree is tarred to a PID-named, world-readable /tmp path and scp'd to /tmp on the remote — readable or pre-symlinkable by other users on a shared host.",
+    fix:"Use mktemp with umask 077 and trap-cleanup on both ends." },
+  { id:"SEC-11", dim:"security", sev:"medium", cat:"Supply chain", effort:"M",
+    title:"sherpa-onnx release fetched without --fail or checksum — including in CI",
+    loc:"scripts/setup-sherpa-onnx.sh:44 · .github/workflows/ci.yml:128, 319",
+    ev:"<code>curl -sL</code> silences errors with no -f and no sha256; the URL is env-overridable. A non-2xx body or tampered artifact gets extracted into the build on every CI run.",
+    fix:"Add -fSL, pin and verify a sha256, treat extraction failure as fatal." },
+  { id:"SEC-12", dim:"security", sev:"medium", cat:"Model integrity", effort:"S",
+    title:"Gemma manifest hashes the weights but leaves config files size-only",
+    loc:"Sources/Resources/Models/gemma-4-e4b-it-4bit/manifest.json · ModelDownloader.swift:227–240",
+    ev:"model.safetensors and tokenizer.json carry sha256 (good), but config.json, chat_template.jinja, tokenizer_config.json and friends have <code>sha256: null</code>, so verification is size-only. The prompt-shaping files rest entirely on the HF revision pin + TLS.",
+    fix:"Populate sha256 for all manifest entries — the build script already supports it. Low exploitability, cheap to close." },
+  { id:"SEC-13", dim:"security", sev:"medium", cat:"Credential handling", effort:"S",
+    title:"TFE token written to disk without chmod 600",
+    loc:".devcontainer/claude-code/scripts/post-create.sh:43–54",
+    ev:"The heredoc writes ${TFE_TOKEN} into credentials.tfrc.json at default umask; an unset token silently writes an empty-credential file.",
+    fix:"chmod 600 immediately after write; skip the write entirely when TFE_TOKEN is unset." },
+  { id:"SEC-14", dim:"security", sev:"low", cat:"Supply chain", effort:"M",
+    title:"CI actions pinned to mutable tags, not commit SHAs",
+    loc:".github/workflows/ci.yml — checkout@v6, cache@v5, codecov-action@v5, upload-artifact@v5 …",
+    ev:"Floating major-version tags can be re-pointed at malicious commits. codecov-action is the highest-risk: it runs with CODECOV_TOKEN in scope on every PR, and the org has prior compromise history (2021 bash uploader).",
+    fix:"Pin third-party actions to full commit SHAs with the version in a trailing comment; Dependabot (already enabled) will bump them.",
+    xref:"Flagged independently by the security and CI reviewers." },
+  { id:"SEC-15", dim:"security", sev:"low", cat:"Least privilege", effort:"S",
+    title:"CI workflow has no permissions: block",
+    loc:".github/workflows/ci.yml",
+    ev:"GITHUB_TOKEN inherits the repo default (potentially write); the workflow only needs read plus Codecov upload.",
+    fix:"Add top-level <code>permissions: contents: read</code>; scope up per-job only where needed." },
+  { id:"SEC-16", dim:"security", sev:"low", cat:"Robustness", effort:"S",
+    title:"Network-facing scripts use bare set -e",
+    loc:"scripts/download-kws-model.sh:8 · setup-sherpa-onnx.sh:9 · build-sherpa-onnx.sh:13",
+    ev:"Bare set -e misses unset URL variables and curl|tar pipe failures. The llm-* scripts correctly use the full strict mode; these three don't.",
+    fix:"Upgrade to <code>set -euo pipefail</code>." },
+  { id:"SEC-17", dim:"security", sev:"low", cat:"Defense in depth", effort:"—",
+    title:"App sandbox disabled (awareness, not a defect)",
+    loc:"SpeechToText.entitlements",
+    ev:"Sandbox-off is expected for an Accessibility/menu-bar app posting CGEvents — but it widens the blast radius of any PHI handling bug. Release entitlements correctly omit get-task-allow.",
+    fix:"No action; note in the threat model that sandbox-off raises the stakes on the in-memory PHI discipline (SEC-4, SEC-5, SEC-7)." },
+
+  /* ─────────── CONCURRENCY ─────────── */
+  { id:"CON-1", dim:"concurrency", sev:"critical", cat:"Actor reentrancy", effort:"M",
+    title:"updateKeywords tears down the keyword spotter across an await while frames keep arriving",
+    loc:"Sources/Services/WakeWordService.swift:335–340 (vs processFrame :259–322)",
+    ev:"shutdown() nils the spotter and calls inputFinished(), then <code>await initialize(…)</code> suspends. Actors are reentrant: a queued processFrame runs during the suspension holding a local reference to the now-finished sherpa stream, then calls acceptWaveform/decode on it. Reachable any time a settings keyword change races live monitoring.",
+    fix:"Single-flight reconfiguration: set an actor-owned isReconfiguring flag synchronously before shutdown(); processFrame early-returns while set." },
+  { id:"CON-2", dim:"concurrency", sev:"high", cat:"Ordering", effort:"M",
+    title:"Streaming-decoder frames fed out of order — per-buffer Task spawn has no ordering guarantee",
+    loc:"Sources/Services/VoiceTriggerMonitoringService.swift:315–321",
+    ev:"Each audio buffer fires an independent <code>Task</code> into the actor; Task start order is not FIFO. Sherpa's keyword spotting is a streaming decoder where acceptWaveform/decode order is load-bearing — out-of-order frames degrade or corrupt detection.",
+    fix:"Funnel frames through one long-lived consumer draining an ordered AsyncStream. Pairs naturally with the CON-1 fix." },
+  { id:"CON-3", dim:"concurrency", sev:"medium", cat:"Reentrancy — latent", effort:"M",
+    title:"ModelDownloader.ensureModelDownloaded is not self-serializing",
+    loc:"Sources/Services/ClinicalNotes/ModelDownloader.swift:150–179",
+    ev:"No in-flight guard on the actor: two concurrent callers both compute bytes-to-download and run overlapping downloads against the same .partial slots. Currently masked because AppState serializes via a single task slot — robust today, fragile to any future caller.",
+    fix:"Hold a <code>private var inFlight: Task&lt;URL, Error&gt;?</code> and coalesce concurrent callers onto it." },
+  { id:"CON-4", dim:"concurrency", sev:"medium", cat:"Double-load — latent", effort:"M",
+    title:"FluidAudioService.initialize checks its guard before the first await — two callers both load the model",
+    loc:"Sources/Services/FluidAudioService.swift:159–201",
+    ev:"<code>guard !isInitialized</code> runs before <code>await AsrModels.downloadAndLoad</code>; near-simultaneous callers both pass it and both run the full multi-hundred-MB load. The single-flight slot guards transcribe but not initialize.",
+    fix:"Fold initialize into the same single-flight discipline as transcribe." },
+  { id:"CON-5", dim:"concurrency", sev:"medium", cat:"Double-fire", effort:"M",
+    title:"Silence timer and max-duration timer can both enqueue handleSilenceTimeout",
+    loc:"Sources/Services/VoiceTriggerMonitoringService.swift:499–544",
+    ev:"The repeating 0.1 s silence timer isn't invalidated until inside the async handler, so several ticks each enqueue a Task; the max-duration timer adds another. Only the late <code>guard case .capturing</code> saves it — a guard, not a synchronous flag.",
+    fix:"Set an isHandlingTimeout flag synchronously before the first await, mirroring the existing isTransitioning pattern." },
+  { id:"CON-6", dim:"concurrency", sev:"medium", cat:"Timer lifecycle", effort:"M",
+    title:"Timer.invalidate() from a nonisolated deinit may run off the timer's run-loop thread",
+    loc:"Sources/Services/VoiceTriggerMonitoringService.swift:92–122",
+    ev:"Timers scheduled on RunLoop.main are invalidated in a nonisolated deinit via nonisolated(unsafe) shadows. If the last release happens off-main, deinit runs off-main — Timer.invalidate() documents an install-thread requirement, and the shadows have no synchronization against their MainActor writers.",
+    fix:"Guarantee stopMonitoring() runs before release; in deinit only null/log, or hop via RunLoop.main.perform." },
+  { id:"CON-7", dim:"concurrency", sev:"medium", cat:"Task lifecycle", effort:"S",
+    title:"WelcomeViewModel.complete() fires an untracked strong-self Task",
+    loc:"Sources/Views/WelcomeViewModel.swift:282–284",
+    ev:"<code>Task { await stopMicrophoneTest() }</code> — no weak self, not stored, not cancellable; keeps the VM alive past view teardown, racing deinit. Low blast radius (one-shot screen).",
+    fix:"Use [weak self], or await the teardown inline.",
+    xref:"Note: WelcomeView/VM is also flagged as dead code (ARC-3) — deleting it resolves this too." },
+  { id:"CON-8", dim:"concurrency", sev:"low", cat:"Termination", effort:"M",
+    title:"Task.detached cleanup in applicationWillTerminate races process exit",
+    loc:"Sources/SpeechToTextApp/AppDelegate.swift:247–262",
+    ev:"Detached tasks frequently won't finish before exit; the target is @MainActor so detached buys nothing over Task{}. Comments show this is a known, deliberate tradeoff (avoiding a semaphore wait on MainActor).",
+    fix:"If hardening matters: applicationShouldTerminate → .terminateLater + reply(toApplicationShouldTerminate:)." },
+  { id:"CON-9", dim:"concurrency", sev:"low", cat:"Error surface", effort:"S",
+    title:"Cliniko cancellation surfaces as two different error types depending on phase",
+    loc:"Sources/Services/Cliniko/ClinikoClient.swift:186, 224–227",
+    ev:"Request-phase cancel maps to ClinikoError.cancelled; a cancel during retry-backoff sleep escapes as raw CancellationError. Callers matching only the former miss the latter.",
+    fix:"Map sleep-phase cancellation to ClinikoError.cancelled for one uniform surface." },
+  { id:"CON-10", dim:"concurrency", sev:"low", cat:"Cancellation latency", effort:"S",
+    title:"sha256 of the 5.2 GB model cannot be cancelled mid-hash",
+    loc:"Sources/Services/ClinicalNotes/ModelDownloader.swift:539–553",
+    ev:"Task.detached doesn't inherit cancellation, so a cancel mid-hash runs the full multi-GB loop before the next per-file check fires.",
+    fix:"Check Task.isCancelled inside the 4 MB chunk loop." },
+  { id:"CON-11", dim:"concurrency", sev:"low", cat:"Resource cleanup", effort:"S",
+    title:"Orphaned .partial files accumulate across crashes",
+    loc:"Sources/Services/ClinicalNotes/ModelDownloader.swift:334–396",
+    ev:"A crash between the temp→partial move and verification leaves a full-size unverified .partial that no later run sweeps. Harmless to correctness, but multi-GB files accumulate.",
+    fix:"Sweep stale .partial files in makeModelDirectory." },
+  { id:"CON-12", dim:"concurrency", sev:"low", cat:"Convention drift", effort:"S",
+    title:"SettingsViewModel.settingsService is the only service property missing @ObservationIgnored",
+    loc:"Sources/Views/SettingsViewModel.swift:35",
+    ev:"Not the crash pattern (it's not an actor existential), but inconsistent with every other VM and becomes load-bearing if the dependency ever turns actor-backed.",
+    fix:"Annotate for consistency — or delete with the dead SettingsView (ARC-3)." },
+
+  /* ─────────── PERFORMANCE ─────────── */
+  { id:"PRF-1", dim:"performance", sev:"high", cat:"Render / CPU", effort:"M",
+    title:"audioLevel written per audio buffer re-evaluates the entire recording modal body",
+    loc:"Sources/Views/RecordingViewModel.swift:25, 1005 · LiquidGlassRecordingModal.swift:313–339",
+    ev:"The modal's top-level body reads viewModel.audioLevel directly (waveforms + a per-frame accessibilityValue interpolation), so every audio buffer invalidates the full modal tree — ~20–60 full body re-evaluations per second while recording.",
+    fix:"Push audioLevel reads into the leaf waveform views (they already take a plain let), throttle writes to ~20–30 Hz, and move the accessibilityValue off the per-frame path." },
+  { id:"PRF-2", dim:"performance", sev:"high", cat:"Memory", effort:"M",
+    title:"Multi-GB MLX model held resident for app lifetime; never evicted after notes generate",
+    loc:"Sources/Services/ClinicalNotes/MLXGemmaProvider.swift:60, 154–158 · .claude/references/mlx-lifecycle.md:84",
+    ev:"~5–6 GB stays resident until quit; unload() exists but only the Settings 'Remove model' gesture calls it. On a 16 GB Mac this is the single largest memory pressure source.",
+    fix:"Idle-evict after export success and/or on memory-pressure warnings; re-warmup just re-mmaps verified weights. ⚠ Touches a locked decision ('don't evict on idle') — needs explicit product sign-off, flagged not implemented." },
+  { id:"PRF-3", dim:"performance", sev:"high", cat:"Latency / Energy", effort:"M",
+    title:"Full 5.2 GB sha256 re-hash on every 'already downloaded' check",
+    loc:"Sources/Services/ClinicalNotes/ModelDownloader.swift:150–159, 212–240",
+    ev:"The first Generate-Notes tap of each launch streams and hashes the entire safetensors file even when intact — a multi-second 100 %-CPU stall that is pure waste.",
+    fix:"Persist a 'verified' receipt keyed on (path, size, mtime, manifest revision); hash only after a fresh download." },
+  { id:"PRF-4", dim:"performance", sev:"high", cat:"Energy / I-O", effort:"S",
+    title:"Settings sliders write the full settings blob to disk on every tick — plus deprecated synchronize()",
+    loc:"Sources/Views/SettingsView.swift:237–246 · SettingsService.swift:74–80",
+    ev:"A single sensitivity-slider drag triggers ~10–20 full UserSettings encodes + synchronous UserDefaults flushes. synchronize() is deprecated and unnecessary.",
+    fix:"Delete synchronize(); debounce the disk write (~300 ms restartable task or save on drag-end) while keeping the in-memory write live." },
+  { id:"PRF-5", dim:"performance", sev:"high", cat:"CPU", effort:"S",
+    title:"Eager log-string interpolation on every audio buffer, with default level .trace",
+    loc:"Sources/Services/AudioCaptureService.swift:57–98 · Logger.swift:23, 48–60",
+    ev:"AppLogger.trace/debug take an eager String, so callers build the interpolation before the level check — up to 4×/buffer. And currentLevel defaults to .trace, so they all actually emit.",
+    fix:"Make the message parameter @autoclosure; default the level to .info in release builds." },
+  { id:"PRF-6", dim:"performance", sev:"medium", cat:"Render / Energy", effort:"M",
+    title:"Always-on glass stack: three blurred shadows, rotating gradients, per-frame Canvas caustics",
+    loc:"Sources/Views/Components/LiquidGlassEffects.swift:39–303",
+    ev:"The modal chrome composites a blurred rotating AngularGradient rim, three simultaneous radius-30/40/40 shadows, a 20 s forever-rotation, and a nested-loop caustics Canvas — every frame while visible. Blurred animated shadows are among the most expensive things to composite.",
+    fix:"Cache static chrome with .drawingGroup(), drop to one animated shadow, gate the second blurred stroke behind isActive, run caustics below 60 Hz." },
+  { id:"PRF-7", dim:"performance", sev:"medium", cat:"CPU / Render", effort:"M",
+    title:"Per-frame Float.random, 24 concurrent springs, and unbounded trail loops inside Canvas closures",
+    loc:"Sources/Views/Components/SiriStyleRingWaves.swift:88–98 · ParticleVortexWaveform.swift:289–310",
+    ev:"SiriStyleRingWaves runs 24 separate withAnimation(.spring) blocks with fresh RNG on every audio frame; the particle waveform draws up to ~280 gradient fills per redraw; the 800-dot noise texture redraws fully with its parent.",
+    fix:"Drive bar variation from the existing time phase (deterministic sin offsets), cache the noise texture once, cap total fill count." },
+  { id:"PRF-8", dim:"performance", sev:"medium", cat:"Memory", effort:"M",
+    title:"Parakeet ASR model stays resident all day after the first transcription",
+    loc:"Sources/Services/FluidAudioService.swift:179, 449–451 · VoiceTriggerMonitoringService.swift:267",
+    ev:"stopMonitoring() shuts down the wake-word service and audio capture but never FluidAudioService — hundreds of MB held until quit.",
+    fix:"Idle-evict via shutdown() after N seconds without transcription; the guarded fast-path already supports lazy re-init." },
+  { id:"PRF-9", dim:"performance", sev:"medium", cat:"Energy", effort:"M",
+    title:"Redundant 20 Hz polling timer copies audioLevel to the overlay the observable path already delivers",
+    loc:"Sources/SpeechToTextApp/AppDelegate.swift:957–969",
+    ev:"During every hold-to-record session a 0.05 s timer spawns a fresh Task per tick purely to copy a value the audio callback already pushes to MainActor.",
+    fix:"Drive the overlay directly from handleAudioLevel (push, not poll) and delete the timer." },
+  { id:"PRF-10", dim:"performance", sev:"medium", cat:"Energy", effort:"M",
+    title:"10 Hz polling timer diffs voice-trigger state for as long as monitoring is enabled",
+    loc:"Sources/SpeechToTextApp/AppDelegate.swift:716–751",
+    ev:"Ten Task allocations per second, all day, for always-on wake-word users — because @Observable has no KVO bridge. The state machine has few discrete transitions; polling is the wrong shape.",
+    fix:"Push transitions via AsyncStream/callback from the service, or use withObservationTracking re-armed on change." },
+  { id:"PRF-11", dim:"performance", sev:"medium", cat:"Energy / CPU", effort:"M",
+    title:"Always-on CPU keyword spotting plus a pointless Float→Int16→Float round-trip per frame",
+    loc:"Sources/Services/WakeWordService.swift:215 · VoiceTriggerMonitoringService.swift:204–209, 342–352",
+    ev:"The spotter decodes every frame regardless of energy level, and each frame pays two O(n) array allocations converting to Int16 and straight back — the comment admits it's only for pattern reuse.",
+    fix:"Add an energy pre-gate below talkingThreshold; pass the original Float samples through." },
+  { id:"PRF-12", dim:"performance", sev:"medium", cat:"CPU", effort:"M",
+    title:"AudioBuffer.init runs multiple O(n) passes per buffer — including libm pow() per sample — to produce one consumed value",
+    loc:"Sources/Models/AudioBuffer.swift:27–34 · AudioCaptureService.swift:64–96",
+    ev:"map+max allocates a full array, reduce calls pow() per sample, and the computed peakAmplitude is discarded; only rmsLevel is used.",
+    fix:"d*d instead of pow, compute RMS inline in the existing conversion loop, or use Accelerate vDSP_rmsqv." },
+  { id:"PRF-13", dim:"performance", sev:"medium", cat:"CPU / I-O", effort:"M",
+    title:"Statistics read-modify-write decodes the entire history twice and re-encodes it per session",
+    loc:"Sources/Services/StatisticsService.swift:16–62, 131–167",
+    ev:"Each recorded session = two full-array decodes + one full-array encode + a whole-blob UserDefaults write, with fresh JSONEncoder/Decoder instances per call.",
+    fix:"Pass the loaded array through, store per-day keys so only today re-encodes, hoist the coders to stored lets." },
+  { id:"PRF-14", dim:"performance", sev:"low", cat:"Energy", effort:"S",
+    title:"60 Hz particle timer and 20 Hz silent-pulse run at full rate during silence",
+    loc:"Sources/Views/Components/ParticleVortexWaveform.swift:166 · GlassOverlay/DynamicWaveformView.swift:158",
+    ev:"Both correctly stop on disappear, but run at full cadence through silent stretches of an open session.",
+    fix:"Idle the particle timer (or drop to ~15 Hz) below an audio threshold." },
+
+  /* ─────────── ARCHITECTURE ─────────── */
+  { id:"ARC-1", dim:"architecture", sev:"high", cat:"Architecture", effort:"L",
+    title:"AppState is a 1,300-line god object owning the entire clinical-notes lifecycle",
+    loc:"Sources/SpeechToTextApp/AppState.swift (clinical block :374–1087)",
+    ev:"One @Observable @MainActor class holds 11 service collaborators and implements the model download/warmup/cancel/remove state machine, pipeline orchestration with token-guarded task slots, Cliniko wiring, progress aggregation, and legacy purge. The genuinely intricate concurrency bookkeeping has no business in the app's root state object.",
+    fix:"Extract a ClinicalNotesModelLifecycleController and a ClinikoSetupCoordinator; AppState keeps the STT surface and delegates. Highest-leverage maintainability change in the codebase." },
+  { id:"ARC-2", dim:"architecture", sev:"high", cat:"Dependency", effort:"S",
+    title:"FluidAudio — the core ASR engine — tracks branch: \"main\"",
+    loc:"Package.swift:21–24 · Package.resolved",
+    ev:"Every other dependency uses a semver range. The lockfile pins a revision, but any swift package update silently advances to whatever main is that day — non-reproducible builds on the most critical subsystem.",
+    fix:"Pin to a release tag or explicit revision; document the upgrade cadence.",
+    xref:"Flagged independently by three reviewers (security, architecture, CI)." },
+  { id:"ARC-3", dim:"architecture", sev:"medium", cat:"Dead code", effort:"M",
+    title:"Three dead full-screen surfaces: RecordingModal, WelcomeView, SettingsView + their VMs (~2,300 lines)",
+    loc:"Sources/Views/RecordingModal.swift · WelcomeView.swift + WelcomeViewModel.swift · SettingsView.swift + SettingsViewModel.swift",
+    ev:"Production presenters route elsewhere (LiquidGlassRecordingModal; onboarding → MainView Home; settings → unified MainView). Each dead type is referenced only by its own #Preview and stale UITest helpers that assert a screen never presented.",
+    fix:"Delete the trio + VMs + the four RecordingModalRenderTests; update the stale UITest helpers. Also resolves CON-7, CON-12, and TST-3." },
+  { id:"ARC-4", dim:"architecture", sev:"low", cat:"Dead code", effort:"S",
+    title:"Two transitively dead waveform components",
+    loc:"Sources/Views/Components/WaveformView.swift (347 lines) · GlassOverlay/DynamicWaveformView.swift (255 lines)",
+    ev:"DynamicWaveformView has zero non-preview references; WaveformView is consumed only by the dead WelcomeView/RecordingModal. The six other waveform styles are live behind the WaveformVisualization switchboard.",
+    fix:"Delete DynamicWaveformView now; delete WaveformView alongside ARC-3." },
+  { id:"ARC-5", dim:"architecture", sev:"medium", cat:"UX consistency", effort:"S",
+    title:"Recording modal silently ignores the user-selected waveform style the overlay honors",
+    loc:"Sources/Views/LiquidGlassRecordingModal.swift:313–334",
+    ev:"The modal hardcodes Aurora + LiquidOrb and never reads the six-option waveform setting; the small status overlay honors it. Picking 'Crystalline' changes one surface and not the other — looks like a bug to users.",
+    fix:"Route centralVisualization through WaveformVisualization(style:), or document that the picker only affects the overlay." },
+  { id:"ARC-6", dim:"architecture", sev:"medium", cat:"Error surfacing", effort:"S",
+    title:"AppState.errorMessage is written in four failure paths but never displayed anywhere",
+    loc:"Sources/SpeechToTextApp/AppState.swift:13, 1228, 1261, 1283, 1294",
+    ev:"Speech-init, statistics, settings-save, and onboarding-completion failures are set into a property nothing renders — silently swallowed from the user's perspective.",
+    fix:"Bind it to an .alert/banner in MainView, or route the failures through the relevant section view models." },
+  { id:"ARC-7", dim:"architecture", sev:"medium", cat:"Observability", effort:"M",
+    title:"Logger fragmentation: ~13 ad-hoc Logger() instances and three divergent subsystem IDs",
+    loc:"Logger.swift vs hardcoded loggers in Cliniko/, ClinicalNotes/, Views/ClinicalNotes/, KeychainSecureStore",
+    ev:"Three subsystem identifiers coexist, scattering Console filtering across buckets — and the bypassing files are exactly the PHI-sensitive subsystems, outside AppLogger's central level-gating and privacy discipline.",
+    fix:"Route everything through AppLogger (or one shared subsystem constant). Pairs naturally with SEC-2/SEC-3." },
+  { id:"ARC-8", dim:"architecture", sev:"medium", cat:"Architecture", effort:"M",
+    title:"ExportFlowCoordinator is a mutable global singleton — configure() silently overwrites, no reset()",
+    loc:"Sources/Services/ClinicalNotes/ExportFlowCoordinator.swift:32–74",
+    ev:"Five private-var optional deps behind static let shared; re-configure swaps the live SessionStore/exporter out from under any in-flight export. Mitigated: unconfigured access is a no-op, not a crash. Same pattern on ReviewWindowController and MainWindowController.",
+    fix:"Inject through AppState; or add a test reset() and an assertionFailure on production double-configure." },
+  { id:"ARC-9", dim:"architecture", sev:"medium", cat:"Type safety", effort:"M",
+    title:"RecordingSession.language is stringly-typed despite an exhaustive 25-case SupportedLanguage enum",
+    loc:"Sources/Models/RecordingSession.swift:18 · LanguageModel.swift:99",
+    ev:"Validation is deferred ad-hoc to consumers; nothing at the model boundary prevents 'En'/'eng'/typos. Contrast ClinikoCredentials.shard, which correctly uses an enum.",
+    fix:"Type the field as SupportedLanguage (already Codable/Sendable), or funnel construction through SupportedLanguage.from(code:)." },
+  { id:"ARC-10", dim:"architecture", sev:"medium", cat:"Architecture", effort:"M",
+    title:"Recording-trigger ownership: three cross-guarded booleans plus an uncoordinated fourth capture path",
+    loc:"Sources/Services/HotkeyManager.swift:206–282 · VoiceTriggerMonitoringService.swift:132–239",
+    ev:"Hold/toggle/clinical modes are arbitrated by pairwise scattered boolean guards — illegal combinations are representable — and the voice-trigger pipeline is a wholly separate capture path with no arbiter against a live hotkey session.",
+    fix:"Replace the booleans with a RecordingMode enum; longer-term, a single recording-session owner across all four triggers." },
+  { id:"ARC-11", dim:"architecture", sev:"low", cat:"Duplication", effort:"M",
+    title:"ClinikoAuthProbe duplicates ClinikoClient with a divergent, less-complete error taxonomy",
+    loc:"Sources/Services/Cliniko/ClinikoAuthProbe.swift:44–132",
+    ev:"Hand-rolled request construction collapses 401/403 into one case where ClinikoError deliberately splits them. The probe's own header says it should become clinikoClient.send(.usersMe) — and both prerequisites now exist.",
+    fix:"Migrate to client.send(.usersMe); delete ClinikoAuthProbeError." },
+  { id:"ARC-12", dim:"architecture", sev:"medium", cat:"i18n", effort:"L",
+    title:"No localization infrastructure — 254 hardcoded English strings",
+    loc:"Sources/Views/ app-wide",
+    ev:"String(localized:) appears once; NSLocalizedString zero times. Every alert title and label is a literal.",
+    fix:"Add a Localizable.xcstrings String Catalog (fully on-device). Text(\"literal\") auto-localizes once the catalog exists; start with the clinical surface and grow incrementally." },
+  { id:"ARC-13", dim:"architecture", sev:"medium", cat:"Accessibility", effort:"M",
+    title:"Live waveforms are invisible to VoiceOver; the clinical PHI-editing surface needs an a11y pass",
+    loc:"Sources/Views/Components/ (live styles) · Sources/Views/ClinicalNotes/",
+    ev:"Only the two dead waveforms carry accessibility labels. Of 447 'accessibility' references, ~228 are XCUITest identifiers — invisible to assistive tech. The SOAP review screen is the surface that matters most.",
+    fix:"Add accessibilityLabel/Value to the three live styles; run a VoiceOver audit on ReviewScreen + PatientPickerView (labels, .isHeader traits, announced error banner)." },
+  { id:"ARC-14", dim:"architecture", sev:"medium", cat:"Distribution", effort:"M",
+    title:"No software-update mechanism for a DMG-distributed clinical app",
+    loc:"Package.swift · scripts/export-dmg.sh",
+    ev:"Shipping a security fix means every clinician manually re-downloads a DMG — a real stale-version risk for a PHI tool.",
+    fix:"Sparkle 2 with a self-hosted, EdDSA-signed appcast on first-party HTTPS. Privacy-compatible: the only egress is a version XML fetch from your own server." },
+  { id:"ARC-15", dim:"architecture", sev:"medium", cat:"Onboarding", effort:"M",
+    title:"Onboarding covers basic STT only — zero Clinical Notes or Cliniko content",
+    loc:"Onboarding flow (MainView Home routing)",
+    ev:"grep for clinical/cliniko/soap/patient across onboarding returns nothing. A clinician enabling the headline mode gets no guidance on the toggle, the unbound recording shortcut, the API key, or the multi-GB first-run download.",
+    fix:"A contextual 'Set up Clinical Notes' flow (toggle → Cliniko key → shortcut → model download), gated behind the feature toggle." },
+
+  /* ─────────── TESTING & CI ─────────── */
+  { id:"TST-1", dim:"testing", sev:"high", cat:"Guardrail not running", effort:"S",
+    title:"The nonisolated_unsafe_warning SwiftLint rule does not exist",
+    loc:".swiftlint.yml:79–98 (referenced as enforced in AGENTS.md, CLAUDE.md, Package.swift, source comments)",
+    ev:"The config defines exactly one custom rule. There are 27 live nonisolated(unsafe) usages the rule is documented to flag — none are flagged because the rule is absent. Documentation asserting a guardrail that doesn't run is worse than silence.",
+    fix:"Add the rule, or strike every claim that it is enforced." },
+  { id:"TST-2", dim:"testing", sev:"high", cat:"Guardrail not running", effort:"M",
+    title:"observable_actor_existential_warning is misconfigured and matches nothing",
+    loc:".swiftlint.yml:82–93",
+    ev:"match_kinds lists comment token kinds (the opposite of intent) and adds an invalid 'excluded: true' key; the regex also can't distinguish an already-@ObservationIgnored property. The codebase happens to be clean, which masks the brokenness.",
+    fix:"Fix match_kinds, rewrite the regex with a negative check for @ObservationIgnored, and add an intentionally-violating fixture so config regressions get caught." },
+  { id:"TST-3", dim:"testing", sev:"medium", cat:"Coverage gap", effort:"S",
+    title:"WelcomeViewModel has no test file — the mandated render-crash test is missing",
+    loc:"Sources/Views/WelcomeViewModel.swift",
+    ev:"It is an @Observable class holding an actor-existential service — exactly the shape the house rules require a ViewInspector render-crash test for. Only the typing-animation suite exists.",
+    fix:"Add the render-crash + unit tests — or simply delete the view, since ARC-3 found it dead. Decide dead-or-alive first.",
+    xref:"Cross-reference: architecture review found WelcomeView unreachable in production." },
+  { id:"TST-4", dim:"testing", sev:"medium", cat:"Coverage gap", effort:"M",
+    title:"ExportFlowCoordinator — the PHI/HTTP export orchestrator — has no direct test",
+    loc:"Sources/Services/ClinicalNotes/ExportFlowCoordinator.swift",
+    ev:"ExportFlowViewModelTests exercises it incidentally, but the coordinator's own contracts (session cleared only on success; audit row metadata-only) aren't pinned independently.",
+    fix:"Add ExportFlowCoordinatorTests with InMemoryAuditStore + URLProtocolStub asserting both invariants." },
+  { id:"TST-5", dim:"testing", sev:"medium", cat:"Coverage gap", effort:"M",
+    title:"ClinikoDateParser and ClinikoUserAgent are untested — both are active change surfaces",
+    loc:"Sources/Services/Cliniko/ClinikoDateParser.swift · ClinikoUserAgent.swift",
+    ev:"Date parsing produced two recent bugfix PRs (#130, #136); the User-Agent just became settings-configurable (#137). A format regression changes every outgoing request header with nothing catching it.",
+    fix:"Table-driven parser tests (valid offsets + the dateMalformed cases) and a header-pinning UserAgent test." },
+  { id:"TST-6", dim:"testing", sev:"medium", cat:"Scripts", effort:"S",
+    title:"Strict mode missing from several executable scripts",
+    loc:"scripts/create-issues.sh · run-ui-tests.sh · fix-precommit.sh (none) · setup-ssh-for-mac.sh + 4 more (set -e only)",
+    ev:"Unset variables expand to empty rather than erroring — particularly sharp in setup-ssh-for-mac.sh, which builds SSH config from user input.",
+    fix:"Add set -euo pipefail across the set." },
+  { id:"TST-7", dim:"testing", sev:"medium", cat:"Scripts", effort:"S",
+    title:"remote-test.sh swallows a failed force-push, then runs a remote git reset --hard anyway",
+    loc:"scripts/remote-test.sh:173–180",
+    ev:"push --force-with-lease … || true followed by an unconditional remote reset --hard discards remote state to a stale ref with no error surfaced; the branch name is interpolated unquoted into the SSH command.",
+    fix:"Drop the || true, quote the branch, gate the reset on a clean push." },
+  { id:"TST-8", dim:"testing", sev:"medium", cat:"Scripts / Integrity", effort:"S",
+    title:"llm-prefetch.sh silently passes verification when the manifest sha is empty",
+    loc:"scripts/llm-prefetch.sh (verify_sha256)",
+    ev:"An entry with a blank sha256 returns success unconditionally — a manifest typo would download an unverified weight file and report verified. Verification that no-ops on bad input is indistinguishable from no verification.",
+    fix:"Treat empty/missing expected sha as a hard error (exit 3, the documented verification-failure code)." },
+  { id:"TST-9", dim:"testing", sev:"low", cat:"Test quality", effort:"M",
+    title:"ExportFlowViewModelTests awaits state transitions via a 5 s wall-clock polling loop",
+    loc:"Tests/SpeechToTextTests/ViewModels/ExportFlowViewModelTests.swift:145–177",
+    ev:"Well-documented and better than a fixed sleep, but still a timeout-based wait — a flake surface under loaded CI runners. Root cause: confirm() exposes no awaitable completion.",
+    fix:"Expose a test seam (awaitable completion / injected continuation) so the FSM transition can be awaited deterministically. Track as tech debt." },
+  { id:"TST-10", dim:"testing", sev:"low", cat:"CI drift", effort:"M",
+    title:"CI skip-list is by class name and has already diverged from the documented list",
+    loc:".github/workflows/ci.yml:182–190 vs .claude/references/testing-conventions.md:192–204",
+    ev:"GeneralSectionPersistenceTests appears in the docs' skip list but not CI's — either fixed-and-stale-doc or still racing under --parallel. By-name skipping also means a renamed class silently re-enters (or vanishes from) CI.",
+    fix:"Reconcile the two lists; prioritize the #31 migration to --skip-tag requiresHardware so the skip set is data-driven." },
+  { id:"TST-11", dim:"testing", sev:"low", cat:"CI coupling", effort:"S",
+    title:"Coverage upload is a hard PR gate on third-party uptime",
+    loc:".github/workflows/ci.yml:233–241",
+    ev:"fail_ci_if_error: true means a Codecov outage blocks merges even when all tests pass. Deliberate per the inline comment, and the artifact preserves the data — but the coupling is worth a conscious re-decision.",
+    fix:"Consider best-effort upload + a separate Codecov status check as the gate — or keep it, knowingly." },
+  { id:"TST-12", dim:"testing", sev:"low", cat:"Fixtures", effort:"M",
+    title:"The soap/ fixture corpus the conventions prescribe is placeholder-only",
+    loc:"Tests/SpeechToTextTests/Fixtures/soap/valid · soap/invalid (.gitkeep only)",
+    ev:"The schema guard for the most security-relevant parse path (LLM JSON → SOAP) is tested via inline literals rather than the documented reviewable fixture corpus.",
+    fix:"Populate soap/invalid/ with the edge cases the guard must reject (missing field, wrong type, synthetic PHI-free content)." }
+];
+
+const GOOD = [
+  { t:"Cliniko HTTP client PHI hygiene", r:"ClinikoClient.swift",
+    d:"Logs only method, path template, status, latency, and typed error-case names — deliberately omits localizedDescription, bodies, and bound URLs. Validation failures log byte counts, not content." },
+  { t:"Credential type design", r:"ClinikoCredentials.swift · KeychainSecureStore.swift",
+    d:"apiKey has no public accessor, description redacts, the basic-auth header is the only egress, and the Keychain store enforces WhenUnlockedThisDeviceOnly on both add and update paths." },
+  { t:"OpaqueClinikoID type-tagging", r:"Models/OpaqueClinikoID.swift",
+    d:"Refuses free-form strings at the audit boundary and deliberately omits CustomStringConvertible so accidental interpolation reads as reflection noise rather than a leaked ID." },
+  { t:"ModelDownloader integrity pipeline", r:"ClinicalNotes/ModelDownloader.swift · ModelManifest.swift",
+    d:"HTTPS-only URLs, sha256 enforced when present, decode-time path-traversal rejection, total-bytes consistency check, atomic .partial→rename, disk-space preflight, streamed 4 MB-chunk hashing." },
+  { t:"Audit ledger metadata-only by construction", r:"Cliniko/AuditStore.swift",
+    d:"No String body field exists on the record type, 0o600 file perms, byte-stable encoding pinned by a PHI-leak test, corrupt lines tolerated without echoing bytes." },
+  { t:"Audio-thread → MainActor discipline", r:"VoiceTriggerMonitoringService.swift · AudioCaptureService.swift",
+    d:"Non-Sendable buffers are reduced to Sendable arrays on the audio thread before the hop, exactly per the house concurrency rules. The @Observable + actor-existential crash pattern is absent across all ten view models." },
+  { t:"Duplicate-write safety on export", r:"TreatmentNoteExporter.swift · ClinikoEndpoint.swift",
+    d:"The treatment-note POST retries on 429 but never on 5xx/transport — exactly the right posture against double-writing a clinical record. Retry-After honored in both seconds and HTTP-date forms." },
+  { t:"URLProtocolStubGate", r:"Tests/Utilities/URLProtocolStubGate.swift",
+    d:"A FIFO actor gate with direct continuation hand-off, correctly diagnosing that Swift Testing's .serialized trait is suite-local — with the motivating CI failure cited by commit." },
+  { t:"PHI discipline inside the test/CI tooling itself", r:"URLProtocolStub.swift · ci.yml",
+    d:"Stub-miss errors interpolate only URL paths (query params can carry patient_id); CI deliberately refuses to upload build/test logs as artifacts to prevent PHI egress." },
+  { t:"llm-reset.sh defensive scripting", r:"scripts/llm-reset.sh",
+    d:"Scopes rm -rf to the specific model subdirectory (the doctor's Models/ dir may hold unrelated ASR weights), refuses non-interactive deletes without --yes, and du-reports targets before prompting." }
+];
+
+/* ── render ── */
+const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
+function esc(s){ return s; } /* data is authored, trusted HTML */
+
+function card(f){
+  return '<article class="finding" data-sev="' + f.sev + '">' +
+    '<div class="f-top">' +
+      '<span class="sev ' + f.sev + '">' + f.sev + '</span>' +
+      '<span class="f-cat">' + f.id + ' · ' + esc(f.cat) + '</span>' +
+      '<span class="f-effort">effort ' + f.effort + '</span>' +
+    '</div>' +
+    '<h3>' + esc(f.title) + '</h3>' +
+    '<div class="f-loc">' + esc(f.loc) + '</div>' +
+    '<p>' + esc(f.ev) + '</p>' +
+    '<p class="fix"><b>Fix:</b> ' + esc(f.fix) + '</p>' +
+    (f.xref ? '<div class="f-xref">' + esc(f.xref) + '</div>' : '') +
+  '</article>';
+}
+
+document.querySelectorAll('.findings').forEach(el => {
+  const dim = el.dataset.dim;
+  const items = FINDINGS.filter(f => f.dim === dim)
+    .sort((a,b) => SEV_ORDER[a.sev] - SEV_ORDER[b.sev]);
+  el.innerHTML = items.map(card).join('');
+});
+
+document.querySelectorAll('.count').forEach(el => {
+  const dim = el.dataset.count;
+  const items = FINDINGS.filter(f => f.dim === dim);
+  const bySev = {};
+  items.forEach(f => bySev[f.sev] = (bySev[f.sev]||0)+1);
+  el.textContent = items.length + ' findings — ' +
+    ['critical','high','medium','low'].filter(s => bySev[s])
+      .map(s => bySev[s] + ' ' + s).join(', ');
+});
+
+/* stats */
+const sevCount = s => FINDINGS.filter(f => f.sev === s).length;
+document.getElementById('stat-critical').textContent = sevCount('critical');
+document.getElementById('stat-high').textContent = sevCount('high');
+document.getElementById('stat-medium').textContent = sevCount('medium');
+document.getElementById('stat-low').textContent = sevCount('low');
+document.getElementById('stat-quick').textContent =
+  FINDINGS.filter(f => f.effort === 'S').length;
+
+/* good practices */
+document.getElementById('good-grid').innerHTML = GOOD.map(g =>
+  '<div class="good"><h3><span class="tick">✓</span>' + g.t + '</h3>' +
+  '<p>' + g.d + '</p>' +
+  '<p class="ref" style="margin-top:7px">' + g.r + '</p></div>'
+).join('');
+
+/* severity filters */
+const active = { critical: true, high: true, medium: true, low: true };
+document.querySelectorAll('.filter-chip').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const s = btn.dataset.sev;
+    active[s] = !active[s];
+    btn.classList.toggle('off', !active[s]);
+    document.querySelectorAll('.finding').forEach(f =>
+      f.classList.toggle('hidden', !active[f.dataset.sev]));
+  });
+});
+</script>
+</body>
+</html>
