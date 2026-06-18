@@ -580,7 +580,7 @@ private struct PatientPickerSheetHost: View {
 
 #Preview("Review Screen") {
     let store = SessionStore()
-    var session = RecordingSession(language: "en", state: .completed)
+    var session = RecordingSession(language: .en, state: .completed)
     session.transcribedText = "Patient reports R-neck pain x 3/52, worse with rotation. Cervical screening normal. Plan diversified HVLA C5-C6 + Activator T2-T4."
     store.start(from: session)
     var notes = StructuredNotes()

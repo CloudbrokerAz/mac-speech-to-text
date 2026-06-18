@@ -31,7 +31,7 @@ final class StatisticsServiceTests: XCTestCase {
     func test_recordSession_incrementsTotalSessions() async throws {
         // Given
         let session = RecordingSession(
-            language: "en",
+            language: .en,
             state: .completed
         )
 
@@ -45,7 +45,7 @@ final class StatisticsServiceTests: XCTestCase {
 
     func test_recordSession_incrementsSuccessfulSessionsWhenInsertionSucceeds() async throws {
         // Given
-        var session = RecordingSession(language: "en")
+        var session = RecordingSession(language: .en)
         session.insertionSuccess = true
 
         // When
@@ -59,7 +59,7 @@ final class StatisticsServiceTests: XCTestCase {
 
     func test_recordSession_incrementsFailedSessionsWhenInsertionFails() async throws {
         // Given
-        var session = RecordingSession(language: "en")
+        var session = RecordingSession(language: .en)
         session.insertionSuccess = false
 
         // When
@@ -73,7 +73,7 @@ final class StatisticsServiceTests: XCTestCase {
 
     func test_recordSession_updatesWordCount() async throws {
         // Given
-        var session = RecordingSession(language: "en")
+        var session = RecordingSession(language: .en)
         session.transcribedText = "Hello world test"
         session.insertionSuccess = true
 
@@ -87,7 +87,7 @@ final class StatisticsServiceTests: XCTestCase {
 
     func test_recordSession_updatesDuration() async throws {
         // Given
-        var session = RecordingSession(language: "en")
+        var session = RecordingSession(language: .en)
         session.endTime = session.startTime.addingTimeInterval(5.0) // 5 seconds
 
         // When
@@ -100,10 +100,10 @@ final class StatisticsServiceTests: XCTestCase {
 
     func test_recordSession_updatesAverageConfidence() async throws {
         // Given
-        var session1 = RecordingSession(language: "en")
+        var session1 = RecordingSession(language: .en)
         session1.confidenceScore = 0.8
 
-        var session2 = RecordingSession(language: "en")
+        var session2 = RecordingSession(language: .en)
         session2.confidenceScore = 0.9
 
         // When
@@ -117,11 +117,11 @@ final class StatisticsServiceTests: XCTestCase {
 
     func test_recordSession_updatesLanguageBreakdown() async throws {
         // Given
-        var sessionEn = RecordingSession(language: "en")
+        var sessionEn = RecordingSession(language: .en)
         sessionEn.transcribedText = "Hello world"
         sessionEn.insertionSuccess = true
 
-        var sessionFr = RecordingSession(language: "fr")
+        var sessionFr = RecordingSession(language: .fr)
         sessionFr.transcribedText = "Bonjour monde"
         sessionFr.insertionSuccess = true
 
@@ -146,11 +146,11 @@ final class StatisticsServiceTests: XCTestCase {
 
     func test_recordSession_updatesErrorBreakdown() async throws {
         // Given
-        var session1 = RecordingSession(language: "en")
+        var session1 = RecordingSession(language: .en)
         session1.insertionSuccess = false
         session1.errorMessage = "Microphone error occurred"
 
-        var session2 = RecordingSession(language: "en")
+        var session2 = RecordingSession(language: .en)
         session2.insertionSuccess = false
         session2.errorMessage = "Permission denied"
 
@@ -177,7 +177,7 @@ final class StatisticsServiceTests: XCTestCase {
 
     func test_getTodayStats_returnsOnlyTodaysSessions() async throws {
         // Given
-        let session = RecordingSession(language: "en")
+        let session = RecordingSession(language: .en)
 
         // When
         try await service.recordSession(session)
@@ -217,8 +217,8 @@ final class StatisticsServiceTests: XCTestCase {
 
     func test_getAggregatedStats_aggregatesTodaysSessions() async throws {
         // Given
-        let session1 = RecordingSession(language: "en")
-        let session2 = RecordingSession(language: "fr")
+        let session1 = RecordingSession(language: .en)
+        let session2 = RecordingSession(language: .fr)
 
         // When
         try await service.recordSession(session1)
@@ -236,7 +236,7 @@ final class StatisticsServiceTests: XCTestCase {
 
     func test_clearAll_removesAllStatistics() async throws {
         // Given
-        let session = RecordingSession(language: "en")
+        let session = RecordingSession(language: .en)
         try await service.recordSession(session)
         let initialStats = await service.getTodayStats()
         XCTAssertEqual(initialStats.totalSessions, 1)
@@ -254,7 +254,7 @@ final class StatisticsServiceTests: XCTestCase {
     func test_cleanupOldStats_removesStatsOlderThanRetentionPeriod() async throws {
         // Given
         // Create stats for today
-        let todaySession = RecordingSession(language: "en")
+        let todaySession = RecordingSession(language: .en)
         try await service.recordSession(todaySession)
 
         // When
@@ -268,7 +268,7 @@ final class StatisticsServiceTests: XCTestCase {
 
     func test_cleanupOldStats_doesNothingWhenRetentionDaysIsZero() async throws {
         // Given
-        let session = RecordingSession(language: "en")
+        let session = RecordingSession(language: .en)
         try await service.recordSession(session)
 
         // When
@@ -283,19 +283,19 @@ final class StatisticsServiceTests: XCTestCase {
 
     func test_recordMultipleSessions_aggregatesCorrectly() async throws {
         // Given
-        var session1 = RecordingSession(language: "en")
+        var session1 = RecordingSession(language: .en)
         session1.transcribedText = "Hello"
         session1.insertionSuccess = true
         session1.confidenceScore = 0.9
         session1.endTime = session1.startTime.addingTimeInterval(2.0)
 
-        var session2 = RecordingSession(language: "en")
+        var session2 = RecordingSession(language: .en)
         session2.transcribedText = "World test"
         session2.insertionSuccess = true
         session2.confidenceScore = 0.8
         session2.endTime = session2.startTime.addingTimeInterval(3.0)
 
-        var session3 = RecordingSession(language: "fr")
+        var session3 = RecordingSession(language: .fr)
         session3.transcribedText = "Bonjour"
         session3.insertionSuccess = false
         session3.errorMessage = "Test error"
@@ -320,7 +320,7 @@ final class StatisticsServiceTests: XCTestCase {
 
     func test_errorTypeExtraction_identifiesPermissionErrors() async throws {
         // Given
-        var session = RecordingSession(language: "en")
+        var session = RecordingSession(language: .en)
         session.insertionSuccess = false
         session.errorMessage = "Permission denied by user"
 
@@ -335,7 +335,7 @@ final class StatisticsServiceTests: XCTestCase {
 
     func test_errorTypeExtraction_identifiesMicrophoneErrors() async throws {
         // Given
-        var session = RecordingSession(language: "en")
+        var session = RecordingSession(language: .en)
         session.insertionSuccess = false
         session.errorMessage = "Microphone not available"
 
@@ -350,7 +350,7 @@ final class StatisticsServiceTests: XCTestCase {
 
     func test_errorTypeExtraction_identifiesAccessibilityErrors() async throws {
         // Given
-        var session = RecordingSession(language: "en")
+        var session = RecordingSession(language: .en)
         session.insertionSuccess = false
         // Use message without "permission" to avoid matching permission_denied first
         session.errorMessage = "Accessibility API failed"

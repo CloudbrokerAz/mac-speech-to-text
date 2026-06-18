@@ -43,7 +43,7 @@ private enum ReviewScreenFallbackCopyFixture {
         openClinicalNotesSettingsHandler: @escaping @MainActor () -> Void = {}
     ) -> ReviewViewModel {
         let store = SessionStore()
-        var recording = RecordingSession(language: "en", state: .completed)
+        var recording = RecordingSession(language: .en, state: .completed)
         recording.transcribedText = "Synthetic transcript for fallback-copy coverage."
         store.start(from: recording)
         store.setDraftNotes(StructuredNotes())

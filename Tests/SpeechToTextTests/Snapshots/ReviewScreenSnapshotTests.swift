@@ -73,7 +73,7 @@ final class ReviewScreenSnapshotTests: XCTestCase {
         status: ClinicalNotesDraftStatus = .ready
     ) -> ReviewViewModel {
         let store = SessionStore()
-        var recording = RecordingSession(language: "en", state: .completed)
+        var recording = RecordingSession(language: .en, state: .completed)
         recording.transcribedText = transcript
         store.start(from: recording)
         if let notes {

@@ -13,7 +13,7 @@ struct StatisticsServiceStorageTests {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let service = StatisticsService(userDefaults: defaults)
-        try await service.recordSession(RecordingSession(language: "en", state: .completed))
+        try await service.recordSession(RecordingSession(language: .en, state: .completed))
 
         let legacy = defaults.data(forKey: "com.speechtotext.statistics")
         #expect(legacy == nil)

@@ -43,7 +43,7 @@ struct ExportFlowViewModelTests {
         )
     ) -> SessionStore {
         let store = SessionStore()
-        var recording = RecordingSession(language: "en", state: .completed)
+        var recording = RecordingSession(language: .en, state: .completed)
         recording.transcribedText = "Synthetic transcript"
         store.start(from: recording)
         if let notes {
@@ -253,7 +253,7 @@ struct ExportFlowViewModelTests {
     func enterConfirming_noPatient_fails() async throws {
         try await runGated(responder: { _ in (HTTPURLResponse(), Data()) }) { config in
             let store = SessionStore()
-            store.start(from: RecordingSession(language: "en", state: .completed))
+            store.start(from: RecordingSession(language: .en, state: .completed))
             // No setSelectedPatient call.
             let exporter = self.makeExporter(config: config)
             let viewModel = self.makeViewModel(store: store, exporter: exporter)
@@ -338,7 +338,7 @@ struct ExportFlowViewModelTests {
     func confirm_malformedAppointmentID_fails() async throws {
         try await runGated(responder: { _ in (HTTPURLResponse(), Data()) }) { config in
             let store = SessionStore()
-            store.start(from: RecordingSession(language: "en", state: .completed))
+            store.start(from: RecordingSession(language: .en, state: .completed))
             store.setSelectedPatient(id: OpaqueClinikoID(1001), displayName: "Sample")
             store.setDraftNotes(StructuredNotes(subjective: "s"))
             // Appointment id with a non-numeric rawValue. Production never
@@ -365,7 +365,7 @@ struct ExportFlowViewModelTests {
     func confirm_unsetAppointment_fails() async throws {
         try await runGated(responder: { _ in (HTTPURLResponse(), Data()) }) { config in
             let store = SessionStore()
-            store.start(from: RecordingSession(language: "en", state: .completed))
+            store.start(from: RecordingSession(language: .en, state: .completed))
             store.setSelectedPatient(id: OpaqueClinikoID(1001), displayName: "Sample")
             store.setDraftNotes(StructuredNotes(subjective: "s"))
             // No setSelectedAppointment — picker unset.

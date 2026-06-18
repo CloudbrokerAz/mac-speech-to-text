@@ -445,7 +445,7 @@ class AppState {
         AppLogger.app.info(
             "AppState: clinicalNotes hand-off length=\(transcript.count, privacy: .public)"
         )
-        let language = settings.language.defaultLanguage
+        let language = SupportedLanguage.from(code: settings.language.defaultLanguage) ?? .en
         var recording = RecordingSession(
             language: language,
             state: .completed
@@ -752,7 +752,7 @@ class AppState {
     /// Start a new recording session
     func startRecording() {
         currentSession = RecordingSession(
-            language: settings.language.defaultLanguage,
+            language: SupportedLanguage.from(code: settings.language.defaultLanguage) ?? .en,
             state: .recording
         )
         isRecording = true

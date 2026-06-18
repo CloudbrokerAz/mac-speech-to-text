@@ -54,7 +54,7 @@ struct ExportFlowCoordinatorTests {
 
     private func makePopulatedSession() -> SessionStore {
         let store = SessionStore()
-        var recording = RecordingSession(language: "en", state: .completed)
+        var recording = RecordingSession(language: .en, state: .completed)
         recording.transcribedText = "Synthetic transcript for coordinator test."
         store.start(from: recording)
         store.setDraftNotes(StructuredNotes(

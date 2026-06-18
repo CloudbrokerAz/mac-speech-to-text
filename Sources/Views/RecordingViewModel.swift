@@ -296,7 +296,7 @@ final class RecordingViewModel {
         currentSession = RecordingSession(
             id: sessionId,
             startTime: Date(),
-            language: settings.language.defaultLanguage,
+            language: SupportedLanguage.from(code: settings.language.defaultLanguage) ?? .en,
             state: .recording
         )
         AppLogger.debug(AppLogger.viewModel, "[\(viewModelId)] Created session \(sessionId.uuidString.prefix(8))")

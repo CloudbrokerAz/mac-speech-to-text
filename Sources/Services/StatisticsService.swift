@@ -61,12 +61,12 @@ actor StatisticsService {
         }
 
         // Update language breakdown
-        if let index = todayStats.languageBreakdown.firstIndex(where: { $0.languageCode == session.language }) {
+        if let index = todayStats.languageBreakdown.firstIndex(where: { $0.languageCode == session.language.rawValue }) {
             todayStats.languageBreakdown[index].sessionCount += 1
             todayStats.languageBreakdown[index].wordCount += session.wordCount
         } else {
             todayStats.languageBreakdown.append(
-                LanguageStats(languageCode: session.language, sessionCount: 1, wordCount: session.wordCount)
+                LanguageStats(languageCode: session.language.rawValue, sessionCount: 1, wordCount: session.wordCount)
             )
         }
 
