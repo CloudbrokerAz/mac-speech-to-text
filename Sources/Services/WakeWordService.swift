@@ -112,6 +112,11 @@ actor WakeWordService: WakeWordServiceProtocol {
     /// Frames processed count
     private var framesProcessed: Int = 0
 
+    /// Single-flight guard for `updateKeywords` — set synchronously before
+    /// `shutdown()` so reentrant `processFrame` calls during the subsequent
+    /// `await initialize(...)` early-return instead of touching a finished spotter.
+    private var isReconfiguring = false
+
     // MARK: - Initialization
 
     init() {
@@ -257,12 +262,15 @@ actor WakeWordService: WakeWordServiceProtocol {
 
     private var processFrameLogCount = 0
     func processFrame(_ samples: [Float]) -> WakeWordResult? {
+        guard !isReconfiguring else {
+            return nil
+        }
+
         processFrameLogCount += 1
 
         guard _isInitialized else {
             if processFrameLogCount % 500 == 1 {
-                print("[DEBUG] WakeWordService not initialized!")
-                fflush(stdout)
+                AppLogger.debug(AppLogger.service, "WakeWordService not initialized")
             }
             return nil
         }
@@ -273,8 +281,7 @@ actor WakeWordService: WakeWordServiceProtocol {
 
         guard let spotter = keywordSpotter else {
             if processFrameLogCount % 500 == 1 {
-                print("[DEBUG] WakeWordService spotter is nil!")
-                fflush(stdout)
+                AppLogger.debug(AppLogger.service, "WakeWordService spotter is nil")
             }
             return nil
         }
@@ -292,8 +299,10 @@ actor WakeWordService: WakeWordServiceProtocol {
         }
 
         if processFrameLogCount % 500 == 1 {
-            print("[DEBUG] WakeWordService: processed \(samples.count) samples, decoded \(decodeCount) times")
-            fflush(stdout)
+            AppLogger.trace(
+                AppLogger.service,
+                "WakeWordService: processed \(samples.count) samples, decoded \(decodeCount) times"
+            )
         }
 
         // Check for keyword detection
@@ -331,6 +340,9 @@ actor WakeWordService: WakeWordServiceProtocol {
             AppLogger.error(AppLogger.service, "[\(serviceId)] Cannot update keywords - not initialized")
             throw WakeWordError.initializationFailed("Service not initialized - call initialize() first")
         }
+
+        isReconfiguring = true
+        defer { isReconfiguring = false }
 
         // Shutdown current instance
         shutdown()
