@@ -5,27 +5,27 @@
     {
       "path": "config.json",
       "size": 6229,
-      "sha256": null
+      "sha256": "18521c2237729a659a3b821eeb706f088e46518d8698f8e357df7bf7300e7041"
     },
     {
       "path": "generation_config.json",
       "size": 208,
-      "sha256": null
+      "sha256": "d4226bbe3117d2d253ba4609720ba82c6c4ce4627a9a6ae05387c78983ac03de"
     },
     {
       "path": "processor_config.json",
       "size": 902,
-      "sha256": null
+      "sha256": "1bd0d00776284f369c1eff5fb631e865dfcdca861e0b7d60dbef27fcf37436a8"
     },
     {
       "path": "chat_template.jinja",
       "size": 16317,
-      "sha256": null
+      "sha256": "781d10940fbc44be40064b5d43a056fc486c84ceaa55538226368b57314132bf"
     },
     {
       "path": "tokenizer_config.json",
       "size": 2095,
-      "sha256": null
+      "sha256": "90c3a3ba5bf53818383a58e1a776cbcacd2a038d4812eaa373e1522f2d06f3df"
     },
     {
       "path": "tokenizer.json",
@@ -35,7 +35,7 @@
     {
       "path": "model.safetensors.index.json",
       "size": 251749,
-      "sha256": null
+      "sha256": "50c54ba1baf793652f8f85fb61cf9bedfafdc2ea7b59f80cf56611c9912fccd0"
     },
     {
       "path": "model.safetensors",
