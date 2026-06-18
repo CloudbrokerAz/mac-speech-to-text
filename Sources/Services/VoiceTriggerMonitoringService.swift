@@ -85,6 +85,11 @@ final class VoiceTriggerMonitoringService {
     /// Flag to prevent double state transitions
     @ObservationIgnored private var isTransitioning: Bool = false
 
+    /// Synchronous guard against multiple silence/max-duration timers
+    /// enqueueing `handleSilenceTimeout` before the first handler runs
+    /// (CON-5). Set before spawning the handler Task; cleared in defer.
+    @ObservationIgnored private var isHandlingTimeout: Bool = false
+
     /// Current voice trigger configuration (cached)
     @ObservationIgnored private var configuration: VoiceTriggerConfiguration = .default
 
@@ -270,6 +275,8 @@ final class VoiceTriggerMonitoringService {
         // Cancel any pending recovery task to prevent state changes after stop
         recoveryTask?.cancel()
         recoveryTask = nil
+
+        isHandlingTimeout = false
 
         stopFrameConsumer()
 
@@ -527,12 +534,25 @@ final class VoiceTriggerMonitoringService {
         }
 
         if silenceDuration >= threshold {
+            guard !isHandlingTimeout else { return }
+            isHandlingTimeout = true
             silenceLogCounter = 0
             AppLogger.info(
                 AppLogger.service,
                 "[\(serviceId)] Silence threshold reached (\(String(format: "%.1f", silenceDuration))s) - transcribing"
             )
+
+            // Invalidate timers synchronously before the async handler so
+            // further silence ticks cannot enqueue another timeout task.
+            silenceTimer?.invalidate()
+            silenceTimer = nil
+            deinitSilenceTimer = nil
+            maxDurationTimer?.invalidate()
+            maxDurationTimer = nil
+            deinitMaxDurationTimer = nil
+
             Task { @MainActor [weak self] in
+                defer { self?.isHandlingTimeout = false }
                 await self?.handleSilenceTimeout()
             }
         }
@@ -548,13 +568,6 @@ final class VoiceTriggerMonitoringService {
 
         AppLogger.info(AppLogger.service, "[\(serviceId)] handleSilenceTimeout()")
 
-        // Stop timers
-        silenceTimer?.invalidate()
-        silenceTimer = nil
-        deinitSilenceTimer = nil
-        maxDurationTimer?.invalidate()
-        maxDurationTimer = nil
-        deinitMaxDurationTimer = nil
         silenceTimeRemaining = nil
 
         // Proceed to transcription if we have audio
@@ -574,8 +587,19 @@ final class VoiceTriggerMonitoringService {
         let timer = Timer.scheduledTimer(withTimeInterval: configuration.maxRecordingDuration, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                guard !self.isHandlingTimeout else { return }
+                self.isHandlingTimeout = true
                 AppLogger.info(AppLogger.service, "[\(self.serviceId)] Max recording duration reached")
-                await self.handleSilenceTimeout() // Reuse same flow
+
+                self.silenceTimer?.invalidate()
+                self.silenceTimer = nil
+                self.deinitSilenceTimer = nil
+                self.maxDurationTimer?.invalidate()
+                self.maxDurationTimer = nil
+                self.deinitMaxDurationTimer = nil
+
+                defer { self.isHandlingTimeout = false }
+                await self.handleSilenceTimeout()
             }
         }
         // Explicitly add to main run loop to ensure timer fires correctly
