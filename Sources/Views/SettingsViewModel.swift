@@ -32,7 +32,10 @@ final class SettingsViewModel {
 
     // MARK: - Dependencies
 
-    private let settingsService: SettingsService
+    @ObservationIgnored private let settingsService: SettingsService
+
+    /// Debounced disk-write task for slider-driven settings (#PRF-4).
+    @ObservationIgnored private var debouncedSaveTask: Task<Void, Never>?
 
     // MARK: - Initialization
 
@@ -108,16 +111,26 @@ final class SettingsViewModel {
         await saveSettings()
     }
 
-    /// Update audio sensitivity threshold
+    /// Update audio sensitivity threshold (in-memory immediately; disk write debounced).
     func updateAudioSensitivity(_ sensitivity: Double) async {
         settings.audio.sensitivity = sensitivity
-        await saveSettings()
+        scheduleDebouncedSave()
     }
 
-    /// Update silence detection threshold
+    /// Update silence detection threshold (in-memory immediately; disk write debounced).
     func updateSilenceThreshold(_ threshold: Double) async {
         settings.audio.silenceThreshold = threshold
-        await saveSettings()
+        scheduleDebouncedSave()
+    }
+
+    /// Schedule a debounced settings persist (~300 ms) for slider drags (#PRF-4).
+    private func scheduleDebouncedSave() {
+        debouncedSaveTask?.cancel()
+        debouncedSaveTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled, let self else { return }
+            await self.saveSettings()
+        }
     }
 
     // MARK: - Private Methods

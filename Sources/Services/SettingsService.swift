@@ -76,8 +76,6 @@ class SettingsService: SettingsServiceProtocol {
 
         let data = try encoder.encode(updatedSettings)
         userDefaults.set(data, forKey: settingsKey)
-        // Ensure immediate persistence for consistency in rapid save/load cycles
-        userDefaults.synchronize()
     }
 
     /// Reset settings to defaults
