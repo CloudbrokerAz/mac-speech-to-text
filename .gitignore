@@ -73,6 +73,7 @@ xcode-project/DerivedData/
 .signing-identity
 .signing-fingerprint
 xcode-project/Config/Signing.xcconfig
+SpeechToTextUITests.xcodeproj/Config/DevelopmentTeam.xcconfig
 
 # ML Models — large weight files (~2.6 GB) downloaded separately at first run.
 # Per-model manifest.json (sha256-pinned download recipe for ModelDownloader)

@@ -1,0 +1,4 @@
+// Copy to DevelopmentTeam.xcconfig (gitignored) and set your Apple Developer team ID.
+// SEC-9: never commit a real DEVELOPMENT_TEAM — the UITest target reads this file via
+// baseConfigurationReference in project.pbxproj.
+DEVELOPMENT_TEAM = YOUR_TEAM_ID_HERE
