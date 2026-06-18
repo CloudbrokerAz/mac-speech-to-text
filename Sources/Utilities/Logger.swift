@@ -19,8 +19,15 @@ enum AppLogger {
     /// Subsystem identifier for all loggers
     private static let subsystem = Bundle.main.bundleIdentifier ?? Constants.App.bundleIdentifier
 
-    /// Current log level - set to .trace for maximum debug output
-    nonisolated(unsafe) static var currentLevel: LogLevel = .trace
+    /// Current log level — `.info` in release builds; `.trace` in debug for
+    /// maximum verbosity during development (PRF-5).
+    nonisolated(unsafe) static var currentLevel: LogLevel = {
+        #if DEBUG
+        return .trace
+        #else
+        return .info
+        #endif
+    }()
 
     /// Enable expensive debug checks (object addresses, etc.)
     nonisolated(unsafe) static var enableExpensiveLogging = true
@@ -47,7 +54,7 @@ enum AppLogger {
 
     static func trace(
         _ logger: Logger,
-        _ message: String,
+        _ message: @autoclosure () -> String,
         file: String = #file,
         function: String = #function,
         line: Int = #line
@@ -55,57 +62,57 @@ enum AppLogger {
         guard currentLevel >= .trace else { return }
         let fileName = (file as NSString).lastPathComponent
         logger.debug(
-            "TRACE [\(fileName, privacy: .public):\(line, privacy: .public)] \(function, privacy: .public) - \(message, privacy: .public)"
+            "TRACE [\(fileName, privacy: .public):\(line, privacy: .public)] \(function, privacy: .private) - \(message(), privacy: .private)"
         )
     }
 
     static func debug(
         _ logger: Logger,
-        _ message: String,
+        _ message: @autoclosure () -> String,
         file: String = #file,
         line: Int = #line
     ) {
         guard currentLevel >= .debug else { return }
         let fileName = (file as NSString).lastPathComponent
-        logger.debug("DEBUG [\(fileName, privacy: .public):\(line, privacy: .public)] \(message, privacy: .public)")
+        logger.debug("DEBUG [\(fileName, privacy: .public):\(line, privacy: .public)] \(message(), privacy: .private)")
     }
 
     static func info(
         _ logger: Logger,
-        _ message: String,
+        _ message: @autoclosure () -> String,
         file: String = #file,
         line: Int = #line
     ) {
         guard currentLevel >= .info else { return }
         let fileName = (file as NSString).lastPathComponent
-        logger.info("INFO [\(fileName, privacy: .public):\(line, privacy: .public)] \(message, privacy: .public)")
+        logger.info("INFO [\(fileName, privacy: .public):\(line, privacy: .public)] \(message(), privacy: .private)")
     }
 
     static func warning(
         _ logger: Logger,
-        _ message: String,
+        _ message: @autoclosure () -> String,
         file: String = #file,
         line: Int = #line
     ) {
         guard currentLevel >= .warning else { return }
         let fileName = (file as NSString).lastPathComponent
-        logger.warning("WARN [\(fileName, privacy: .public):\(line, privacy: .public)] \(message, privacy: .public)")
+        logger.warning("WARN [\(fileName, privacy: .public):\(line, privacy: .public)] \(message(), privacy: .private)")
     }
 
     static func error(
         _ logger: Logger,
-        _ message: String,
+        _ message: @autoclosure () -> String,
         file: String = #file,
         line: Int = #line
     ) {
         let fileName = (file as NSString).lastPathComponent
-        logger.error("ERROR [\(fileName, privacy: .public):\(line, privacy: .public)] \(message, privacy: .public)")
+        logger.error("ERROR [\(fileName, privacy: .public):\(line, privacy: .public)] \(message(), privacy: .private)")
     }
 
     static func lifecycle(
         _ logger: Logger,
         _ object: AnyObject,
-        event: String,
+        event: @autoclosure () -> String,
         file: String = #file,
         line: Int = #line
     ) {
@@ -114,7 +121,7 @@ enum AppLogger {
         let typeName = String(describing: type(of: object))
         let address = Unmanaged.passUnretained(object).toOpaque()
         logger.debug(
-            "LIFECYCLE [\(fileName, privacy: .public):\(line, privacy: .public)] \(typeName, privacy: .public)@\(String(describing: address), privacy: .public) - \(event, privacy: .public)"
+            "LIFECYCLE [\(fileName, privacy: .public):\(line, privacy: .public)] \(typeName, privacy: .public)@\(String(describing: address), privacy: .public) - \(event(), privacy: .private)"
         )
     }
 
@@ -122,15 +129,15 @@ enum AppLogger {
         _ logger: Logger,
         from: T,
         to: T,
-        context: String = "",
+        context: @autoclosure () -> String = "",
         file: String = #file,
         line: Int = #line
     ) {
         guard currentLevel >= .debug else { return }
         let fileName = (file as NSString).lastPathComponent
-        let ctx = context.isEmpty ? "" : " (\(context))"
+        let ctx = context().isEmpty ? "" : " (\(context()))"
         logger.debug(
-            "STATE [\(fileName, privacy: .public):\(line, privacy: .public)] \(String(describing: from), privacy: .public) -> \(String(describing: to), privacy: .public)\(ctx, privacy: .public)"
+            "STATE [\(fileName, privacy: .public):\(line, privacy: .public)] \(String(describing: from), privacy: .private) -> \(String(describing: to), privacy: .private)\(ctx, privacy: .private)"
         )
     }
 }
