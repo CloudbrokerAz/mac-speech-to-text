@@ -95,6 +95,7 @@ struct ExportFlowCoordinatorTests {
         exporter: TreatmentNoteExporter,
         closeReviewWindow: @escaping () -> Void = {}
     ) {
+        ExportFlowCoordinator.shared.resetForTesting()
         ExportFlowCoordinator.shared.configure(
             sessionStore: sessionStore,
             exporter: exporter,
@@ -158,6 +159,35 @@ struct ExportFlowCoordinatorTests {
         #expect(json["note_id"] is String)
         #expect(json["cliniko_status"] is Int)
         #expect(json["app_version"] is String)
+    }
+
+    // MARK: - Configuration lifecycle
+
+    @Test("resetForTesting clears coordinator wiring")
+    func resetForTesting_clearsConfiguration() {
+        let store = SessionStore()
+        ExportFlowCoordinator.shared.resetForTesting()
+        ExportFlowCoordinator.shared.configure(
+            sessionStore: store,
+            exporter: TreatmentNoteExporter(
+                client: ClinikoClient(
+                    credentials: try! ClinikoCredentials(apiKey: "MS-test-au1", shard: .au1),
+                    session: URLSession(configuration: .ephemeral),
+                    userAgent: "reset-test/1.0",
+                    retryPolicy: .immediate
+                ),
+                auditStore: InMemoryAuditStore(),
+                manipulations: stubManipulations()
+            ),
+            manipulations: stubManipulations(),
+            openClinikoSettings: {},
+            closeReviewWindow: {}
+        )
+        #expect(ExportFlowCoordinator.shared.isConfigured)
+
+        ExportFlowCoordinator.shared.resetForTesting()
+        #expect(!ExportFlowCoordinator.shared.isConfigured)
+        #expect(ExportFlowCoordinator.shared.makeViewModel() == nil)
     }
 
     // MARK: - Success path
