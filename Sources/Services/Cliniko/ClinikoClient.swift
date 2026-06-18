@@ -181,7 +181,11 @@ public actor ClinikoClient {
             case .terminal(let error):
                 throw error
             case .retry(let delay):
-                try await retryPolicy.sleep(delay)
+                do {
+                    try await retryPolicy.sleep(delay)
+                } catch is CancellationError {
+                    throw ClinikoError.cancelled
+                }
                 attempt += 1
             }
         }
