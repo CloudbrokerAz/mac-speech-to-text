@@ -116,9 +116,7 @@ final class ExportFlowCoordinator {
             },
             openClinikoSettings: openClinikoSettings,
             copyToClipboard: { body in
-                let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                pasteboard.setString(body, forType: .string)
+                ClinicalNotesPasteboard.copySOAPNote(body)
             }
         )
         return ExportFlowViewModel(
