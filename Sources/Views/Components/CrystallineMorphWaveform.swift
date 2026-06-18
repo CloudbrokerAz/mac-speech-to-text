@@ -139,6 +139,9 @@ struct CrystallineMorphWaveform: View {
                 smoothLevel = newValue
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isRecording ? "Crystalline audio waveform, recording" : "Crystalline audio waveform, idle")
+        .accessibilityValue("\(Int(smoothLevel * 100)) percent audio level")
     }
 
     // MARK: - Glow Halo

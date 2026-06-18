@@ -75,6 +75,9 @@ struct SiriStyleRingWaves: View {
                 smoothLevel = newValue
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isRecording ? "Radial audio waveform, recording" : "Radial audio waveform, idle")
+        .accessibilityValue("\(Int(smoothLevel * 100)) percent audio level")
     }
 
     // MARK: - Bar Level Animation

@@ -95,6 +95,8 @@ struct ReviewScreen: View {
             focusedField = nil
         }
         .accessibilityIdentifier("reviewScreen")
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(ClinicalL10n.reviewTitle)
     }
 
     // MARK: - Background
@@ -111,7 +113,7 @@ struct ReviewScreen: View {
     private var header: some View {
         HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Clinical Notes Review")
+                Text(ClinicalL10n.reviewTitle)
                     .font(.system(size: 16, weight: .semibold, design: .rounded))
                     .foregroundStyle(.primary)
                     .accessibilityAddTraits(.isHeader)
@@ -297,7 +299,7 @@ struct ReviewScreen: View {
         }
         .accessibilityIdentifier("reviewScreen.soapColumn.pendingOverlay")
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Generating clinical note")
+        .accessibilityLabel(ClinicalL10n.reviewGenerating)
     }
 
     /// Inline banner shown above the SOAP editors when the pipeline
