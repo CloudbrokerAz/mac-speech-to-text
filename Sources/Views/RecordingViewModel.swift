@@ -73,6 +73,12 @@ final class RecordingViewModel {
         settingsService.load().general.clinicalNotesModeEnabled
     }
 
+    /// Waveform visualization style from Settings (#ARC-5). Read on demand
+    /// so Theme-section changes apply to the next modal body evaluation.
+    var waveformStyle: WaveformStyleOption {
+        settingsService.load().ui.waveformStyle
+    }
+
     /// Whether to overlay the one-time Safety Disclaimer (#12) on the
     /// recording modal. Set by `presentSafetyDisclaimer()` when the doctor
     /// taps "Generate Notes" without a prior ack; cleared by

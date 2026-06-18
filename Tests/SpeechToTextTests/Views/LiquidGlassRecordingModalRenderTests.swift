@@ -40,6 +40,19 @@ final class LiquidGlassRecordingModalRenderTests: XCTestCase {
         XCTAssertFalse(viewModel.clinicalMode)
     }
 
+    func test_liquidGlassRecordingModal_usesSettingsWaveformStyle() throws {
+        let settingsService = SettingsService()
+        var settings = settingsService.load()
+        settings.ui.waveformStyle = .siriRings
+        try settingsService.save(settings)
+
+        let viewModel = RecordingViewModel(settingsService: settingsService)
+        let modal = LiquidGlassRecordingModal(viewModel: viewModel)
+
+        XCTAssertEqual(viewModel.waveformStyle, .siriRings)
+        XCTAssertNotNil(modal.body)
+    }
+
     func test_liquidGlassRecordingModal_clinicalMode_exposesTranscriptScrollView() throws {
         let viewModel = RecordingViewModel(clinicalMode: true)
         viewModel.transcribedText = String(repeating: "Patient reports persistent thoracic discomfort. ", count: 20)

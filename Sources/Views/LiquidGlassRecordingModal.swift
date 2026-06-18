@@ -309,6 +309,7 @@ struct LiquidGlassRecordingModal: View {
 
     private var centralVisualization: some View {
         RecordingModalWaveformSection(
+            waveformStyle: viewModel.waveformStyle,
             audioLevel: Float(viewModel.audioLevel),
             isRecording: viewModel.isRecording
         )
@@ -873,27 +874,16 @@ struct LiquidGlassRecordingModal: View {
 /// invalidated on every audio-buffer write. Accessibility value is static
 /// while recording — level detail lives in the waveform views.
 private struct RecordingModalWaveformSection: View {
+    let waveformStyle: WaveformStyleOption
     let audioLevel: Float
     let isRecording: Bool
 
     var body: some View {
-        ZStack {
-            AuroraWaveform(audioLevel: audioLevel, isRecording: isRecording)
-                .frame(height: 90)
-                .mask(
-                    LinearGradient(
-                        colors: [.clear, .white, .white, .clear],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
-
-            if isRecording {
-                LiquidOrbWaveform(audioLevel: audioLevel, isRecording: true)
-                    .frame(width: 70, height: 70)
-                    .opacity(0.6)
-            }
-        }
+        WaveformVisualization(
+            style: waveformStyle,
+            audioLevel: audioLevel,
+            isRecording: isRecording
+        )
         .frame(height: 100)
         .accessibilityIdentifier("waveformView")
         .accessibilityLabel("Audio waveform")
