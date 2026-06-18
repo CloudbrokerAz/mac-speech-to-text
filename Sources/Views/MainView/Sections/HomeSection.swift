@@ -59,6 +59,7 @@ struct HomeSection: View {
     /// present. Hidden in all other states — the doctor either has the
     /// feature or doesn't (no greyed-out trigger).
     @State private var clinicalNotesGateOpen: Bool = false
+    @State private var clinicalNotesModeEnabled: Bool = false
 
     // MARK: - Initialization
 
@@ -97,6 +98,10 @@ struct HomeSection: View {
 
                 // Hotkey hint (shown after permissions are set up)
                 hotkeyHint
+
+                if clinicalNotesModeEnabled {
+                    clinicalNotesOnboardingStub
+                }
 
                 // Typing animation preview
                 typingPreview
@@ -183,7 +188,76 @@ struct HomeSection: View {
         .onReceive(NotificationCenter.default.publisher(for: .settingsDidReset)) { _ in
             // Reload settings when they change
             settings = settingsService.load()
+            Task { await refreshClinicalNotesGate() }
         }
+    }
+
+    // MARK: - Clinical Notes onboarding stub (ARC-15)
+
+    /// Minimal checklist surfaced when Clinical Notes Mode is enabled.
+    /// Full guided flow is a follow-up — this orients new practitioners
+    /// toward Settings without blocking the existing STT onboarding.
+    private var clinicalNotesOnboardingStub: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(ClinicalL10n.onboardingTitle)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color.textTertiaryAdaptive)
+                .tracking(1.5)
+                .accessibilityAddTraits(.isHeader)
+
+            Text(ClinicalL10n.onboardingSubtitle)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 8) {
+                onboardingChecklistRow(
+                    title: "Clinical Notes Mode enabled",
+                    isComplete: true
+                )
+                onboardingChecklistRow(
+                    title: "Cliniko API key saved",
+                    isComplete: clinicalNotesGateOpen
+                )
+                onboardingChecklistRow(
+                    title: "Recording shortcut configured",
+                    isComplete: KeyboardShortcuts.isEnabled(for: .clinicalNotesRecord)
+                )
+                onboardingChecklistRow(
+                    title: "On-device model downloaded",
+                    isComplete: false
+                )
+            }
+
+            Button("Open Settings") {
+                NotificationCenter.default.post(name: .showSettings, object: nil)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color.amberPrimary)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.cardBackgroundAdaptive)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color.cardBorderAdaptive, lineWidth: 1)
+                )
+        )
+        .shadow(color: Color.cardShadowAdaptive, radius: 10, x: 0, y: 3)
+        .accessibilityIdentifier("homeClinicalNotesOnboarding")
+    }
+
+    private func onboardingChecklistRow(title: String, isComplete: Bool) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: isComplete ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(isComplete ? Color.successGreen : Color.textTertiaryAdaptive)
+            Text(title)
+                .font(.system(size: 13))
+                .foregroundStyle(.primary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title), \(isComplete ? "complete" : "pending")")
     }
 
     // MARK: - Keyboard Navigation
@@ -621,6 +695,7 @@ struct HomeSection: View {
     /// flip closed on a transient lock.
     private func refreshClinicalNotesGate() async {
         let modeOn = settingsService.load().general.clinicalNotesModeEnabled
+        clinicalNotesModeEnabled = modeOn
         guard modeOn else {
             clinicalNotesGateOpen = false
             return
