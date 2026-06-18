@@ -13,7 +13,7 @@ enum LaunchArguments {
     static let uitesting = "--uitesting"
 
     /// Reset onboarding state to first-launch experience
-    /// Shows the single-screen WelcomeView
+    /// Presents MainView with HomeSection
     static let resetOnboarding = "--reset-onboarding"
 
     /// Skip all permission checks using mock service

@@ -102,8 +102,8 @@ class UITestBase: XCTestCase {
         launchAppSkippingWelcome(arguments: arguments)
     }
 
-    /// Launch the app with fresh welcome state
-    /// Shows the single-screen WelcomeView
+    /// Launch the app with fresh first-launch state
+    /// Presents MainView with HomeSection (onboarding reset)
     /// - Parameters:
     ///   - arguments: Additional launch arguments
     func launchAppWithFreshWelcome(arguments: [String] = []) {
