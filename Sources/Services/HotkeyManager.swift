@@ -106,7 +106,7 @@ class HotkeyManager {
         // and KeyboardShortcuts.disable requires MainActor
         if !hasShutdown {
             // Log warning if shutdown wasn't called - indicates a bug in the caller
-            print("[WARNING] HotkeyManager deallocated without calling shutdown() - hotkeys may not be properly disabled")
+            AppLogger.app.warning("HotkeyManager deallocated without calling shutdown() - hotkeys may not be properly disabled")
         }
     }
 
@@ -120,17 +120,13 @@ class HotkeyManager {
         // NOTE: Do NOT call KeyboardShortcuts.getShortcut() here - it crashes due to
         // Bundle.module not being available in executable targets.
 
-        print("[DEBUG] HotkeyManager: setupHotkey() called")
         AppLogger.app.debug("HotkeyManager: setupHotkey() called")
 
         // First, explicitly enable the shortcut to ensure Carbon hotkey is registered
-        print("[DEBUG] HotkeyManager: About to enable .holdToRecord shortcut...")
         KeyboardShortcuts.enable(.holdToRecord)
-        print("[DEBUG] HotkeyManager: Enabled .holdToRecord shortcut")
         AppLogger.app.debug("HotkeyManager: Enabled .holdToRecord shortcut")
 
         KeyboardShortcuts.onKeyDown(for: .holdToRecord) { [weak self] in
-            print("[DEBUG] HotkeyManager: onKeyDown callback triggered for holdToRecord!")
             AppLogger.app.debug("HotkeyManager: onKeyDown callback triggered")
             Task { @MainActor in
                 await self?.handleKeyDown()
@@ -176,10 +172,8 @@ class HotkeyManager {
     private func setupClinicalNotesHotkey() {
         KeyboardShortcuts.enable(.clinicalNotesRecord)
         AppLogger.app.debug("HotkeyManager: Enabled .clinicalNotesRecord shortcut")
-        AppLogger.app.info("[#109-probe] setupClinicalNotesHotkey: post-enable isEnabled=\(KeyboardShortcuts.isEnabled(for: .clinicalNotesRecord), privacy: .public)")
 
         KeyboardShortcuts.onKeyDown(for: .clinicalNotesRecord) { [weak self] in
-            AppLogger.app.info("[#109-probe] onKeyDown fired for .clinicalNotesRecord (Carbon → KeyboardShortcuts dispatcher reached)")
             Task { @MainActor in
                 await self?.handleClinicalNotesKeyPress()
             }
@@ -225,11 +219,8 @@ class HotkeyManager {
     /// dedicated state flag so the chord cannot interleave with hold-to-record /
     /// toggle-recording sessions.
     func handleClinicalNotesKeyPress() async {
-        AppLogger.app.info("[#109-probe] handleClinicalNotesKeyPress entered: isRecordingClinicalNotes=\(self.isRecordingClinicalNotes, privacy: .public) isProcessing=\(self.isProcessing, privacy: .public) isEnabled=\(KeyboardShortcuts.isEnabled(for: .clinicalNotesRecord), privacy: .public)")
-
         // If a clinical-notes session is active, stop it.
         if isRecordingClinicalNotes {
-            AppLogger.app.info("[#109-probe] handleClinicalNotesKeyPress → STOP branch (chord state was active)")
             isRecordingClinicalNotes = false
             await onClinicalNotesRecordingStop?()
             return
@@ -242,7 +233,6 @@ class HotkeyManager {
             return
         }
 
-        AppLogger.app.info("[#109-probe] handleClinicalNotesKeyPress → START branch (firing onClinicalNotesRecordingStart)")
         isRecordingClinicalNotes = true
         await onClinicalNotesRecordingStart?()
     }
@@ -259,7 +249,6 @@ class HotkeyManager {
     /// the user perceives the chord as broken until they press it again.
     /// Idempotent — safe to call from any close path.
     func clinicalNotesSessionEnded() {
-        AppLogger.app.info("[#109-probe] clinicalNotesSessionEnded entered: was isRecordingClinicalNotes=\(self.isRecordingClinicalNotes, privacy: .public) isEnabled=\(KeyboardShortcuts.isEnabled(for: .clinicalNotesRecord), privacy: .public)")
         if isRecordingClinicalNotes {
             isRecordingClinicalNotes = false
             AppLogger.app.debug("HotkeyManager: clinicalNotesSessionEnded - state reset")
