@@ -5,7 +5,7 @@
 # This script is designed for CI environments where we can't build from source.
 # It downloads the official pre-built release and packages it as an xcframework.
 
-set -e
+set -euo pipefail
 
 # Configuration
 SHERPA_VERSION="${SHERPA_VERSION:-v1.12.20}"
