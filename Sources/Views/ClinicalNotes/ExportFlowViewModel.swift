@@ -312,6 +312,12 @@ final class ExportFlowViewModel: Identifiable {
     @ObservationIgnored private nonisolated(unsafe) var deinitUploadTask: Task<Void, Never>?
     @ObservationIgnored private nonisolated(unsafe) var deinitCountdownTask: Task<Void, Never>?
 
+    /// Test seam (TST-9): invoked on MainActor when an upload-driven
+    /// transition reaches `.succeeded` or `.failed`. Production leaves
+    /// this nil; `ExportFlowViewModelTests` sets it to resume a
+    /// continuation instead of polling with a wall-clock timeout.
+    @ObservationIgnored var testUploadDidReachTerminal: (@MainActor () -> Void)?
+
     // MARK: - Init
 
     init(
@@ -570,6 +576,7 @@ final class ExportFlowViewModel: Identifiable {
         )
         state = .succeeded(report)
         AppLogger.viewModel.info("ExportFlowViewModel: state=succeeded auditPersisted=\(outcome.auditPersisted, privacy: .public) dropped=\(outcome.droppedManipulationIDs.count, privacy: .public)")
+        testUploadDidReachTerminal?()
         // Host runs the SessionStore.clear() + window close. Caller
         // contract: `onSuccess` is the only side-effect post-success;
         // the audit row is already on disk by this point.
@@ -584,6 +591,7 @@ final class ExportFlowViewModel: Identifiable {
         // Structural log: the case name only. Never the URL, never
         // the body, never any field values.
         AppLogger.viewModel.error("ExportFlowViewModel: state=failed reason=\(Self.caseName(translated), privacy: .public)")
+        testUploadDidReachTerminal?()
         if case .rateLimited(let retryAfter) = translated {
             startRateLimitCountdown(seconds: retryAfter ?? 60)
         }

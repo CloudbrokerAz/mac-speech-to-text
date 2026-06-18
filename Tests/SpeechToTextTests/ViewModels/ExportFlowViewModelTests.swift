@@ -147,24 +147,30 @@ struct ExportFlowViewModelTests {
         timeout: TimeInterval = 5.0,
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        polling: while true {
-            switch viewModel.state {
-            case .failed, .succeeded:
-                return
-            default:
-                // Check the deadline AFTER reading state so a transition
-                // landing on the very last loop iteration is not
-                // misreported as a timeout. `break polling` is a labelled
-                // break — `break` alone would only exit the switch and
-                // re-enter `while true` on the next iteration (Gemini
-                // review on PR #135).
-                if Date() >= deadline { break polling }
-                try await Task.sleep(for: .milliseconds(5))
+        if case .failed = viewModel.state { return }
+        if case .succeeded = viewModel.state { return }
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { @MainActor in
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    switch viewModel.state {
+                    case .failed, .succeeded:
+                        continuation.resume()
+                    default:
+                        viewModel.testUploadDidReachTerminal = {
+                            continuation.resume()
+                        }
+                    }
+                }
             }
+            group.addTask {
+                try await Task.sleep(for: .seconds(timeout))
+                throw TimeoutError()
+            }
+            try await group.next()
+            group.cancelAll()
         }
-        // Final post-loop check picks up a transition that landed on
-        // the last iteration before the deadline tripped.
+
         switch viewModel.state {
         case .failed, .succeeded:
             return
@@ -175,6 +181,8 @@ struct ExportFlowViewModelTests {
             )
         }
     }
+
+    private struct TimeoutError: Error {}
 
     /// Structural-only `ExportFlowState` case name for log
     /// interpolation. Required because `.confirming(ExportSummary)`'s
