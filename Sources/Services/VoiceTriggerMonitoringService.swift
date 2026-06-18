@@ -89,8 +89,12 @@ final class VoiceTriggerMonitoringService {
     @ObservationIgnored private var configuration: VoiceTriggerConfiguration = .default
 
     // nonisolated copies for deinit access (deinit cannot access MainActor-isolated state)
-    @ObservationIgnored private nonisolated(unsafe) var deinitSilenceTimer: Timer?
-    @ObservationIgnored private nonisolated(unsafe) var deinitMaxDurationTimer: Timer?
+    @ObservationIgnored
+    // swiftlint:disable:next nonisolated_unsafe_warning
+    private nonisolated(unsafe) var deinitSilenceTimer: Timer?
+    @ObservationIgnored
+    // swiftlint:disable:next nonisolated_unsafe_warning
+    private nonisolated(unsafe) var deinitMaxDurationTimer: Timer?
 
     /// Recovery task that transitions from error state back to monitoring
     /// Stored so it can be cancelled during stopMonitoring()

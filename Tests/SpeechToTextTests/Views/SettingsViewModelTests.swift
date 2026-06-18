@@ -301,8 +301,11 @@ final class SettingsViewModelTests: XCTestCase {
     }
 
     func test_updateSilenceThreshold_savesSettings() async {
-        // When
+        // When — debounced ~300 ms (#PRF-4)
         await sut.updateSilenceThreshold(1.5)
+        XCTAssertFalse(mockSettingsService.saveWasCalled)
+
+        try? await Task.sleep(nanoseconds: 350_000_000)
 
         // Then
         XCTAssertTrue(mockSettingsService.saveWasCalled)
