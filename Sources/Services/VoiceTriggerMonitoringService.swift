@@ -96,6 +96,12 @@ final class VoiceTriggerMonitoringService {
     /// Stored so it can be cancelled during stopMonitoring()
     @ObservationIgnored private var recoveryTask: Task<Void, Never>?
 
+    /// Ordered frame delivery for wake-word processing (CON-2). Per-buffer
+    /// `Task` spawns had no FIFO guarantee; a single consumer drains this
+    /// stream sequentially so sherpa's streaming decoder sees frames in order.
+    @ObservationIgnored private var frameStreamContinuation: AsyncStream<[Float]>.Continuation?
+    @ObservationIgnored private var frameConsumerTask: Task<Void, Never>?
+
     // MARK: - Initialization
 
     init(
@@ -175,6 +181,8 @@ final class VoiceTriggerMonitoringService {
 
             // Initialize wake word service with model and keywords
             try await wakeWordService.initialize(modelPath: modelPath, keywords: activeKeywords)
+
+            startFrameConsumer()
 
             // Start audio capture for wake word processing
             // Pass both level callback (for visualization) and buffer callback (for wake word detection)
@@ -263,6 +271,8 @@ final class VoiceTriggerMonitoringService {
         recoveryTask?.cancel()
         recoveryTask = nil
 
+        stopFrameConsumer()
+
         // Stop services - await to prevent race conditions on restart
         await wakeWordService.shutdown()
         _ = try? await audioService.stopCapture()
@@ -308,17 +318,10 @@ final class VoiceTriggerMonitoringService {
             guard !floatSamples.isEmpty else { return }
 
             if audioBufferCount % 100 == 1 {
-                AppLogger.trace(AppLogger.service, "[\(serviceId)] Sending \(floatSamples.count) samples to wake word service")
+                AppLogger.trace(AppLogger.service, "[\(serviceId)] Enqueuing \(floatSamples.count) samples for wake word service")
             }
 
-            // Route to wake word detection (async operation requires Task)
-            Task { [weak self] in
-                guard let self else { return }
-                if let result = await self.wakeWordService.processFrame(floatSamples) {
-                    AppLogger.info(AppLogger.service, "[\(self.serviceId)] Wake word DETECTED: \(result.detectedKeyword)")
-                    self.handleWakeWordDetected(keyword: result.detectedKeyword)
-                }
-            }
+            frameStreamContinuation?.yield(floatSamples)
 
         case .capturing:
             // Accumulate samples for transcription
@@ -386,6 +389,39 @@ final class VoiceTriggerMonitoringService {
     }
 
     // MARK: - Private Methods
+
+    /// Start the ordered frame consumer that feeds `wakeWordService.processFrame`
+    /// sequentially. Must be called after `wakeWordService.initialize` succeeds.
+    private func startFrameConsumer() {
+        stopFrameConsumer()
+
+        let stream = AsyncStream<[Float]> { continuation in
+            self.frameStreamContinuation = continuation
+        }
+
+        let wakeWord = wakeWordService
+        let capturedServiceId = serviceId
+        frameConsumerTask = Task { @MainActor [weak self] in
+            for await floatSamples in stream {
+                guard let self, !Task.isCancelled else { break }
+                if let result = await wakeWord.processFrame(floatSamples) {
+                    AppLogger.info(
+                        AppLogger.service,
+                        "[\(capturedServiceId)] Wake word DETECTED: \(result.detectedKeyword)"
+                    )
+                    self.handleWakeWordDetected(keyword: result.detectedKeyword)
+                }
+            }
+        }
+    }
+
+    /// Tear down the ordered frame consumer and finish the stream.
+    private func stopFrameConsumer() {
+        frameStreamContinuation?.finish()
+        frameStreamContinuation = nil
+        frameConsumerTask?.cancel()
+        frameConsumerTask = nil
+    }
 
     /// Handle audio level updates from capture service
     private func handleAudioLevel(_ level: Double) {
