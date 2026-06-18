@@ -233,18 +233,17 @@ jobs:
             --ignore-filename-regex='(\.build|Tests|UITests|Frameworks|checkouts)/' \
             "${TEST_BIN}" | tail -3
 
-      # Codecov upload is a hard gate on PRs: if the upload fails (token
-      # revoked, Codecov outage, malformed lcov), the job fails so we
-      # don't silently ship a PR with missing coverage visibility.
-      # Coverage is also attached as the `coverage-report` workflow
-      # artifact below so a reviewer can inspect it directly.
+      # Codecov upload is best-effort: a third-party outage must not block
+      # merges when all tests pass. Coverage is still exported above and
+      # attached as the `coverage-report` workflow artifact; the Codecov PR
+      # status check (`codecov.yml` patch gate) remains the merge signal.
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() && hashFiles('coverage.lcov') != '' }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.lcov
-          fail_ci_if_error: true
+          fail_ci_if_error: false
           flags: unit
           disable_search: true
 
