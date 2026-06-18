@@ -54,7 +54,7 @@ final class GlassOverlayViewModel {
     @ObservationIgnored private var durationTimer: Timer?
     @ObservationIgnored private let viewModelId: String
     // nonisolated copy for deinit access
-    @ObservationIgnored private nonisolated(unsafe) var deinitDurationTimer: Timer?
+    @ObservationIgnored private nonisolated(unsafe) var deinitDurationTimer: Timer? // swiftlint:disable:this nonisolated_unsafe_warning
 
     // MARK: - Initialization
 

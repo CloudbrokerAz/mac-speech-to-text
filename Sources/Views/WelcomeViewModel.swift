@@ -62,8 +62,12 @@ final class WelcomeViewModel {
     @ObservationIgnored private var phraseTimer: Timer?
     @ObservationIgnored private var typingTimer: Timer?
     // nonisolated copies for deinit access (deinit cannot access MainActor-isolated state)
-    @ObservationIgnored private nonisolated(unsafe) var deinitPhraseTimer: Timer?
-    @ObservationIgnored private nonisolated(unsafe) var deinitTypingTimer: Timer?
+    @ObservationIgnored
+    // swiftlint:disable:next nonisolated_unsafe_warning
+    private nonisolated(unsafe) var deinitPhraseTimer: Timer? // swiftlint:disable:this nonisolated_unsafe_warning
+    @ObservationIgnored
+    // swiftlint:disable:next nonisolated_unsafe_warning
+    private nonisolated(unsafe) var deinitTypingTimer: Timer? // swiftlint:disable:this nonisolated_unsafe_warning
 
     /// Task for polling permission changes after user is directed to System Settings
     @ObservationIgnored private var permissionPollingTask: Task<Void, Never>?
