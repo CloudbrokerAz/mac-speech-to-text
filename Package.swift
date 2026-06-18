@@ -73,6 +73,7 @@ let package = Package(
             exclude: [],
             resources: [
                 .process("Resources/app_logov2.png"),
+                .process("Resources/Localizable.xcstrings"),
                 .copy("Resources/Models"),
                 .copy("Resources/Manipulations"),
                 .copy("Resources/Prompts")

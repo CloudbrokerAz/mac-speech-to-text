@@ -1,0 +1,83 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "clinical.export.confirmTitle" : {
+      "comment" : "Export flow confirmation step title",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm export"
+          }
+        }
+      }
+    },
+    "clinical.onboarding.subtitle" : {
+      "comment" : "Home tab onboarding stub description",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Complete these steps to start generating SOAP notes on-device."
+          }
+        }
+      }
+    },
+    "clinical.onboarding.title" : {
+      "comment" : "Home tab onboarding stub heading",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Set up Clinical Notes"
+          }
+        }
+      }
+    },
+    "clinical.picker.patientTitle" : {
+      "comment" : "Patient picker left-pane heading",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Patient"
+          }
+        }
+      }
+    },
+    "clinical.picker.searchPlaceholder" : {
+      "comment" : "Patient search field placeholder",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search by name"
+          }
+        }
+      }
+    },
+    "clinical.review.generating" : {
+      "comment" : "VoiceOver label while LLM draft is pending",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Generating clinical note"
+          }
+        }
+      }
+    },
+    "clinical.review.title" : {
+      "comment" : "Review screen navigation title",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clinical Notes Review"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}
