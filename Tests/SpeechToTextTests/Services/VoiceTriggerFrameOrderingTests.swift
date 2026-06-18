@@ -10,6 +10,7 @@ struct VoiceTriggerFrameOrderingTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+            .deletingLastPathComponent()
         let source = try String(
             contentsOf: root.appendingPathComponent("Sources/Services/VoiceTriggerMonitoringService.swift"),
             encoding: .utf8

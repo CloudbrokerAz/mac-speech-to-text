@@ -31,6 +31,7 @@ struct AppLoggerPrivacyTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+            .deletingLastPathComponent()
         let url = root.appendingPathComponent("Sources/Utilities/Logger.swift")
         return try String(contentsOf: url, encoding: .utf8)
     }

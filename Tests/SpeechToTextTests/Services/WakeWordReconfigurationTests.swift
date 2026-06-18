@@ -10,6 +10,7 @@ struct WakeWordReconfigurationTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+            .deletingLastPathComponent()
         let source = try String(
             contentsOf: root.appendingPathComponent("Sources/Services/WakeWordService.swift"),
             encoding: .utf8

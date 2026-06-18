@@ -37,6 +37,7 @@ struct PHILoggingRegressionTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+            .deletingLastPathComponent()
         let url = root.appendingPathComponent(relativePath)
         return try String(contentsOf: url, encoding: .utf8)
     }

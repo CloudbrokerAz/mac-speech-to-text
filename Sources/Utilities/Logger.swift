@@ -21,7 +21,7 @@ enum AppLogger {
 
     /// Current log level — `.info` in release builds; `.trace` in debug for
     /// maximum verbosity during development (PRF-5).
-    nonisolated(unsafe) static var currentLevel: LogLevel = {
+    nonisolated(unsafe) static var currentLevel: LogLevel = { // swiftlint:disable:this nonisolated_unsafe_warning
         #if DEBUG
         return .trace
         #else
@@ -30,7 +30,7 @@ enum AppLogger {
     }()
 
     /// Enable expensive debug checks (object addresses, etc.)
-    nonisolated(unsafe) static var enableExpensiveLogging = true
+    nonisolated(unsafe) static var enableExpensiveLogging = true // swiftlint:disable:this nonisolated_unsafe_warning
 
     /// Logger for app lifecycle and delegate events
     static let app = Logger(subsystem: subsystem, category: "app")
@@ -141,7 +141,8 @@ enum AppLogger {
     ) {
         guard currentLevel >= .debug else { return }
         let fileName = (file as NSString).lastPathComponent
-        let ctx = context().isEmpty ? "" : " (\(context()))"
+        let contextValue = context()
+        let ctx = contextValue.isEmpty ? "" : " (\(contextValue))"
         logger.debug(
             "STATE [\(fileName, privacy: .public):\(line, privacy: .public)] \(String(describing: from), privacy: .private) -> \(String(describing: to), privacy: .private)\(ctx, privacy: .private)"
         )

@@ -23,6 +23,7 @@ struct SwiftLintGuardrailTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+            .deletingLastPathComponent()
         return try String(contentsOf: root.appendingPathComponent(".swiftlint.yml"), encoding: .utf8)
     }
 }

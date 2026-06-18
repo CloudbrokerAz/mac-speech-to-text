@@ -8,6 +8,7 @@ struct PHILoggingGuardTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+            .deletingLastPathComponent()
     }
 
     @Test("AppLogger wraps dynamic messages with privacy: .private")
@@ -16,8 +17,8 @@ struct PHILoggingGuardTests {
             contentsOf: Self.repoRoot.appendingPathComponent("Sources/Utilities/Logger.swift"),
             encoding: .utf8
         )
-        #expect(source.contains("(message, privacy: .private)"))
-        #expect(!source.contains("(message, privacy: .public)"))
+        #expect(source.contains("(evaluated, privacy: .private)"))
+        #expect(!source.contains("(evaluated, privacy: .public)"))
     }
 
     @Test("FluidAudioService transcribe completion log omits transcript text")
