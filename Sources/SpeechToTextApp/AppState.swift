@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -177,6 +178,14 @@ class AppState {
     @ObservationIgnored private var clinicalNotesGenerateObserver: NSObjectProtocol?
     /// nonisolated copy for deinit access
     @ObservationIgnored private nonisolated(unsafe) var deinitClinicalNotesGenerateObserver: NSObjectProtocol?
+    /// Observer for `willTerminate` — clears in-memory PHI (#SEC-4).
+    @ObservationIgnored private var willTerminateObserver: NSObjectProtocol?
+    /// nonisolated copy for deinit access
+    @ObservationIgnored private nonisolated(unsafe) var deinitWillTerminateObserver: NSObjectProtocol?
+    /// Observer for `willResignActive` — drives `SessionStore.checkIdleTimeout()` (#SEC-5).
+    @ObservationIgnored private var willResignActiveObserver: NSObjectProtocol?
+    /// nonisolated copy for deinit access
+    @ObservationIgnored private nonisolated(unsafe) var deinitWillResignActiveObserver: NSObjectProtocol?
 
     /// Designated initialiser.
     ///
@@ -332,6 +341,33 @@ class AppState {
         clinicalNotesGenerateObserver = clinicalObserver
         deinitClinicalNotesGenerateObserver = clinicalObserver
 
+        // PHI lifecycle: clear in-memory session on quit (#SEC-4).
+        let terminateObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.sessionStore.clear()
+            AppLogger.app.info("AppState: sessionStore cleared on willTerminate")
+        }
+        willTerminateObserver = terminateObserver
+        deinitWillTerminateObserver = terminateObserver
+
+        // PHI lifecycle: idle-timeout check when app resigns active (#SEC-5).
+        let resignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            if self.sessionStore.checkIdleTimeout() {
+                AppLogger.app.info("AppState: sessionStore cleared on idle timeout (willResignActive)")
+            }
+        }
+        willResignActiveObserver = resignObserver
+        deinitWillResignActiveObserver = resignObserver
+
         // Settings-side model status surface (#104). Replace the placeholder
         // VM (`@ObservationIgnored ... = .init()` in the property declaration)
         // with the wired one. By this point in init, all stored properties
@@ -367,6 +403,12 @@ class AppState {
             NotificationCenter.default.removeObserver(observer)
         }
         if let observer = deinitClinicalNotesGenerateObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = deinitWillTerminateObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = deinitWillResignActiveObserver {
             NotificationCenter.default.removeObserver(observer)
         }
     }
