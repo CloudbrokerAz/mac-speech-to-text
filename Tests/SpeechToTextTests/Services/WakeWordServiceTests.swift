@@ -7,6 +7,23 @@ final class WakeWordServiceTests: XCTestCase {
 
     // MARK: - Test Helpers
 
+    /// ONNX encoder filename bundled with the sherpa-onnx KWS model.
+    private static let kwsEncoderFileName = "encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"
+
+    /// Returns the bundled KWS model directory when the ONNX encoder is present.
+    ///
+    /// Hardware-dependent — CI skips this class by name; locally we XCTSkip when
+    /// weights are absent (see `testing-conventions.md` CI skip list).
+    private func requireKWSModelDirectory() throws -> String {
+        guard let modelPath = getRealModelDirectory(),
+              FileManager.default.fileExists(
+                  atPath: (modelPath as NSString).appendingPathComponent(Self.kwsEncoderFileName)
+              ) else {
+            throw XCTSkip("sherpa-onnx KWS encoder not available at expected path")
+        }
+        return modelPath
+    }
+
     /// A keyword with valid BPE mapping for use in tests
     /// Note: "Hey Claude" doesn't have a valid BPE mapping, so we use "hey siri" instead
     private static let validTestKeyword = TriggerKeyword(
@@ -41,7 +58,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_initialize_withValidPathAndKeywords_setsInitializedFlag() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         // Use a keyword with valid BPE mapping
@@ -58,7 +75,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_initialize_withMultipleValidKeywords_setsInitializedFlag() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         // Use keywords with valid BPE mappings
@@ -122,10 +139,10 @@ final class WakeWordServiceTests: XCTestCase {
 
     // MARK: - Initialize Failure with No Valid Keywords Tests
 
-    func test_initialize_withNoKeywords_throwsInvalidKeywordsError() async {
+    func test_initialize_withNoKeywords_throwsInvalidKeywordsError() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = createMockModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         let keywords: [TriggerKeyword] = []
@@ -141,10 +158,10 @@ final class WakeWordServiceTests: XCTestCase {
         }
     }
 
-    func test_initialize_withAllDisabledKeywords_throwsInvalidKeywordsError() async {
+    func test_initialize_withAllDisabledKeywords_throwsInvalidKeywordsError() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = createMockModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         let keywords = [
@@ -163,10 +180,10 @@ final class WakeWordServiceTests: XCTestCase {
         }
     }
 
-    func test_initialize_withInvalidKeywords_throwsInvalidKeywordsError() async {
+    func test_initialize_withInvalidKeywords_throwsInvalidKeywordsError() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = createMockModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         // Empty phrase makes keyword invalid
@@ -189,7 +206,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_initialize_withMixedValidInvalidKeywords_onlyUsesValidOnes() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         // One valid, one invalid (empty phrase), one disabled
@@ -238,7 +255,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_processFrame_withEmptySamples_returnsNil() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         try await service.initialize(
@@ -256,7 +273,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_processFrame_withEmptyArray_doesNotIncrementFramesProcessed() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         try await service.initialize(
@@ -277,7 +294,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_processFrame_withSamples_incrementsFramesProcessed() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         try await service.initialize(
@@ -301,7 +318,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_updateKeywords_reInitializesService() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         try await service.initialize(
@@ -326,7 +343,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_updateKeywords_withInvalidKeywords_throwsError() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         try await service.initialize(
@@ -367,7 +384,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_updateKeywords_preservesStatistics() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         try await service.initialize(
@@ -401,7 +418,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_shutdown_clearsInitializedState() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         try await service.initialize(
@@ -422,7 +439,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_shutdown_canBeCalledMultipleTimes() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         try await service.initialize(
@@ -442,7 +459,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_shutdown_allowsReinitialization() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         try await service.initialize(
@@ -465,7 +482,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_processFrame_afterShutdown_returnsNil() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         try await service.initialize(
@@ -499,7 +516,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_getStatistics_tracksFramesProcessed() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         try await service.initialize(
@@ -521,7 +538,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_resetStatistics_clearsAllCounters() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         try await service.initialize(
@@ -549,7 +566,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_resetStatistics_doesNotAffectInitializedState() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         try await service.initialize(
@@ -587,7 +604,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_keywordsFileContent_hasCorrectFormat() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         let keyword = TriggerKeyword(
@@ -642,7 +659,7 @@ final class WakeWordServiceTests: XCTestCase {
 
         // The generateKeywordsFileContent method lowercases phrases
         // This is tested indirectly - when initialized, the service generates content
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         // Use a keyword with BPE mapping but with mixed case to test lowercasing
@@ -764,7 +781,7 @@ final class WakeWordServiceTests: XCTestCase {
     func test_service_processFrame_isThreadSafe() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         try await service.initialize(
@@ -791,10 +808,10 @@ final class WakeWordServiceTests: XCTestCase {
         XCTAssertEqual(stats.framesProcessed, 20)
     }
 
-    func test_service_concurrentInitializeAndShutdown() async {
+    func test_service_concurrentInitializeAndShutdown() async throws {
         // Given
         let service = WakeWordService()
-        let tempModelPath = createTempModelDirectory()
+        let tempModelPath = try createTempModelDirectory()
         defer { cleanupTempDirectory(tempModelPath) }
 
         // When - rapid initialize/shutdown cycles
@@ -823,10 +840,7 @@ final class WakeWordServiceTests: XCTestCase {
 
     /// Test that the service can initialize with the real sherpa-onnx model
     func test_integration_initializeWithRealModel_succeeds() async throws {
-        guard let modelPath = getRealModelDirectory() else {
-            // Skip test if model not available
-            throw XCTSkip("sherpa-onnx model not available at expected path")
-        }
+        let modelPath = try requireKWSModelDirectory()
 
         // Given
         let service = WakeWordService()
@@ -847,9 +861,7 @@ final class WakeWordServiceTests: XCTestCase {
 
     /// Test that the service can process audio frames without crashing
     func test_integration_processFrame_withRealModel_doesNotCrash() async throws {
-        guard let modelPath = getRealModelDirectory() else {
-            throw XCTSkip("sherpa-onnx model not available at expected path")
-        }
+        let modelPath = try requireKWSModelDirectory()
 
         // Given
         let service = WakeWordService()
@@ -876,9 +888,7 @@ final class WakeWordServiceTests: XCTestCase {
 
     /// Test keyword detection with the test WAV files bundled with the model
     func test_integration_detectKeyword_lightUp_fromTestWav() async throws {
-        guard let modelPath = getRealModelDirectory() else {
-            throw XCTSkip("sherpa-onnx model not available at expected path")
-        }
+        let modelPath = try requireKWSModelDirectory()
 
         // Given - use the test keywords file format which has "LIGHT UP"
         let service = WakeWordService()
@@ -938,9 +948,7 @@ final class WakeWordServiceTests: XCTestCase {
 
         // Create a spotter directly with the test keywords
         let tokensPath = (modelPath as NSString).appendingPathComponent("tokens.txt")
-        let encoderPath = (modelPath as NSString).appendingPathComponent(
-            "encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"
-        )
+        let encoderPath = (modelPath as NSString).appendingPathComponent(Self.kwsEncoderFileName)
         let decoderPath = (modelPath as NSString).appendingPathComponent(
             "decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"
         )
@@ -1010,9 +1018,7 @@ final class WakeWordServiceTests: XCTestCase {
 
     /// Test that shutdown properly releases resources after processing
     func test_integration_shutdown_afterProcessing_releasesResources() async throws {
-        guard let modelPath = getRealModelDirectory() else {
-            throw XCTSkip("sherpa-onnx model not available at expected path")
-        }
+        let modelPath = try requireKWSModelDirectory()
 
         // Given
         let service = WakeWordService()
@@ -1041,9 +1047,7 @@ final class WakeWordServiceTests: XCTestCase {
 
     /// Test multiple initialize-shutdown cycles with real model
     func test_integration_multipleInitShutdownCycles_succeeds() async throws {
-        guard let modelPath = getRealModelDirectory() else {
-            throw XCTSkip("sherpa-onnx model not available at expected path")
-        }
+        let modelPath = try requireKWSModelDirectory()
 
         let service = WakeWordService()
         let keywords = [TriggerKeyword(phrase: "hey siri", boostingScore: 1.5, triggerThreshold: 0.25, isEnabled: true)]
@@ -1079,9 +1083,7 @@ final class WakeWordServiceTests: XCTestCase {
 
     /// Test updateKeywords with real model
     func test_integration_updateKeywords_withRealModel_succeeds() async throws {
-        guard let modelPath = getRealModelDirectory() else {
-            throw XCTSkip("sherpa-onnx model not available at expected path")
-        }
+        let modelPath = try requireKWSModelDirectory()
 
         // Given
         let service = WakeWordService()
@@ -1113,9 +1115,7 @@ final class WakeWordServiceTests: XCTestCase {
 
     /// Test processing streaming audio chunks (simulating real-time audio)
     func test_integration_streamingAudioProcessing_handlesChunksCorrectly() async throws {
-        guard let modelPath = getRealModelDirectory() else {
-            throw XCTSkip("sherpa-onnx model not available at expected path")
-        }
+        let modelPath = try requireKWSModelDirectory()
 
         // Given
         let service = WakeWordService()
@@ -1142,9 +1142,7 @@ final class WakeWordServiceTests: XCTestCase {
 
     /// Test concurrent frame processing is thread-safe with real model
     func test_integration_concurrentProcessing_isThreadSafe() async throws {
-        guard let modelPath = getRealModelDirectory() else {
-            throw XCTSkip("sherpa-onnx model not available at expected path")
-        }
+        let modelPath = try requireKWSModelDirectory()
 
         // Given
         let service = WakeWordService()
@@ -1202,9 +1200,7 @@ final class WakeWordServiceTests: XCTestCase {
 
     /// Test processing a known audio pattern (synthetic tone)
     func test_integration_syntheticAudio_processesWithoutError() async throws {
-        guard let modelPath = getRealModelDirectory() else {
-            throw XCTSkip("sherpa-onnx model not available at expected path")
-        }
+        let modelPath = try requireKWSModelDirectory()
 
         // Given
         let service = WakeWordService()
@@ -1383,22 +1379,12 @@ final class WakeWordServiceTests: XCTestCase {
         return nil
     }
 
-    /// Creates a temporary directory to simulate a model path for unit tests
+    /// Creates a temp model directory backed by the bundled KWS weights when present.
     ///
-    /// This uses the real model directory if available, which enables full integration testing.
-    /// Tests that use this method should use keywords that have valid BPE mappings
-    /// (e.g., "hey siri", "hello world", "hi google").
-    ///
-    /// - Note: Use `createMockModelDirectory()` for tests that need to use arbitrary keywords
-    ///   like "Hey Claude" which don't have valid BPE mappings in the model.
-    private func createTempModelDirectory() -> String {
-        // Use real model directory to enable integration testing
-        if let realModelPath = getRealModelDirectory() {
-            return realModelPath
-        }
-
-        // Fallback to mock directory if real model not available
-        return createMockModelDirectory()
+    /// Throws `XCTSkip` when the ONNX encoder is absent — same hardware gate as CI's
+    /// `WakeWordServiceTests` class skip (see `testing-conventions.md`).
+    private func createTempModelDirectory() throws -> String {
+        try requireKWSModelDirectory()
     }
 
     /// Creates a mock model directory for unit tests that don't need real model functionality

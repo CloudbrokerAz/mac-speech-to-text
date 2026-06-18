@@ -61,7 +61,8 @@ final class GlassOverlayWindow {
     /// Screen change observer
     private var screenChangeObserver: NSObjectProtocol?
     // nonisolated copy for deinit access
-    private nonisolated(unsafe) var deinitScreenChangeObserver: NSObjectProtocol?
+    // swiftlint:disable:next nonisolated_unsafe_warning
+    private nonisolated(unsafe) var deinitScreenChangeObserver: NSObjectProtocol? // swiftlint:disable:this nonisolated_unsafe_warning
 
     // MARK: - Initialization
 

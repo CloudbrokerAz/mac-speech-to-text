@@ -150,7 +150,8 @@ class PermissionService: PermissionChecker {
     /// of truth and mirror every write into `deinitActivationObserver`
     /// for cleanup. Pattern matches `VoiceTriggerMonitoringService.swift`.
     private var activationObserver: NSObjectProtocol?
-    private nonisolated(unsafe) var deinitActivationObserver: NSObjectProtocol?
+    // swiftlint:disable:next nonisolated_unsafe_warning
+    private nonisolated(unsafe) var deinitActivationObserver: NSObjectProtocol? // swiftlint:disable:this nonisolated_unsafe_warning
 
     /// Callback for when permission is granted during polling with activation observer
     private var onPermissionGrantedCallback: (@MainActor @Sendable () -> Void)?

@@ -309,8 +309,12 @@ final class ExportFlowViewModel: Identifiable {
     /// only nonisolated reader, and (c) `deinit` runs after every
     /// other reference has been dropped, so there is no concurrent
     /// access. Same idiom as `AppState.deinitLoadingTask`.
-    @ObservationIgnored private nonisolated(unsafe) var deinitUploadTask: Task<Void, Never>?
-    @ObservationIgnored private nonisolated(unsafe) var deinitCountdownTask: Task<Void, Never>?
+    @ObservationIgnored
+    // swiftlint:disable:next nonisolated_unsafe_warning
+    private nonisolated(unsafe) var deinitUploadTask: Task<Void, Never>? // swiftlint:disable:this nonisolated_unsafe_warning
+    @ObservationIgnored
+    // swiftlint:disable:next nonisolated_unsafe_warning
+    private nonisolated(unsafe) var deinitCountdownTask: Task<Void, Never>? // swiftlint:disable:this nonisolated_unsafe_warning
     @ObservationIgnored private let logger = Logger(
         subsystem: "com.speechtotext",
         category: "ExportFlowViewModel"
