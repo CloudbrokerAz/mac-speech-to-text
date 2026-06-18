@@ -127,8 +127,13 @@ final class VoiceTriggerMonitoringService {
     }
 
     deinit {
-        deinitSilenceTimer?.invalidate()
-        deinitMaxDurationTimer?.invalidate()
+        // CON-6: Timers are scheduled on RunLoop.main; invalidation must
+        // happen on that thread via `stopMonitoring()` before release.
+        // AppDelegate and test tearDown await `stopMonitoring()` explicitly.
+        // Shadow refs are cleared here only to break retain cycles — no
+        // `invalidate()` from a potentially off-main deinit path.
+        deinitSilenceTimer = nil
+        deinitMaxDurationTimer = nil
         AppLogger.service.debug("VoiceTriggerMonitoringService[\(self.serviceId, privacy: .public)] deallocated")
     }
 
