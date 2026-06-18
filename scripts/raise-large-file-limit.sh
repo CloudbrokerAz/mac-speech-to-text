@@ -2,7 +2,7 @@
 # Raises the pre-commit large file limit from 500KB to 1MB
 # Usage: ./scripts/raise-large-file-limit.sh
 
-set -e
+set -euo pipefail
 
 CONFIG_FILE=".pre-commit-config.yaml"
 

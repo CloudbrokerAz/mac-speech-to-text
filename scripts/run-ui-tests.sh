@@ -222,7 +222,7 @@ else
     TEST_EXIT_CODE=$?
 fi
 
-set -e
+set -euo pipefail
 
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))

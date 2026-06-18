@@ -8,6 +8,8 @@
 #
 # Usage: ./create-issues.sh
 
+set -euo pipefail
+
 REPO="agentdevsl/agent-ios-dev"
 
 echo "Creating issues in $REPO..."
