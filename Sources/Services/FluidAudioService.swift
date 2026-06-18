@@ -374,7 +374,7 @@ actor FluidAudioService: FluidAudioServiceProtocol {
 
             AppLogger.info(
                 AppLogger.service,
-                "[\(serviceId)] transcribe #\(transcriptionId): completed in \(durationMs)ms, confidence=\(confidence), text=\"\(result.text.prefix(50))...\""
+                "[\(serviceId)] transcribe #\(transcriptionId): completed in \(durationMs)ms, confidence=\(confidence), chars=\(result.text.count)"
             )
 
             return TranscriptionResult(
