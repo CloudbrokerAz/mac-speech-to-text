@@ -86,6 +86,13 @@ public actor ModelDownloader {
     /// Avoids re-hashing multi-GB weights when size + mtime + revision unchanged.
     private var loadedReceipt: ModelVerificationReceipt?
 
+    /// Coalesces concurrent `ensureModelDownloaded` callers onto one download
+    /// task (CON-3). Without this, two overlapping callers both compute
+    /// bytes-to-download and race on the same `.partial` slots. AppState
+    /// serializes today via a single task slot, but the actor itself must
+    /// be self-serializing for any future caller.
+    private var ensureDownloadInFlight: Task<URL, Error>?
+
     /// - Parameters:
     ///   - manifest: pinned `ModelManifest` (typically loaded from
     ///     `Resources/Models/<model-dir>/manifest.json` via `Bundle.main`).
@@ -153,6 +160,23 @@ public actor ModelDownloader {
     /// `<baseDirectory>/<modelDirName>/`.
     public func ensureModelDownloaded(
         progress: ProgressCallback? = nil
+    ) async throws -> URL {
+        if let inFlight = ensureDownloadInFlight {
+            return try await inFlight.value
+        }
+
+        let task = Task<URL, Error> {
+            try await self.performEnsureModelDownloaded(progress: progress)
+        }
+        ensureDownloadInFlight = task
+        defer { ensureDownloadInFlight = nil }
+        return try await task.value
+    }
+
+    /// Body of `ensureModelDownloaded`. Always reached via the in-flight
+    /// task coalescer above — never call directly.
+    private func performEnsureModelDownloaded(
+        progress: ProgressCallback?
     ) async throws -> URL {
         let modelDir = try makeModelDirectory()
         loadedReceipt = Self.loadReceipt(from: modelDir)
