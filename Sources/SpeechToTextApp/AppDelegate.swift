@@ -192,9 +192,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // CRITICAL: Perform synchronous cleanup first to prevent new operations
         // This ensures no new recording sessions can start during shutdown
 
-        // 1. Stop audio level timer immediately (prevents further updates)
-        audioLevelTimer?.invalidate()
-        audioLevelTimer = nil
+        // 1. Clear hold-to-record overlay push callback
+        holdToRecordViewModel.onAudioLevelPublished = nil
 
         // 2. Shutdown and release hotkey manager to prevent new recording triggers
         // Call shutdown() explicitly before releasing to properly disable Carbon hotkeys
@@ -232,8 +231,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         isVoiceMonitoringActive = false
 
         // 5. Stop voice trigger state observation and monitoring
-        voiceTriggerStateTimer?.invalidate()
-        voiceTriggerStateTimer = nil
+        voiceTriggerMonitoringService?.onStateChange = nil
 
         // 6. Stop voice monitoring service synchronously
         // Note: We avoid DispatchSemaphore.wait() on MainActor as it can cause deadlock
@@ -694,49 +692,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Voice Trigger State Observation
 
-    /// Timer for polling voice trigger state changes
-    private var voiceTriggerStateTimer: Timer?
-    /// Last observed voice trigger state (to detect changes)
+    /// Last observed voice trigger state (for transition handling)
     private var lastObservedVoiceTriggerState: VoiceTriggerState = .idle
-    /// Guard to prevent concurrent checkVoiceTriggerStateChange() execution
-    private var isCheckingVoiceTriggerState: Bool = false
 
-    /// Start observing voice trigger state changes
+    /// Start observing voice trigger state changes via push callback (PRF-10)
     private func startObservingVoiceTriggerState() {
-        // Use a timer to poll state changes since @Observable doesn't have built-in KVO
-        // Poll every 100ms for responsive UI updates
-        voiceTriggerStateTimer?.invalidate()
-        voiceTriggerStateTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.checkVoiceTriggerStateChange()
-            }
+        guard let service = voiceTriggerMonitoringService else { return }
+        lastObservedVoiceTriggerState = service.state
+
+        service.onStateChange = { [weak self] previous, current in
+            self?.handleVoiceTriggerStateChanged(from: previous, to: current)
         }
     }
 
     /// Stop observing voice trigger state changes
     private func stopObservingVoiceTriggerState() {
-        voiceTriggerStateTimer?.invalidate()
-        voiceTriggerStateTimer = nil
+        voiceTriggerMonitoringService?.onStateChange = nil
     }
 
-    /// Check if voice trigger state has changed and notify if so
-    private func checkVoiceTriggerStateChange() {
-        // Guard against concurrent execution (timer fires could overlap with slow operations)
-        guard !isCheckingVoiceTriggerState else { return }
-        isCheckingVoiceTriggerState = true
-        defer { isCheckingVoiceTriggerState = false }
-
-        guard let service = voiceTriggerMonitoringService else { return }
-
-        let currentState = service.state
-        if currentState != lastObservedVoiceTriggerState {
-            let previousState = lastObservedVoiceTriggerState
-            lastObservedVoiceTriggerState = currentState
-            postVoiceTriggerStateChange(currentState)
-
-            // Show/hide glass overlay based on state transitions
-            handleVoiceTriggerStateUI(from: previousState, to: currentState)
-        }
+    /// Handle a pushed voice trigger state transition
+    private func handleVoiceTriggerStateChanged(from previous: VoiceTriggerState, to current: VoiceTriggerState) {
+        lastObservedVoiceTriggerState = current
+        postVoiceTriggerStateChange(current)
+        handleVoiceTriggerStateUI(from: previous, to: current)
     }
 
     /// Handle UI updates for voice trigger state changes
@@ -784,8 +762,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         AppLogger.app.debug("Cancelling hold-to-record session (duration too short)")
 
-        // Stop audio level updates
-        stopRealAudioLevelUpdates()
+        // Stop audio level push callback
+        holdToRecordViewModel.onAudioLevelPublished = nil
 
         // Cancel the recording
         await holdToRecordViewModel.cancelRecording()
@@ -840,8 +818,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try await holdToRecordViewModel.startRecording()
 
-            // Connect real audio levels to overlay visualization
-            startRealAudioLevelUpdates()
+            // Push audio levels directly from the capture callback (PRF-9)
+            holdToRecordViewModel.onAudioLevelPublished = { [weak self] level in
+                self?.glassOverlayController.updateAudioLevel(Float(level))
+            }
             AppLogger.app.debug("Hold-to-record session started successfully")
         } catch {
             AppLogger.app.error("Failed to start hold-to-record: \(error.localizedDescription, privacy: .public)")
@@ -865,8 +845,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         AppLogger.app.debug("Stopping hold-to-record session (duration: \(holdDuration)s)")
 
-        // Stop real audio level updates
-        stopRealAudioLevelUpdates()
+        // Stop real audio level push callback
+        holdToRecordViewModel.onAudioLevelPublished = nil
 
         // Check if recording is actually active
         guard holdToRecordViewModel.isRecording else {
@@ -905,31 +885,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             pausedVoiceMonitoringForManualRecording = false  // Reset BEFORE await
             await startVoiceMonitoring()
         }
-    }
-
-    // MARK: - Real Audio Level Updates
-
-    private var audioLevelTimer: Timer?
-
-    /// Start updating overlay with real audio levels from RecordingViewModel
-    private func startRealAudioLevelUpdates() {
-        audioLevelTimer?.invalidate()
-        // Timer callback uses Task { @MainActor in } pattern for thread-safe access.
-        // This is safer than MainActor.assumeIsolated which can trap if called from wrong thread.
-        audioLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor [weak self] in
-                guard let self, self.holdToRecordViewModel.isRecording else { return }
-                let level = Float(self.holdToRecordViewModel.audioLevel)
-                self.glassOverlayController.updateAudioLevel(level)
-            }
-        }
-    }
-
-    /// Stop real audio level updates
-    private func stopRealAudioLevelUpdates() {
-        audioLevelTimer?.invalidate()
-        audioLevelTimer = nil
     }
 
     // MARK: - Welcome / Onboarding

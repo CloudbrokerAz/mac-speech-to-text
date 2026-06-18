@@ -24,6 +24,9 @@ final class RecordingViewModel {
     /// Real-time audio level (0.0 - 1.0)
     var audioLevel: Double = 0.0
 
+    /// Optional push callback for overlay consumers during hold-to-record (PRF-9).
+    var onAudioLevelPublished: ((Double) -> Void)?
+
     /// Whether recording is active
     var isRecording: Bool = false
 
@@ -1022,6 +1025,7 @@ final class RecordingViewModel {
         }
         lastAudioLevelPublish = now
         audioLevel = level
+        onAudioLevelPublished?(level)
     }
 
     /// Start the inactivity timer that checks for prolonged silence
