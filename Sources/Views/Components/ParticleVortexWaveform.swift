@@ -63,6 +63,10 @@ struct ParticleVortexWaveform: View {
     private let baseOrbitalSpeed: Double = 0.02
     private let maxOrbitalSpeed: Double = 0.08
     private let particleFadeSpeed: Double = 0.1
+    /// Below this RMS level the animation timer drops to ~15 Hz (PRF-14).
+    private let idleAudioThreshold: Float = 0.05
+    private let activeTimerInterval: TimeInterval = 1.0 / 60.0
+    private let idleTimerInterval: TimeInterval = 1.0 / 15.0
 
     // MARK: - State
 
@@ -117,7 +121,11 @@ struct ParticleVortexWaveform: View {
             withAnimation(.spring(response: 0.15, dampingFraction: 0.7)) {
                 smoothLevel = newValue
             }
+            syncAnimationTimerCadence()
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isRecording ? "Particle audio waveform, recording" : "Particle audio waveform, idle")
+        .accessibilityValue("\(Int(smoothLevel * 100)) percent audio level")
     }
 
     // MARK: - Initialization
@@ -150,6 +158,28 @@ struct ParticleVortexWaveform: View {
     // MARK: - Animation Loop
 
     private func startAnimation() {
+        scheduleAnimationTimer(interval: timerInterval(for: smoothLevel))
+    }
+
+    private func stopAnimation() {
+        displayLink?.invalidate()
+        displayLink = nil
+    }
+
+    private func timerInterval(for level: Float) -> TimeInterval {
+        level < idleAudioThreshold ? idleTimerInterval : activeTimerInterval
+    }
+
+    private func syncAnimationTimerCadence() {
+        guard displayLink != nil else { return }
+        let desired = timerInterval(for: smoothLevel)
+        if abs((displayLink?.timeInterval ?? 0) - desired) > 0.001 {
+            scheduleAnimationTimer(interval: desired)
+        }
+    }
+
+    private func scheduleAnimationTimer(interval: TimeInterval) {
+        stopAnimation()
         // Schedule the animation timer explicitly on `RunLoop.main` with
         // `.common` mode:
         //
@@ -166,20 +196,15 @@ struct ParticleVortexWaveform: View {
         //     audit.
         //
         // `assumeIsolated` is preferred over `Task { @MainActor in … }`
-        // because this timer fires 60× per second; Task dispatch would
+        // because this timer fires up to 60× per second; Task dispatch would
         // allocate + queue-hop every frame and drop animation frames.
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { _ in
+        let timer = Timer(timeInterval: interval, repeats: true) { _ in
             MainActor.assumeIsolated {
                 updateParticles()
             }
         }
         RunLoop.main.add(timer, forMode: .common)
         displayLink = timer
-    }
-
-    private func stopAnimation() {
-        displayLink?.invalidate()
-        displayLink = nil
     }
 
     private func updateParticles() {
@@ -224,6 +249,7 @@ struct ParticleVortexWaveform: View {
 
             particles[i] = particle
         }
+        syncAnimationTimerCadence()
     }
 
     // MARK: - Drawing
