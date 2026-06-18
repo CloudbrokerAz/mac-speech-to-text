@@ -236,7 +236,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 6. Stop voice monitoring service synchronously
         // Note: We avoid DispatchSemaphore.wait() on MainActor as it can cause deadlock
         // Instead, we rely on the service's synchronous cleanup where possible
-        // and accept that async cleanup may not complete before termination
+        // and accept that async cleanup may not complete before termination.
+        //
+        // CON-8 tradeoff: `Task.detached` cleanup below frequently won't finish
+        // before the process exits — the targets are `@MainActor`, so detached
+        // buys nothing over `Task { @MainActor … }`. A hardened path would use
+        // `applicationShouldTerminate` → `.terminateLater` + `reply(toApplicationShouldTerminate:)`
+        // to await teardown, but that risks MainActor deadlock if we block on
+        // semaphores here. We deliberately accept best-effort fire-and-forget
+        // cleanup and let the OS reclaim resources on exit.
         let voiceService = voiceTriggerMonitoringService
         voiceTriggerMonitoringService = nil
         // Fire-and-forget cleanup - termination proceeds regardless
