@@ -397,7 +397,7 @@ class AppState {
         // Wire the singleton MainWindowController with the VM so any
         // subsequently-constructed MainWindow threads it through to
         // ClinicalNotesSection. Mirrors `ReviewWindowController.shared.configure`.
-        MainWindowController.shared.configure(modelStatusViewModel: modelStatusViewModel)
+        MainWindowController.shared.configure(modelStatusViewModel: modelStatusViewModel, appState: self)
 
         clinicalNotesLifecycle = ClinicalNotesModelLifecycleController(host: self)
     }

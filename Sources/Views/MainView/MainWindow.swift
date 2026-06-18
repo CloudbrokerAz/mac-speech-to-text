@@ -31,6 +31,10 @@ final class MainWindow: NSObject, NSWindowDelegate {
     /// AppState hasn't called `configure(...)` yet.
     private let modelStatusViewModel: ClinicalNotesModelStatusViewModel?
 
+    /// App-wide state for global error surfacing (#ARC-6). Weak to avoid
+    /// a retain cycle with `AppState` → `MainWindowController`.
+    private weak var appState: AppState?
+
     /// Window dimensions
     private static let windowWidth: CGFloat = 900
     private static let windowHeight: CGFloat = 820
@@ -44,12 +48,14 @@ final class MainWindow: NSObject, NSWindowDelegate {
         viewModel: MainViewModel = MainViewModel(),
         settingsService: SettingsService = SettingsService(),
         permissionService: PermissionService = PermissionService(),
-        modelStatusViewModel: ClinicalNotesModelStatusViewModel? = nil
+        modelStatusViewModel: ClinicalNotesModelStatusViewModel? = nil,
+        appState: AppState? = nil
     ) {
         self.viewModel = viewModel
         self.settingsService = settingsService
         self.permissionService = permissionService
         self.modelStatusViewModel = modelStatusViewModel
+        self.appState = appState
         super.init()
     }
 
@@ -71,12 +77,15 @@ final class MainWindow: NSObject, NSWindowDelegate {
         }
 
         // Create the SwiftUI view with pre-created ViewModel and dependencies
-        let mainView = MainView(
+        var mainView = MainView(
             viewModel: viewModel,
             settingsService: settingsService,
             permissionService: permissionService,
             modelStatusViewModel: modelStatusViewModel
         )
+        if let appState {
+            mainView = mainView.environment(appState)
+        }
 
         // Create the window with standard macOS chrome
         let newWindow = NSWindow(
@@ -217,6 +226,10 @@ final class MainWindowController {
     /// still works — the `ClinicalNotesSection` row hides when this is nil.
     private var modelStatusViewModel: ClinicalNotesModelStatusViewModel?
 
+    /// Weak back-reference to `AppState` for threading global errors into
+    /// `MainView` (#ARC-6). Set once from `AppState.init`.
+    private weak var appState: AppState?
+
     // MARK: - Initialization
 
     private init() {
@@ -251,7 +264,10 @@ final class MainWindowController {
     /// goes stale on screen. Surface a structural warning so a regression
     /// here is debuggable; in production this is a singleton path called
     /// exactly once from `AppState.init`.
-    func configure(modelStatusViewModel: ClinicalNotesModelStatusViewModel) {
+    func configure(
+        modelStatusViewModel: ClinicalNotesModelStatusViewModel,
+        appState: AppState? = nil
+    ) {
         if self.modelStatusViewModel != nil,
            self.modelStatusViewModel !== modelStatusViewModel {
             AppLogger.app.warning(
@@ -259,6 +275,9 @@ final class MainWindowController {
             )
         }
         self.modelStatusViewModel = modelStatusViewModel
+        if let appState {
+            self.appState = appState
+        }
     }
 
     /// Show the main window
@@ -313,7 +332,10 @@ final class MainWindowController {
     /// dependencies threaded in. Pulled out so every `mainWindow == nil`
     /// branch above gets the same wiring.
     private func makeMainWindow() -> MainWindow {
-        MainWindow(modelStatusViewModel: modelStatusViewModel)
+        MainWindow(
+            modelStatusViewModel: modelStatusViewModel,
+            appState: appState
+        )
     }
 }
 
