@@ -31,8 +31,8 @@ final class MainWindow: NSObject, NSWindowDelegate {
     /// AppState hasn't called `configure(...)` yet.
     private let modelStatusViewModel: ClinicalNotesModelStatusViewModel?
 
-    /// App-wide state for global error surfacing (#ARC-6). Weak to avoid
-    /// a retain cycle with `AppState` → `MainWindowController`.
+    /// Weak back-reference to `AppState` for threading global errors into
+    /// `MainView` (#ARC-6). Set once from `AppState.init`.
     private weak var appState: AppState?
 
     /// Window dimensions
@@ -77,15 +77,13 @@ final class MainWindow: NSObject, NSWindowDelegate {
         }
 
         // Create the SwiftUI view with pre-created ViewModel and dependencies
-        var mainView = MainView(
+        let mainView = MainView(
             viewModel: viewModel,
             settingsService: settingsService,
             permissionService: permissionService,
-            modelStatusViewModel: modelStatusViewModel
+            modelStatusViewModel: modelStatusViewModel,
+            appState: appState ?? AppState()
         )
-        if let appState {
-            mainView = mainView.environment(appState)
-        }
 
         // Create the window with standard macOS chrome
         let newWindow = NSWindow(

@@ -12,7 +12,9 @@ struct MainView: View {
     // MARK: - Environment
 
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(AppState.self) private var appState
+
+    /// App-wide state for global error surfacing (#ARC-6).
+    @Bindable private var appState: AppState
 
     // MARK: - Focus State
 
@@ -50,12 +52,14 @@ struct MainView: View {
         viewModel: MainViewModel = MainViewModel(),
         settingsService: SettingsService = SettingsService(),
         permissionService: PermissionService = PermissionService(),
-        modelStatusViewModel: ClinicalNotesModelStatusViewModel? = nil
+        modelStatusViewModel: ClinicalNotesModelStatusViewModel? = nil,
+        appState: AppState = AppState()
     ) {
         self._viewModel = State(initialValue: viewModel)
         self.settingsService = settingsService
         self.permissionService = permissionService
         self.modelStatusViewModel = modelStatusViewModel
+        self._appState = Bindable(wrappedValue: appState)
     }
 
     // MARK: - Body
@@ -484,6 +488,5 @@ private struct MainViewPreview: View {
         let viewModel = MainViewModel()
         viewModel.selectedSection = section
         return MainView(viewModel: viewModel)
-            .environment(AppState())
     }
 }

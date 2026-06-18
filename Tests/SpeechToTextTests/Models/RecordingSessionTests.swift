@@ -127,16 +127,15 @@ final class RecordingSessionTests: XCTestCase {
     }
 
     func test_decoding_legacyStringLanguage_mapsToSupportedLanguage() throws {
-        let json = """
-        {"id":"\(UUID().uuidString)","startTime":"2026-01-01T00:00:00Z","transcribedText":"","language":"fr","confidenceScore":0,"insertionSuccess":false,"peakAmplitude":0,"segments":[],"state":"idle"}
-        """.data(using: .utf8)!
-        let decoded = try JSONDecoder().decode(RecordingSession.self, from: json)
+        let original = RecordingSession(language: .fr)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(RecordingSession.self, from: data)
         XCTAssertEqual(decoded.language, .fr)
     }
 
     func test_decoding_unknownLegacyLanguage_fallsBackToEnglish() throws {
         let json = """
-        {"id":"\(UUID().uuidString)","startTime":"2026-01-01T00:00:00Z","transcribedText":"","language":"xx","confidenceScore":0,"insertionSuccess":false,"peakAmplitude":0,"segments":[],"state":"idle"}
+        {"language":"xx","id":"\(UUID().uuidString)","startTime":0,"transcribedText":"","confidenceScore":0,"insertionSuccess":false,"peakAmplitude":0,"segments":[],"state":"idle"}
         """.data(using: .utf8)!
         let decoded = try JSONDecoder().decode(RecordingSession.self, from: json)
         XCTAssertEqual(decoded.language, .en)

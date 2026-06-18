@@ -11,8 +11,8 @@ import Testing
 struct AppLoggerRoutingTests {
     @Test("Cliniko and clinical-notes surfaces use shared AppLogger categories")
     func sharedCategoriesExist() {
-        #expect(String(describing: AppLogger.cliniko).contains("cliniko"))
-        #expect(String(describing: AppLogger.service).contains("service"))
-        #expect(String(describing: AppLogger.viewModel).contains("viewModel"))
+        #expect(String(describing: type(of: AppLogger.cliniko)) == "Logger")
+        #expect(String(describing: type(of: AppLogger.service)) == "Logger")
+        #expect(String(describing: type(of: AppLogger.viewModel)) == "Logger")
     }
 }

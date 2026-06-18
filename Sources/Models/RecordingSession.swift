@@ -70,10 +70,8 @@ struct RecordingSession: Identifiable, Sendable, Codable {
         endTime = try container.decodeIfPresent(Date.self, forKey: .endTime)
         audioData = try container.decodeIfPresent([Int16].self, forKey: .audioData)
         transcribedText = try container.decodeIfPresent(String.self, forKey: .transcribedText) ?? ""
-        if let decodedLanguage = try container.decodeIfPresent(SupportedLanguage.self, forKey: .language) {
-            language = decodedLanguage
-        } else if let legacyCode = try container.decodeIfPresent(String.self, forKey: .language) {
-            language = SupportedLanguage.from(code: legacyCode) ?? .en
+        if let code = try container.decodeIfPresent(String.self, forKey: .language) {
+            language = SupportedLanguage.from(code: code) ?? .en
         } else {
             language = .en
         }

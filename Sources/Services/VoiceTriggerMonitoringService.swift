@@ -568,8 +568,8 @@ final class VoiceTriggerMonitoringService {
         }
 
         if silenceDuration >= threshold {
-            guard self?.internalGuard != .handlingTimeout else { return }
-            self?.internalGuard = .handlingTimeout
+            guard internalGuard != .handlingTimeout else { return }
+            internalGuard = .handlingTimeout
             silenceLogCounter = 0
             AppLogger.info(
                 AppLogger.service,
