@@ -173,11 +173,6 @@ final class ReviewWindowController {
     private var makePatientPickerViewModel: (() async -> PatientPickerViewModel?)?
     private var dismissObserver: NSObjectProtocol?
 
-    private let logger = Logger(
-        subsystem: "com.speechtotext",
-        category: "ReviewWindowController"
-    )
-
     // MARK: - Init
 
     private init() {
@@ -250,7 +245,7 @@ final class ReviewWindowController {
             // Configure-before-present is an AppState-init contract.
             // Surface as a structural log + assertion so misconfiguration
             // surfaces in DEBUG / tests without crashing release.
-            logger.error("ReviewWindowController.present called before configure")
+            AppLogger.viewModel.error("ReviewWindowController.present called before configure")
             assertionFailure("ReviewWindowController.present called before configure")
             return
         }
@@ -270,7 +265,7 @@ final class ReviewWindowController {
         let newWindow = ReviewWindow(viewModel: viewModel)
         newWindow.show()
         window = newWindow
-        logger.info("ReviewWindowController: presented review window")
+        AppLogger.viewModel.info("ReviewWindowController: presented review window")
     }
 
     /// Programmatically close the window. Triggers the same dismiss

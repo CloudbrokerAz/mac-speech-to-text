@@ -17,7 +17,6 @@
 
 import Foundation
 import Observation
-import OSLog
 import SwiftUI
 
 /// One of the four SOAP fields. Single source of truth for: keyboard-focus
@@ -175,10 +174,6 @@ final class ReviewViewModel {
 
     @ObservationIgnored private let now: @Sendable () -> Date
     @ObservationIgnored private let reAddTargetWindow: TimeInterval
-    @ObservationIgnored private let logger = Logger(
-        subsystem: "com.speechtotext",
-        category: "ReviewViewModel"
-    )
 
     /// Tuple of the most recent focused field + its timestamp. See
     /// `lastFocus` above.
@@ -363,7 +358,7 @@ final class ReviewViewModel {
     func setValue(_ value: String, for field: SOAPField) {
         guard let active = sessionStore.active else {
             // PHI-safe: only the field id and an "expired" sentinel.
-            logger.error(
+            AppLogger.viewModel.error(
                 "ReviewViewModel.setValue dropped — no active session field=\(field.accessibilityID, privacy: .public)"
             )
             errorMessage = "Session expired — please cancel and re-record."
@@ -405,7 +400,7 @@ final class ReviewViewModel {
     /// raw-transcript-fallback path.
     func toggleManipulation(id: String) {
         guard let active = sessionStore.active else {
-            logger.error(
+            AppLogger.viewModel.error(
                 "ReviewViewModel.toggleManipulation dropped — no active session"
             )
             errorMessage = "Session expired — please cancel and re-record."
@@ -458,7 +453,7 @@ final class ReviewViewModel {
     /// content.
     func reAddExcludedEntry(_ entry: String) {
         guard sessionStore.active != nil else {
-            logger.error(
+            AppLogger.viewModel.error(
                 "ReviewViewModel.reAddExcludedEntry dropped — no active session"
             )
             errorMessage = "Session expired — please cancel and re-record."
@@ -474,7 +469,7 @@ final class ReviewViewModel {
         }
         setValue(combined, for: target)
         sessionStore.markExcludedReAdded(entry)
-        logger.info(
+        AppLogger.viewModel.info(
             // PHI-safe: only the target field name + remaining-excluded count.
             "ReviewViewModel: re-added excluded entry target=\(target.accessibilityID, privacy: .public) remaining=\(self.excludedRemainingCount, privacy: .public)"
         )
@@ -515,7 +510,7 @@ final class ReviewViewModel {
     /// field id. The transcript itself is already in `SessionStore`.
     func insertRawTranscriptIntoSubjective() {
         guard sessionStore.active != nil else {
-            logger.error(
+            AppLogger.viewModel.error(
                 "ReviewViewModel.insertRawTranscriptIntoSubjective dropped — no active session"
             )
             errorMessage = "Session expired — please cancel and re-record."
@@ -523,7 +518,7 @@ final class ReviewViewModel {
         }
         let transcriptValue = transcript
         guard !transcriptValue.isEmpty else {
-            logger.info(
+            AppLogger.viewModel.info(
                 "ReviewViewModel.insertRawTranscriptIntoSubjective ignored — empty transcript"
             )
             return
@@ -536,7 +531,7 @@ final class ReviewViewModel {
             combined = "\(trimmedExisting)\n\n\(transcriptValue)"
         }
         setValue(combined, for: .subjective)
-        logger.info(
+        AppLogger.viewModel.info(
             // PHI-safe: char count + target field id. Transcript content
             // never crosses the log boundary.
             "ReviewViewModel: inserted raw transcript chars=\(transcriptValue.count, privacy: .public) target=\(SOAPField.subjective.accessibilityID, privacy: .public)"
@@ -566,7 +561,7 @@ final class ReviewViewModel {
     /// carries `self` as the `object` so observers can filter against
     /// concurrent test fixtures or future multiple-VM scenarios.
     func cancelReview() {
-        logger.info("ReviewViewModel: cancelReview")
+        AppLogger.viewModel.info("ReviewViewModel: cancelReview")
         sessionStore.clear()
         NotificationCenter.default.post(name: .reviewScreenDidDismiss, object: self)
     }
@@ -592,23 +587,23 @@ final class ReviewViewModel {
     /// sees a spinner instead of a frozen button during the await.
     func triggerExport() async {
         guard canExport else {
-            logger.info("ReviewViewModel: triggerExport blocked — no patient selected")
+            AppLogger.viewModel.info("ReviewViewModel: triggerExport blocked — no patient selected")
             errorMessage = "Select a patient before exporting."
             return
         }
         guard !isPreparingExport else {
-            logger.info("ReviewViewModel: triggerExport ignored — already preparing")
+            AppLogger.viewModel.info("ReviewViewModel: triggerExport ignored — already preparing")
             return
         }
         isPreparingExport = true
         defer { isPreparingExport = false }
 
         guard let viewModel = await makeExportFlowViewModel() else {
-            logger.error("ReviewViewModel: triggerExport blocked — coordinator not configured")
+            AppLogger.viewModel.error("ReviewViewModel: triggerExport blocked — coordinator not configured")
             errorMessage = "Cliniko isn't set up — configure your API key in Settings."
             return
         }
-        logger.info("ReviewViewModel: triggerExport — sheet presented")
+        AppLogger.viewModel.info("ReviewViewModel: triggerExport — sheet presented")
         errorMessage = nil
         exportFlowSheet = viewModel
     }
@@ -618,7 +613,7 @@ final class ReviewViewModel {
     /// affordances and the host close converge on a single nil.
     func dismissExportFlow() {
         guard exportFlowSheet != nil else { return }
-        logger.info("ReviewViewModel: export sheet dismissed")
+        AppLogger.viewModel.info("ReviewViewModel: export sheet dismissed")
         exportFlowSheet = nil
     }
 
@@ -633,18 +628,18 @@ final class ReviewViewModel {
     /// swap on the patient chip during the await.
     func presentPatientPicker() async {
         guard !isPreparingPatientPicker else {
-            logger.info("ReviewViewModel: presentPatientPicker ignored — already preparing")
+            AppLogger.viewModel.info("ReviewViewModel: presentPatientPicker ignored — already preparing")
             return
         }
         isPreparingPatientPicker = true
         defer { isPreparingPatientPicker = false }
 
         guard let viewModel = await makePatientPickerViewModel() else {
-            logger.error("ReviewViewModel: presentPatientPicker blocked — coordinator not configured")
+            AppLogger.viewModel.error("ReviewViewModel: presentPatientPicker blocked — coordinator not configured")
             errorMessage = "Cliniko isn't set up — configure your API key in Settings."
             return
         }
-        logger.info("ReviewViewModel: patient picker presented")
+        AppLogger.viewModel.info("ReviewViewModel: patient picker presented")
         errorMessage = nil
         patientPickerSheet = viewModel
     }
@@ -652,7 +647,7 @@ final class ReviewViewModel {
     /// Dismiss the patient-picker sheet.
     func dismissPatientPicker() {
         guard patientPickerSheet != nil else { return }
-        logger.info("ReviewViewModel: patient picker dismissed")
+        AppLogger.viewModel.info("ReviewViewModel: patient picker dismissed")
         patientPickerSheet = nil
     }
 
@@ -664,7 +659,7 @@ final class ReviewViewModel {
     /// PHI: structural log only — the fallback reason code is a
     /// `String` constant on `ClinicalNotesProcessor` (never PHI).
     func openClinicalNotesSettings() {
-        logger.info(
+        AppLogger.viewModel.info(
             "ReviewViewModel: deep-link to Clinical Notes Settings (reason=\(self.fallbackReasonCode ?? "nil", privacy: .public))"
         )
         openClinicalNotesSettingsHandler()

@@ -71,10 +71,6 @@ final class PatientPickerViewModel: Identifiable {
 
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     @ObservationIgnored private var appointmentTask: Task<Void, Never>?
-    @ObservationIgnored private let logger = Logger(
-        subsystem: "com.speechtotext",
-        category: "PatientPickerViewModel"
-    )
 
     // MARK: - Init
 
@@ -176,7 +172,7 @@ final class PatientPickerViewModel: Identifiable {
             // shaped error so the UI has something concrete to render.
             // PHI: only the Swift type name is logged (structural).
             let typeName = String(reflecting: Swift.type(of: error))
-            logger.error(
+            AppLogger.viewModel.error(
                 "PatientPickerViewModel: non-ClinikoError from patientService type=\(typeName, privacy: .public)"
             )
             assertionFailure("PatientPickerViewModel: non-ClinikoError from patientService: \(typeName)")
@@ -261,7 +257,7 @@ final class PatientPickerViewModel: Identifiable {
             // Same contract as performSearch — service layer is
             // `throws ClinikoError` only.
             let typeName = String(reflecting: Swift.type(of: error))
-            logger.error(
+            AppLogger.viewModel.error(
                 "PatientPickerViewModel: non-ClinikoError from appointmentService type=\(typeName, privacy: .public)"
             )
             assertionFailure("PatientPickerViewModel: non-ClinikoError from appointmentService: \(typeName)")

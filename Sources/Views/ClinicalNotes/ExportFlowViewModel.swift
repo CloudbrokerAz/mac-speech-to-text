@@ -311,10 +311,6 @@ final class ExportFlowViewModel: Identifiable {
     /// access. Same idiom as `AppState.deinitLoadingTask`.
     @ObservationIgnored private nonisolated(unsafe) var deinitUploadTask: Task<Void, Never>?
     @ObservationIgnored private nonisolated(unsafe) var deinitCountdownTask: Task<Void, Never>?
-    @ObservationIgnored private let logger = Logger(
-        subsystem: "com.speechtotext",
-        category: "ExportFlowViewModel"
-    )
 
     // MARK: - Init
 
@@ -348,10 +344,10 @@ final class ExportFlowViewModel: Identifiable {
         switch buildSummary() {
         case .success(let summary):
             state = .confirming(summary)
-            logger.info("ExportFlowViewModel: state=confirming sectionCount=\(summary.sectionCounts.count, privacy: .public) dropped=\(summary.droppedManipulationIDs.count, privacy: .public)")
+            AppLogger.viewModel.info("ExportFlowViewModel: state=confirming sectionCount=\(summary.sectionCounts.count, privacy: .public) dropped=\(summary.droppedManipulationIDs.count, privacy: .public)")
         case .failure(let failure):
             state = .failed(failure)
-            logger.error("ExportFlowViewModel: state=failed reason=preflight")
+            AppLogger.viewModel.error("ExportFlowViewModel: state=failed reason=preflight")
         }
     }
 
@@ -380,11 +376,11 @@ final class ExportFlowViewModel: Identifiable {
         guard case .confirming(let summary) = state else { return }
         guard summary.appointment.isResolved else {
             state = .failed(.sessionState(.appointmentUnresolved))
-            logger.error("ExportFlowViewModel: confirm blocked — appointment unresolved")
+            AppLogger.viewModel.error("ExportFlowViewModel: confirm blocked — appointment unresolved")
             return
         }
         guard uploadTask == nil else {
-            logger.error("ExportFlowViewModel: confirm dropped — upload already in flight")
+            AppLogger.viewModel.error("ExportFlowViewModel: confirm dropped — upload already in flight")
             return
         }
         guard let patientIDInt = Int(summary.patientID.rawValue) else {
@@ -396,12 +392,12 @@ final class ExportFlowViewModel: Identifiable {
             // or a future Cliniko shape change — surface as
             // `.patientIDMalformed` rather than crash.
             state = .failed(.sessionState(.patientIDMalformed))
-            logger.error("ExportFlowViewModel: confirm blocked — patientID malformed")
+            AppLogger.viewModel.error("ExportFlowViewModel: confirm blocked — patientID malformed")
             return
         }
         guard let notes = sessionStore.active?.draftNotes else {
             state = .failed(.sessionState(.noDraftNotes))
-            logger.error("ExportFlowViewModel: confirm blocked — no draft notes")
+            AppLogger.viewModel.error("ExportFlowViewModel: confirm blocked — no draft notes")
             return
         }
 
@@ -417,14 +413,14 @@ final class ExportFlowViewModel: Identifiable {
         if case .appointment(let opaqueID) = summary.appointment,
            Int(opaqueID.rawValue) == nil {
             state = .failed(.sessionState(.appointmentIDMalformed))
-            logger.error("ExportFlowViewModel: confirm blocked — appointmentID malformed")
+            AppLogger.viewModel.error("ExportFlowViewModel: confirm blocked — appointmentID malformed")
             return
         }
 
         state = .uploading
         let appointmentInt = summary.appointment.wireAppointmentID
         let exporter = dependencies.exporter
-        logger.info("ExportFlowViewModel: state=uploading appointmentBound=\(appointmentInt != nil ? "true" : "false", privacy: .public)")
+        AppLogger.viewModel.info("ExportFlowViewModel: state=uploading appointmentBound=\(appointmentInt != nil ? "true" : "false", privacy: .public)")
 
         let task = Task { [weak self] in
             do {
@@ -459,7 +455,7 @@ final class ExportFlowViewModel: Identifiable {
         countdownTask = nil
         deinitCountdownTask = nil
         state = .idle
-        logger.info("ExportFlowViewModel: state=idle (user cancel from confirming)")
+        AppLogger.viewModel.info("ExportFlowViewModel: state=idle (user cancel from confirming)")
     }
 
     /// User-confirmed retry from the `.failed` state. Re-runs the
@@ -469,7 +465,7 @@ final class ExportFlowViewModel: Identifiable {
         guard case .failed(let reason) = state else { return }
         // Rate-limit countdown gates retry until the timer expires.
         if case .rateLimited = reason, let remaining = rateLimitCountdownRemaining, remaining > 0 {
-            logger.info("ExportFlowViewModel: retry gated — rate-limit countdown active remaining=\(Int(remaining), privacy: .public)")
+            AppLogger.viewModel.info("ExportFlowViewModel: retry gated — rate-limit countdown active remaining=\(Int(remaining), privacy: .public)")
             return
         }
         // Retry routes back through `enterConfirming` so the summary
@@ -494,7 +490,7 @@ final class ExportFlowViewModel: Identifiable {
     /// to `MainWindowController.shared.showSection(.clinicalNotes)`.
     func openClinikoSettings() {
         dependencies.openClinikoSettings()
-        logger.info("ExportFlowViewModel: opened Cliniko settings")
+        AppLogger.viewModel.info("ExportFlowViewModel: opened Cliniko settings")
     }
 
     /// Copy the composed SOAP body to the system clipboard so the
@@ -515,7 +511,7 @@ final class ExportFlowViewModel: Identifiable {
             manipulations: dependencies.manipulations
         ).body
         dependencies.copyToClipboard(body)
-        logger.info("ExportFlowViewModel: copied SOAP body to clipboard length=\(body.count, privacy: .public)")
+        AppLogger.viewModel.info("ExportFlowViewModel: copied SOAP body to clipboard length=\(body.count, privacy: .public)")
     }
 
     // MARK: - Private
@@ -573,7 +569,7 @@ final class ExportFlowViewModel: Identifiable {
             droppedManipulationIDs: outcome.droppedManipulationIDs
         )
         state = .succeeded(report)
-        logger.info("ExportFlowViewModel: state=succeeded auditPersisted=\(outcome.auditPersisted, privacy: .public) dropped=\(outcome.droppedManipulationIDs.count, privacy: .public)")
+        AppLogger.viewModel.info("ExportFlowViewModel: state=succeeded auditPersisted=\(outcome.auditPersisted, privacy: .public) dropped=\(outcome.droppedManipulationIDs.count, privacy: .public)")
         // Host runs the SessionStore.clear() + window close. Caller
         // contract: `onSuccess` is the only side-effect post-success;
         // the audit row is already on disk by this point.
@@ -587,7 +583,7 @@ final class ExportFlowViewModel: Identifiable {
         state = .failed(translated)
         // Structural log: the case name only. Never the URL, never
         // the body, never any field values.
-        logger.error("ExportFlowViewModel: state=failed reason=\(Self.caseName(translated), privacy: .public)")
+        AppLogger.viewModel.error("ExportFlowViewModel: state=failed reason=\(Self.caseName(translated), privacy: .public)")
         if case .rateLimited(let retryAfter) = translated {
             startRateLimitCountdown(seconds: retryAfter ?? 60)
         }

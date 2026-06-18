@@ -80,7 +80,6 @@ public actor ModelDownloader {
     private let manifest: ModelManifest
     private let baseDirectory: URL
     private let session: URLSession
-    private let logger: Logger
 
     /// Cached verification receipt for the active model directory (PRF-3).
     /// Avoids re-hashing multi-GB weights when size + mtime + revision unchanged.
@@ -112,10 +111,6 @@ public actor ModelDownloader {
             self.baseDirectory = Self.defaultBaseDirectory()
         }
         self.session = session
-        self.logger = Logger(
-            subsystem: Bundle.main.bundleIdentifier ?? "com.cloudbroker.mac-speech-to-text",
-            category: "model-downloader"
-        )
     }
 
     /// Per-bundle Application-Support root. Falls back to the Caches
@@ -183,7 +178,7 @@ public actor ModelDownloader {
         let needsBytes = try await bytesToDownload(into: modelDir)
         if needsBytes == 0 {
             try await persistReceipt(into: modelDir)
-            logger.info("Model already complete at \(modelDir.path, privacy: .public)")
+            AppLogger.service.info("Model already complete at \(modelDir.path, privacy: .public)")
             progress?(.completed(directory: modelDir))
             return modelDir
         }
@@ -205,7 +200,7 @@ public actor ModelDownloader {
 
         try await persistReceipt(into: modelDir)
         progress?(.completed(directory: modelDir))
-        logger.info("Model download verified at \(modelDir.path, privacy: .public)")
+        AppLogger.service.info("Model download verified at \(modelDir.path, privacy: .public)")
         return modelDir
     }
 

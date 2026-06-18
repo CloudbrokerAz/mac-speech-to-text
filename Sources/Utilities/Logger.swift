@@ -50,6 +50,9 @@ enum AppLogger {
     /// Logger for statistics and analytics
     static let analytics = Logger(subsystem: subsystem, category: "analytics")
 
+    /// Logger for Cliniko HTTP, export, and audit integrations (#ARC-7)
+    static let cliniko = Logger(subsystem: subsystem, category: "cliniko")
+
     // MARK: - Level-Controlled Logging
 
     static func trace(

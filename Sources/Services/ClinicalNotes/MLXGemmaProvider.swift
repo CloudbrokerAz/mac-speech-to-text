@@ -56,7 +56,6 @@ public actor MLXGemmaProvider: LLMProvider {
 
     private let modelDirectory: URL
     private let tokenizerLoader: any TokenizerLoader
-    private let logger: Logger
     private var container: ModelContainer?
 
     /// - Parameters:
@@ -71,10 +70,6 @@ public actor MLXGemmaProvider: LLMProvider {
     ) {
         self.modelDirectory = modelDirectory
         self.tokenizerLoader = tokenizerLoader ?? SwiftTransformersTokenizerLoader()
-        self.logger = Logger(
-            subsystem: Bundle.main.bundleIdentifier ?? "com.cloudbroker.mac-speech-to-text",
-            category: "mlx-provider"
-        )
     }
 
     /// Eagerly load weights into a `ModelContainer`. Idempotent — a second
@@ -93,7 +88,7 @@ public actor MLXGemmaProvider: LLMProvider {
     public func warmup() async throws {
         if container != nil { return }
         let started = ContinuousClock.now
-        logger.info("MLX warmup starting")
+        AppLogger.service.info("MLX warmup starting")
         do {
             let loaded = try await LLMModelFactory.shared.loadContainer(
                 from: modelDirectory,
@@ -105,7 +100,7 @@ public actor MLXGemmaProvider: LLMProvider {
             // common warm-cache case) don't truncate to "0s".
             let ms = (elapsed.components.seconds * 1_000)
                 + Int64(elapsed.components.attoseconds / 1_000_000_000_000_000)
-            logger.info(
+            AppLogger.service.info(
                 "MLX warmup completed in \(ms, privacy: .public)ms"
             )
         } catch is CancellationError {
@@ -115,11 +110,11 @@ public actor MLXGemmaProvider: LLMProvider {
             // `catch is CancellationError` arm to flip state to `.cancelled`
             // (showing "Download model"); collapsing into `.modelLoadFailed`
             // here would leave the row showing "Retry" instead.
-            logger.info("MLX warmup cancelled")
+            AppLogger.service.info("MLX warmup cancelled")
             throw CancellationError()
         } catch {
             let kind = String(describing: type(of: error))
-            logger.error("MLX warmup failed kind=\(kind, privacy: .public)")
+            AppLogger.service.error("MLX warmup failed kind=\(kind, privacy: .public)")
             throw ProviderError.modelLoadFailed(kind: kind)
         }
     }
@@ -154,7 +149,7 @@ public actor MLXGemmaProvider: LLMProvider {
     public func unload() async {
         guard container != nil else { return }
         container = nil
-        logger.info("MLX unload completed")
+        AppLogger.service.info("MLX unload completed")
     }
 
     public func generate(
@@ -304,13 +299,7 @@ public actor MLXGemmaProvider: LLMProvider {
     /// Logs a `generationFailed` event with PHI-safe `kind` only — no
     /// `localizedDescription`, no prompt, no completion text.
     private nonisolated func logGenerationError(kind: String) {
-        // Construct the logger inside the call so this stays nonisolated;
-        // the `logger` property is actor-isolated and can't be touched here.
-        let log = Logger(
-            subsystem: Bundle.main.bundleIdentifier ?? "com.cloudbroker.mac-speech-to-text",
-            category: "mlx-provider"
-        )
-        log.error("MLX generate failed kind=\(kind, privacy: .public)")
+        AppLogger.service.error("MLX generate failed kind=\(kind, privacy: .public)")
     }
 
     /// Map our `LLMOptions` onto MLX's `GenerateParameters`. `temperature: 0`

@@ -1,5 +1,4 @@
 import Foundation
-import os.log
 
 /// Thin Cliniko HTTP client. The single public method `send(_:)` builds an
 /// authenticated request from a `ClinikoEndpoint`, retries on 429 +
@@ -82,7 +81,6 @@ public actor ClinikoClient {
     private let userAgentProvider: @Sendable () -> String
     private let retryPolicy: RetryPolicy
     private let decoder: JSONDecoder
-    private let logger = Logger(subsystem: "com.speechtotext", category: "ClinikoClient")
 
     /// RFC 7231 IMF-fixdate parser. Used for `Retry-After: <http-date>`.
     /// Held as an *instance* property (not `static`) because `DateFormatter`
@@ -212,12 +210,12 @@ public actor ClinikoClient {
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else {
-                logger.error(
+                AppLogger.cliniko.error(
                     "ClinikoClient: \(methodLog, privacy: .public) \(pathTemplate, privacy: .public) non-HTTP response"
                 )
                 return .terminal(.nonHTTPResponse)
             }
-            logger.info(
+            AppLogger.cliniko.info(
                 "ClinikoClient: \(methodLog, privacy: .public) \(pathTemplate, privacy: .public) status=\(http.statusCode, privacy: .public) attempt=\(attempt, privacy: .public)"
             )
             return classifyResponse(T.self, data: data, http: http, endpoint: endpoint, attempt: attempt)
@@ -237,7 +235,7 @@ public actor ClinikoClient {
             // PHI-adjacent text.
             let typeName = String(reflecting: Swift.type(of: error))
             let nsError = error as NSError
-            logger.error(
+            AppLogger.cliniko.error(
                 "ClinikoClient: \(methodLog, privacy: .public) \(pathTemplate, privacy: .public) unexpected error type=\(typeName, privacy: .public) domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public)"
             )
             return .terminal(.transport(.unknown))
@@ -274,11 +272,11 @@ public actor ClinikoClient {
             // Worth a structural log so the triage path doesn't read this
             // as "Cliniko is broken."
             if (300..<400).contains(status) {
-                logger.error(
+                AppLogger.cliniko.error(
                     "ClinikoClient: \(endpoint.method.rawValue, privacy: .public) \(endpoint.pathTemplate, privacy: .public) unexpected redirect status=\(status, privacy: .public) — possible captive portal or shard migration"
                 )
             } else {
-                logger.error(
+                AppLogger.cliniko.error(
                     "ClinikoClient: \(endpoint.method.rawValue, privacy: .public) \(endpoint.pathTemplate, privacy: .public) unclassified status=\(status, privacy: .public)"
                 )
             }
@@ -303,7 +301,7 @@ public actor ClinikoClient {
             // structural decoding failure (not a transport failure) so the
             // UI doesn't lie about the failure layer.
             let typeName = String(describing: T.self)
-            logger.error(
+            AppLogger.cliniko.error(
                 "ClinikoClient: decodeOutcome unexpected non-ClinikoError type=\(String(reflecting: Swift.type(of: error)), privacy: .public)"
             )
             return .terminal(.decoding(typeName: typeName))
@@ -346,7 +344,7 @@ public actor ClinikoClient {
         if endpoint.isIdempotent, attempt < retryPolicy.maxRetries {
             return .retry(retryPolicy.delays[attempt])
         }
-        logger.error(
+        AppLogger.cliniko.error(
             "ClinikoClient: \(methodLog, privacy: .public) \(pathTemplate, privacy: .public) transport code=\(urlError.code.rawValue, privacy: .public) attempt=\(attempt, privacy: .public)"
         )
         return .terminal(.transport(urlError.code))
@@ -387,7 +385,7 @@ public actor ClinikoClient {
             // PHI — log the tag so triage knows the failure shape without
             // ever interpolating the underlying value.
             let kind = decodingErrorKind(decodingError)
-            logger.error(
+            AppLogger.cliniko.error(
                 "ClinikoClient: decode failed type=\(typeName, privacy: .public) kind=\(kind, privacy: .public)"
             )
             throw ClinikoError.decoding(typeName: typeName)
@@ -396,7 +394,7 @@ public actor ClinikoClient {
             // unreachable, but never silently relabel — log the type and
             // surface as `.decoding` not `.transport`.
             let errorTypeName = String(reflecting: Swift.type(of: error))
-            logger.error(
+            AppLogger.cliniko.error(
                 "ClinikoClient: decode failed (non-DecodingError) type=\(typeName, privacy: .public) error=\(errorTypeName, privacy: .public)"
             )
             throw ClinikoError.decoding(typeName: typeName)
@@ -426,7 +424,7 @@ public actor ClinikoClient {
         if let date = httpDateFormatter.date(from: trimmed) {
             return max(0, date.timeIntervalSinceNow)
         }
-        logger.error(
+        AppLogger.cliniko.error(
             "ClinikoClient: 429 with unparseable Retry-After (length=\(trimmed.count, privacy: .public))"
         )
         return nil
@@ -466,7 +464,7 @@ public actor ClinikoClient {
         // logging the body. `data.count` and the first byte are non-PHI
         // and tell triage "is it JSON-shaped at all? object or array?".
         let firstByte: String = data.first.map { String(format: "0x%02x", $0) } ?? "empty"
-        logger.error(
+        AppLogger.cliniko.error(
             "ClinikoClient: 422 body parse failed; bytes=\(data.count, privacy: .public) firstByte=\(firstByte, privacy: .public)"
         )
         return [:]

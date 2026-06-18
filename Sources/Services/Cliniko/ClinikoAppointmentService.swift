@@ -1,5 +1,4 @@
 import Foundation
-import os
 
 /// Actor-constrained protocol for the patient picker's appointment-loading
 /// dependency. See `ClinikoPatientSearching` for the rationale on
@@ -58,11 +57,6 @@ public actor ClinikoAppointmentService: ClinikoAppointmentLoading {
     /// for the tenant.
     private static let perPageCap = 50
 
-    private let logger = Logger(
-        subsystem: "com.speechtotext",
-        category: "ClinikoAppointmentService"
-    )
-
     public init(client: ClinikoClient) {
         self.client = client
         self.parser = ClinikoDateParser()
@@ -103,7 +97,7 @@ public actor ClinikoAppointmentService: ClinikoAppointmentLoading {
         // ops-side that the cap matters for them.
         if let total = response.totalEntries,
            total > response.individualAppointments.count {
-            logger.notice(
+            AppLogger.cliniko.notice(
                 "ClinikoAppointmentService: appointment list truncated count=\(response.individualAppointments.count, privacy: .public) total=\(total, privacy: .public) cap=\(Self.perPageCap, privacy: .public)"
             )
         }
@@ -148,7 +142,7 @@ public actor ClinikoAppointmentService: ClinikoAppointmentLoading {
             let pathTemplate = ClinikoEndpoint
                 .patientAppointments(patientID: patientID, from: from, to: to)
                 .pathTemplate
-            logger.error(
+            AppLogger.cliniko.error(
                 "ClinikoAppointmentService: appointment date parse failed kind=dateMalformed batchCount=\(response.individualAppointments.count, privacy: .public) path=\(pathTemplate, privacy: .public)"
             )
             throw ClinikoError.dateMalformed
