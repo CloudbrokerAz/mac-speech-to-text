@@ -115,37 +115,27 @@ detect_sync_method() {
 
 # Sync code using rsync
 sync_rsync() {
-    local dry_run_flag=""
-    [[ "${DRY_RUN:-false}" == "true" ]] && dry_run_flag="--dry-run"
-
-    # Build rsync exclude list
-    local excludes=(
-        ".git"
-        ".build"
-        "*.xcodeproj"
-        "*.xcworkspace"
-        "DerivedData"
-        ".DS_Store"
-        "*.swp"
-        "*.swo"
-        ".env"
-        ".env.*"
-        "node_modules"
-        "__pycache__"
-    )
-
-    local exclude_args=""
-    for pattern in "${excludes[@]}"; do
-        exclude_args="${exclude_args} --exclude=${pattern}"
-    done
-
-    local rsync_cmd="rsync -avz --progress --delete ${dry_run_flag} ${exclude_args} ${LOCAL_PROJECT_PATH}/ ${SSH_HOST}:${REMOTE_PROJECT_PATH}/"
+    local dry_run_flag=()
+    [[ "${DRY_RUN:-false}" == "true" ]] && dry_run_flag=(--dry-run)
 
     if [[ "${VERBOSE:-false}" == "true" ]]; then
-        print_status "Rsync command: ${rsync_cmd}"
+        print_status "Rsync: ${LOCAL_PROJECT_PATH}/ -> ${SSH_HOST}:${REMOTE_PROJECT_PATH}/"
     fi
 
-    eval "${rsync_cmd}"
+    rsync -avz --progress --delete "${dry_run_flag[@]}" \
+        --exclude='.git' \
+        --exclude='.build' \
+        --exclude='*.xcodeproj' \
+        --exclude='*.xcworkspace' \
+        --exclude='DerivedData' \
+        --exclude='.DS_Store' \
+        --exclude='*.swp' \
+        --exclude='*.swo' \
+        --exclude='.env' \
+        --exclude='.env.*' \
+        --exclude='node_modules' \
+        --exclude='__pycache__' \
+        "${LOCAL_PROJECT_PATH}/" "${SSH_HOST}:${REMOTE_PROJECT_PATH}/"
 }
 
 # Sync code using git (commit locally, pull on remote)
