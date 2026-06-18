@@ -9,6 +9,8 @@ set -euo pipefail
 
 # Configuration
 SHERPA_VERSION="${SHERPA_VERSION:-v1.12.20}"
+# Pinned sha256 for the official release tarball (SEC-11). Update when bumping SHERPA_VERSION.
+SHERPA_ARCHIVE_SHA256="${SHERPA_ARCHIVE_SHA256:-daaf67cea0d4619468ac9655bfcf801cfd3ccbe7d1f429bfa5504fb830f559cb}"
 # Note: GitHub release file names include the 'v' prefix in the version
 SHERPA_RELEASE_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/${SHERPA_VERSION}/sherpa-onnx-${SHERPA_VERSION}-osx-universal2-static.tar.bz2"
 
@@ -41,11 +43,22 @@ ARCHIVE_PATH="${TEMP_DIR}/${ARCHIVE_NAME}"
 
 if [ ! -f "${ARCHIVE_PATH}" ]; then
     echo "Downloading ${SHERPA_VERSION} pre-built release..."
-    curl -sL "${SHERPA_RELEASE_URL}" -o "${ARCHIVE_PATH}"
+    curl -fSL "${SHERPA_RELEASE_URL}" -o "${ARCHIVE_PATH}"
     echo "✓ Downloaded ${ARCHIVE_NAME}"
 else
     echo "✓ Using cached ${ARCHIVE_NAME}"
 fi
+
+echo "Verifying ${ARCHIVE_NAME} sha256..."
+computed_sha256="$(shasum -a 256 "${ARCHIVE_PATH}" | awk '{print $1}')"
+if [ "${computed_sha256}" != "${SHERPA_ARCHIVE_SHA256}" ]; then
+    echo "ERROR: sha256 mismatch for ${ARCHIVE_NAME}" >&2
+    echo "  expected: ${SHERPA_ARCHIVE_SHA256}" >&2
+    echo "  got:      ${computed_sha256}" >&2
+    rm -f "${ARCHIVE_PATH}"
+    exit 1
+fi
+echo "✓ sha256 verified"
 
 # Extract
 echo "Extracting archive..."
