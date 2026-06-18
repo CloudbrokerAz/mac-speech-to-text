@@ -230,7 +230,23 @@ public actor ModelDownloader {
             at: dir,
             withIntermediateDirectories: true
         )
+        sweepStalePartialFiles(in: dir)
         return dir
+    }
+
+    /// Remove orphaned `*.partial` files left by a crash between the temp
+    /// move and verification (CON-11). Harmless to correctness but can
+    /// accumulate multi-GB artifacts across interrupted downloads.
+    private func sweepStalePartialFiles(in modelDir: URL) {
+        guard let enumerator = FileManager.default.enumerator(
+            at: modelDir,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        for case let fileURL as URL in enumerator {
+            guard fileURL.pathExtension == "partial" else { continue }
+            try? FileManager.default.removeItem(at: fileURL)
+        }
     }
 
     /// Sum of bytes still required to satisfy the manifest. 0 means every
@@ -677,6 +693,9 @@ public actor ModelDownloader {
             var hasher = SHA256()
             let chunk = 4 * 1024 * 1024
             while true {
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
                 let data = try handle.read(upToCount: chunk) ?? Data()
                 if data.isEmpty { break }
                 hasher.update(data: data)
