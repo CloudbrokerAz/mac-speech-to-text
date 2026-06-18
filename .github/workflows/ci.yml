@@ -11,6 +11,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 # Force every JavaScript action (including transitives we can't bump
 # directly — notably pre-commit/action@v3.0.1 which depends on
 # actions/cache@v4 internally and has no newer release) to run on
@@ -93,6 +96,9 @@ jobs:
     name: Build and Test
     runs-on: macos-15
     needs: [lint, pre-commit]
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Checkout code
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -281,6 +287,9 @@ jobs:
     name: Build Release
     runs-on: macos-15
     needs: test
+    permissions:
+      contents: read
+      actions: write
     # Skip on PRs — `test` already runs `swift build -c release` (line 151),
     # so `Build Release` only adds value when we actually want to publish a
     # downloadable release-build artifact. That use case is a `push: main` /
