@@ -17,7 +17,7 @@ of whether HIPAA applies directly — treat everything as sensitive.
 
 ## Where PHI may live
 
-Exactly two places:
+Exactly two places in normal operation:
 
 1. **In-memory within the active `ClinicalSession`.** Cleared on export
    success, app quit, or the inactivity-timeout threshold. Never
@@ -26,6 +26,16 @@ Exactly two places:
 2. **The HTTPS body at the moment of `POST /treatment_notes`.** Goes
    directly from the doctor's Mac to the doctor's Cliniko tenant over
    TLS. Nowhere else.
+
+**Documented exception — clipboard fallback (SEC-7):** when the
+practitioner uses Export → "Copy to clipboard" (Cliniko unavailable or
+opt-in fallback), the composed SOAP body is written to
+`NSPasteboard.general` via `ClinicalNotesPasteboard.copySOAPNote`.
+That write is marked `org.nspasteboard.ConcealedType` and
+`org.nspasteboard.TransientType`, and auto-clears after 60 seconds if
+the pasteboard has not been replaced. Treat this as a **short-lived,
+user-initiated third surface** — not a persistence layer. Do not log the
+body; do not extend the timeout without revisiting this policy.
 
 ---
 
