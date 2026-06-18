@@ -187,8 +187,19 @@ sync_scp() {
         return 0
     fi
 
+    local old_umask tmp_archive remote_archive_name
+    old_umask=$(umask)
+    umask 077
+    tmp_archive=$(mktemp "${TMPDIR:-/tmp}/remote-test-sync.XXXXXX.tar.gz")
+    umask "${old_umask}"
+    remote_archive_name=$(basename "${tmp_archive}")
+
+    cleanup_local() {
+        rm -f "${tmp_archive}"
+    }
+    trap cleanup_local RETURN
+
     # Create temp archive excluding build artifacts
-    local tmp_archive="/tmp/remote-test-sync-$$.tar.gz"
     tar --exclude='.git' \
         --exclude='.build' \
         --exclude='DerivedData' \
@@ -197,15 +208,11 @@ sync_scp() {
         --exclude='.DS_Store' \
         -czf "${tmp_archive}" \
         -C "${LOCAL_PROJECT_PATH}" \
-        Sources Tests Package.swift 2>/dev/null || true
+        Sources Tests Package.swift
 
-    # Copy and extract on remote
-    scp "${tmp_archive}" "${SSH_HOST}:/tmp/"
-    ssh "${SSH_HOST}" "cd ${REMOTE_PROJECT_PATH} && tar -xzf /tmp/$(basename ${tmp_archive})"
-
-    # Cleanup
-    rm -f "${tmp_archive}"
-    ssh "${SSH_HOST}" "rm -f /tmp/$(basename ${tmp_archive})"
+    # Copy and extract on remote with a private temp file + cleanup trap
+    scp "${tmp_archive}" "${SSH_HOST}:/tmp/${remote_archive_name}"
+    ssh "${SSH_HOST}" "umask 077; remote_archive=\$(mktemp /tmp/remote-test-sync.XXXXXX.tar.gz); trap 'rm -f \"\${remote_archive}\"' EXIT; mv /tmp/${remote_archive_name} \"\${remote_archive}\"; cd $(printf '%q' "${REMOTE_PROJECT_PATH}") && tar -xzf \"\${remote_archive}\""
 
     return 0
 }
