@@ -158,16 +158,19 @@ sync_git() {
         STASH_CREATED=true
     fi
 
-    # Push current branch
+    # Push current branch; only reset remote after a successful push.
     print_status "Pushing to origin/${current_branch}..."
     if ! git push origin "${current_branch}" 2>&1; then
         print_warning "Push failed, trying with --force-with-lease..."
-        git push --force-with-lease origin "${current_branch}" 2>&1 || true
+        if ! git push --force-with-lease origin "${current_branch}" 2>&1; then
+            print_error "Failed to push branch ${current_branch}; aborting remote sync"
+            return 2
+        fi
     fi
 
-    # Pull on remote
+    # Pull on remote — branch name is quoted to avoid word-splitting/injection.
     print_status "Pulling on remote..."
-    ssh "${SSH_HOST}" "cd ${REMOTE_PROJECT_PATH} && git fetch origin && git checkout ${current_branch} && git reset --hard origin/${current_branch}"
+    ssh "${SSH_HOST}" "cd $(printf '%q' "${REMOTE_PROJECT_PATH}") && git fetch origin && git checkout $(printf '%q' "${current_branch}") && git reset --hard $(printf '%q' "origin/${current_branch}")"
 
     # Restore stash if created
     if [[ "${STASH_CREATED:-false}" == "true" ]]; then
