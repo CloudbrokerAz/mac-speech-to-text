@@ -224,7 +224,8 @@ struct FluidAudioServiceReentrancyTests {
     /// CON-4: concurrent `initialize` callers coalesce onto one in-flight
     /// task. Uses `simulatedError = .modelLoading` so the body fails fast
     /// after the simulated delay without touching the real FluidAudio SDK,
-    /// and asserts elapsed wall-clock is ~one delay, not N × delay.
+    /// and counts `runInitialize` body entries instead of wall-clock
+    /// bounds (CI runners jitter enough to flake tight timing assertions).
     @Test(
         "Concurrent initialize coalesces onto single in-flight task",
         .tags(.slow)
@@ -235,7 +236,6 @@ struct FluidAudioServiceReentrancyTests {
             initializeSimulatedDelay: .milliseconds(100)
         )
         let callCount = 4
-        let started = Date()
 
         let errors: [Error?] = await withTaskGroup(of: Error?.self) { group in
             for _ in 0..<callCount {
@@ -252,7 +252,6 @@ struct FluidAudioServiceReentrancyTests {
             for await error in group { collected.append(error) }
             return collected
         }
-        let elapsed = Date().timeIntervalSince(started)
 
         #expect(errors.count == callCount)
         for error in errors {
@@ -263,11 +262,10 @@ struct FluidAudioServiceReentrancyTests {
             }
         }
 
-        // Coalesced: ~one 100ms delay. Uncoalesced: ~callCount × 100ms.
-        let upperBound = 0.100 * 1.75
+        let invocationCount = await service.runInitializeInvocationCount
         #expect(
-            elapsed < upperBound,
-            "expected coalesced initialize (~100ms), got \(elapsed)s"
+            invocationCount == 1,
+            "expected coalesced initialize (one runInitialize body), got \(invocationCount)"
         )
     }
 }

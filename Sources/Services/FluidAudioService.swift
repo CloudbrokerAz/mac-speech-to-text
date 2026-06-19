@@ -130,6 +130,10 @@ actor FluidAudioService: FluidAudioServiceProtocol {
     private let serviceId: String
     private var transcriptionCount: Int = 0
 
+    /// Test-only: times `runInitialize` body entered. Lets coalescing
+    /// tests assert single-flight behaviour without wall-clock bounds.
+    internal var runInitializeInvocationCount: Int = 0
+
     /// Simulated error for testing (from launch arguments)
     private let simulatedError: SimulatedErrorType?
 
@@ -188,6 +192,7 @@ actor FluidAudioService: FluidAudioServiceProtocol {
     /// Body of `initialize(language:)`. Always reached via the in-flight
     /// task coalescer above — never call directly.
     private func runInitialize(language: String) async throws {
+        runInitializeInvocationCount += 1
         AppLogger.info(AppLogger.service, "[\(serviceId)] initialize(language: \(language)) called")
 
         // Test-only: hold the in-flight task long enough for coalescing
