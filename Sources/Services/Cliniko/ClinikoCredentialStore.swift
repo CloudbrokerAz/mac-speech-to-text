@@ -65,7 +65,7 @@ public actor ClinikoCredentialStore {
     /// from the caller's perspective. We mark it `nonisolated(unsafe)` so
     /// `loadShard` / `updateShard` can stay non-async; the picker binding in
     /// the settings UI then doesn't need an actor hop.
-    nonisolated(unsafe) private let userDefaults: UserDefaults
+    nonisolated(unsafe) private let userDefaults: UserDefaults // swiftlint:disable:this nonisolated_unsafe_warning
 
     public init(
         secureStore: any SecureStore = KeychainSecureStore(service: ClinikoCredentialStore.serviceName),

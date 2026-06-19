@@ -309,8 +309,8 @@ final class ExportFlowViewModel: Identifiable {
     /// only nonisolated reader, and (c) `deinit` runs after every
     /// other reference has been dropped, so there is no concurrent
     /// access. Same idiom as `AppState.deinitLoadingTask`.
-    @ObservationIgnored private nonisolated(unsafe) var deinitUploadTask: Task<Void, Never>?
-    @ObservationIgnored private nonisolated(unsafe) var deinitCountdownTask: Task<Void, Never>?
+    @ObservationIgnored private nonisolated(unsafe) var deinitUploadTask: Task<Void, Never>? // swiftlint:disable:this nonisolated_unsafe_warning
+    @ObservationIgnored private nonisolated(unsafe) var deinitCountdownTask: Task<Void, Never>? // swiftlint:disable:this nonisolated_unsafe_warning
 
     /// Test seam (TST-9): invoked on MainActor when an upload-driven
     /// transition reaches `.succeeded` or `.failed`. Production leaves

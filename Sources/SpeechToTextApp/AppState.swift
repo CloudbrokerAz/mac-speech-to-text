@@ -169,26 +169,26 @@ class AppState {
     /// Task for loading statistics - tracked for proper lifecycle management
     @ObservationIgnored private var loadingTask: Task<Void, Never>?
     /// nonisolated copy for deinit access (deinit cannot access MainActor-isolated state)
-    @ObservationIgnored private nonisolated(unsafe) var deinitLoadingTask: Task<Void, Never>?
+    @ObservationIgnored private nonisolated(unsafe) var deinitLoadingTask: Task<Void, Never>? // swiftlint:disable:this nonisolated_unsafe_warning
     /// Observer for voice trigger state changes
     @ObservationIgnored private var voiceTriggerStateObserver: NSObjectProtocol?
     /// nonisolated copy for deinit access
-    @ObservationIgnored private nonisolated(unsafe) var deinitVoiceTriggerStateObserver: NSObjectProtocol?
+    @ObservationIgnored private nonisolated(unsafe) var deinitVoiceTriggerStateObserver: NSObjectProtocol? // swiftlint:disable:this nonisolated_unsafe_warning
     /// Observer for `.clinicalNotesGenerateRequested` (posted by the
     /// recording modal once the doctor has acknowledged the safety
     /// disclaimer). Hops the transcript off the notification boundary
     /// into `SessionStore` and presents `ReviewWindowController`.
     @ObservationIgnored private var clinicalNotesGenerateObserver: NSObjectProtocol?
     /// nonisolated copy for deinit access
-    @ObservationIgnored private nonisolated(unsafe) var deinitClinicalNotesGenerateObserver: NSObjectProtocol?
+    @ObservationIgnored private nonisolated(unsafe) var deinitClinicalNotesGenerateObserver: NSObjectProtocol? // swiftlint:disable:this nonisolated_unsafe_warning
     /// Observer for `willTerminate` — clears in-memory PHI (#SEC-4).
     @ObservationIgnored private var willTerminateObserver: NSObjectProtocol?
     /// nonisolated copy for deinit access
-    @ObservationIgnored private nonisolated(unsafe) var deinitWillTerminateObserver: NSObjectProtocol?
+    @ObservationIgnored private nonisolated(unsafe) var deinitWillTerminateObserver: NSObjectProtocol? // swiftlint:disable:this nonisolated_unsafe_warning
     /// Observer for `willResignActive` — drives `SessionStore.checkIdleTimeout()` (#SEC-5).
     @ObservationIgnored private var willResignActiveObserver: NSObjectProtocol?
     /// nonisolated copy for deinit access
-    @ObservationIgnored private nonisolated(unsafe) var deinitWillResignActiveObserver: NSObjectProtocol?
+    @ObservationIgnored private nonisolated(unsafe) var deinitWillResignActiveObserver: NSObjectProtocol? // swiftlint:disable:this nonisolated_unsafe_warning
 
     /// Designated initialiser.
     ///

@@ -98,7 +98,7 @@ actor FluidAudioService: FluidAudioServiceProtocol {
     /// every caller (`initialize`, `runTranscribe`, `shutdown`) is
     /// itself actor-isolated, so accesses are serialised by the actor's
     /// own execution turns. See the type-level "Maintenance contract".
-    private nonisolated(unsafe) var asrManager: AsrManager?
+    private nonisolated(unsafe) var asrManager: AsrManager? // swiftlint:disable:this nonisolated_unsafe_warning
 
     /// Single-flight serialisation for `transcribe()`. The flag is set
     /// while a `runTranscribe` body is executing; reentrant callers

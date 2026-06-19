@@ -148,8 +148,8 @@ final class RecordingViewModel {
     // nonisolated copies for deinit access (deinit cannot access MainActor-isolated state)
     // SAFETY: These are written on MainActor during init/setup, read in deinit after all refs released.
     // The isBeingDeallocated flag prevents notification handlers from running during deallocation.
-    @ObservationIgnored private nonisolated(unsafe) var deinitLanguageSwitchObserver: NSObjectProtocol?
-    @ObservationIgnored private nonisolated(unsafe) var deinitInactivityTimer: Timer?
+    @ObservationIgnored private nonisolated(unsafe) var deinitLanguageSwitchObserver: NSObjectProtocol? // swiftlint:disable:this nonisolated_unsafe_warning
+    @ObservationIgnored private nonisolated(unsafe) var deinitInactivityTimer: Timer? // swiftlint:disable:this nonisolated_unsafe_warning
     /// Thread-safe flag to prevent notification handlers from executing during deallocation.
     /// Uses OSAllocatedUnfairLock to prevent data race between deinit and notification handlers.
     @ObservationIgnored private let isBeingDeallocatedLock = OSAllocatedUnfairLock(initialState: false)

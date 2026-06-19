@@ -5,7 +5,7 @@ import OSLog
 /// Actor provides thread-safe access to shared mutable state
 actor StatisticsService {
     /// UserDefaults is thread-safe, marked nonisolated(unsafe) for actor access
-    private nonisolated(unsafe) let userDefaults: UserDefaults
+    private nonisolated(unsafe) let userDefaults: UserDefaults // swiftlint:disable:this nonisolated_unsafe_warning
     private let legacyStatsKey = "com.speechtotext.statistics"
     private let statsKeyPrefix = "com.speechtotext.statistics.day."
 

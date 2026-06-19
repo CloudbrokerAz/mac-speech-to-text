@@ -51,7 +51,7 @@ Orchestration for the [Repo Review Remediation EPIC](https://github.com/Cloudbro
 | **Model** | Opus (or highest available for security work) |
 | **Memory** | Enabled — wave order and pairings (CON-1+CON-2, TST-1+TST-2, SEC-3 before SEC-1) |
 
-### Instructions (summary)
+### Instructions (A1 — wave triage)
 
 1. Read `@AGENTS.md` Topic Router.
 2. Parse finding ID from issue title (`[SEC-1] …`).
@@ -76,7 +76,7 @@ Orchestration for the [Repo Review Remediation EPIC](https://github.com/Cloudbro
 | **Tools** | Comment on PRs; manage check runs (optional: `security-review-pending`) |
 | **Finish in editor** | Branch filter `repo-review/**`, check-run permissions |
 
-### Instructions (summary)
+### Instructions (A2 — PR security gate)
 
 Run **three** readonly security reviews on **branch changes**:
 
@@ -105,7 +105,7 @@ Enforces the mandatory three security agents before merge without relying on hum
 | **Tools** | Comment on PRs; manage check runs |
 | **Reference** | [`babysit`](file:///Users/aarone/.cursor/skills-cursor/babysit/SKILL.md) triage patterns |
 
-### Instructions (summary)
+### Instructions (A3 — CI babysit)
 
 1. Identify failing job (swift test, swiftlint, pre-commit, codecov).
 2. Read logs **structurally only** — no PHI.
@@ -125,7 +125,7 @@ Enforces the mandatory three security agents before merge without relying on hum
 | **Tools** | GitHub MCP or `gh issue list` / `gh issue comment` |
 | **Repository** | `CloudbrokerAz/mac-speech-to-text` / `main` |
 
-### Instructions (summary)
+### Instructions (A4 — weekly digest)
 
 1. Find issue titled `[EPIC] Repo Review Remediation — June 2026`.
 2. Count open vs closed issues with label `repo-review`.
