@@ -32,16 +32,16 @@ final class TestInfrastructureTests: UITestBase {
 
     /// Test that UITestHelpers functions work correctly
     func test_infrastructure_helpersFunction() throws {
-        // Launch app with welcome flow (to have predictable UI elements)
+        // Launch app with first-launch reset (MainView + HomeSection)
         launchApp(arguments: [
             LaunchArguments.resetWelcome,
             LaunchArguments.skipPermissionChecks
         ])
 
-        // Test waitForWelcomeView helper
+        // Legacy helper maps to MainWindow / HomeSection
         XCTAssertTrue(
             waitForWelcomeView(timeout: 10),
-            "Welcome view should appear within timeout"
+            "Main window / home section should appear within timeout"
         )
 
         // Test that non-existent elements return false
@@ -51,13 +51,9 @@ final class TestInfrastructureTests: UITestBase {
             "Non-existent element should not be found"
         )
 
-        // Test button tap helper with Get Started button
-        let getStartedButton = app.buttons["getStartedButton"]
-        if UITestHelpers.waitForElement(getStartedButton, timeout: 5) {
-            XCTAssertNoThrow(
-                try UITestHelpers.tapButton(getStartedButton),
-                "Should be able to tap Get Started button"
-            )
+        let homeSection = app.otherElements["homeSection"]
+        if UITestHelpers.waitForElement(homeSection, timeout: 5) {
+            XCTAssertTrue(homeSection.exists, "Home section should be visible on first launch")
         }
     }
 
@@ -65,17 +61,17 @@ final class TestInfrastructureTests: UITestBase {
 
     /// Test that -resetWelcome clears state for fresh test runs
     func test_infrastructure_resetWelcome() throws {
-        // First, launch with welcome skipped
+        // First, launch with onboarding skipped
         launchApp(arguments: [
             LaunchArguments.skipWelcome,
             LaunchArguments.skipPermissionChecks
         ])
 
-        // Verify welcome is skipped (no welcome view)
-        let welcomeView = app.otherElements["welcomeView"]
+        // Verify legacy welcome identifiers are absent (dead WelcomeView removed)
+        let legacyWelcomeView = app.otherElements["welcomeView"]
         XCTAssertFalse(
-            welcomeView.waitForExistence(timeout: 2),
-            "Welcome should be skipped"
+            legacyWelcomeView.waitForExistence(timeout: 2),
+            "Legacy welcome view should not appear"
         )
 
         // Terminate and relaunch with reset
@@ -86,17 +82,16 @@ final class TestInfrastructureTests: UITestBase {
             LaunchArguments.skipPermissionChecks
         ])
 
-        // Verify welcome view appears after reset
+        // Verify MainView / HomeSection appears after reset
         XCTAssertTrue(
             waitForWelcomeView(timeout: 5),
-            "Welcome view should appear after reset"
+            "Main window / home section should appear after reset"
         )
 
-        // Verify Get Started button is present
-        let getStartedButton = app.buttons["getStartedButton"]
+        let homeSection = app.otherElements["homeSection"]
         XCTAssertTrue(
-            getStartedButton.waitForExistence(timeout: 3),
-            "Get Started button should be visible"
+            homeSection.waitForExistence(timeout: 3),
+            "Home section should be visible after reset"
         )
     }
 

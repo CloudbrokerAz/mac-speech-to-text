@@ -10,7 +10,7 @@
 # - CMake (brew install cmake)
 # - Git
 
-set -e
+set -euo pipefail
 
 # Configuration
 SHERPA_REPO="https://github.com/k2-fsa/sherpa-onnx.git"

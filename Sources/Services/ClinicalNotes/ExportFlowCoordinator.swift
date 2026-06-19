@@ -39,6 +39,10 @@ final class ExportFlowCoordinator {
     private var openClinikoSettings: (() -> Void)?
     private var closeReviewWindow: (() -> Void)?
 
+    #if DEBUG
+    private var isConfiguredForDebug = false
+    #endif
+
     private init() {}
 
     /// Wire the coordinator. Called once by `AppState.init` with
@@ -66,11 +70,29 @@ final class ExportFlowCoordinator {
         openClinikoSettings: @escaping () -> Void,
         closeReviewWindow: @escaping () -> Void
     ) {
+        #if DEBUG
+        if isConfiguredForDebug {
+            assertionFailure("ExportFlowCoordinator.configure called twice — use resetForTesting() between scenarios")
+        }
+        isConfiguredForDebug = true
+        #endif
         self.sessionStore = sessionStore
         self.exporter = exporter
         self.manipulations = manipulations
         self.openClinikoSettings = openClinikoSettings
         self.closeReviewWindow = closeReviewWindow
+    }
+
+    /// Clears coordinator wiring between test scenarios (#ARC-8).
+    func resetForTesting() {
+        sessionStore = nil
+        exporter = nil
+        manipulations = nil
+        openClinikoSettings = nil
+        closeReviewWindow = nil
+        #if DEBUG
+        isConfiguredForDebug = false
+        #endif
     }
 
     /// Whether `configure(...)` has been called. The view layer
@@ -116,9 +138,7 @@ final class ExportFlowCoordinator {
             },
             openClinikoSettings: openClinikoSettings,
             copyToClipboard: { body in
-                let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                pasteboard.setString(body, forType: .string)
+                ClinicalNotesPasteboard.copySOAPNote(body)
             }
         )
         return ExportFlowViewModel(

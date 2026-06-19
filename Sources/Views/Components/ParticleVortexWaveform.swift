@@ -58,9 +58,15 @@ struct ParticleVortexWaveform: View {
 
     private let maxParticles = 40
     private let minParticles = 8
+    private let maxTrailSegments = 4
+    private let maxCanvasFillsPerFrame = 120
     private let baseOrbitalSpeed: Double = 0.02
     private let maxOrbitalSpeed: Double = 0.08
     private let particleFadeSpeed: Double = 0.1
+    /// Below this RMS level the animation timer drops to ~15 Hz (PRF-14).
+    private let idleAudioThreshold: Float = 0.05
+    private let activeTimerInterval: TimeInterval = 1.0 / 60.0
+    private let idleTimerInterval: TimeInterval = 1.0 / 15.0
 
     // MARK: - State
 
@@ -87,15 +93,18 @@ struct ParticleVortexWaveform: View {
             // Draw background glow
             drawBackgroundGlow(context: context, center: center, radius: maxRadius, level: effectiveLevel)
 
-            // Draw particle trails and particles
-            for particle in particles where particle.isActive {
-                drawParticle(
+            // Draw particle trails and particles (fill budget capped — PRF-7)
+            var fillBudget = maxCanvasFillsPerFrame
+            for particle in particles where particle.isActive && fillBudget > 0 {
+                let spent = drawParticle(
                     context: context,
                     particle: particle,
                     center: center,
                     maxRadius: maxRadius,
-                    time: time
+                    time: time,
+                    fillBudget: fillBudget
                 )
+                fillBudget -= spent
             }
 
             // Draw center orb
@@ -112,7 +121,11 @@ struct ParticleVortexWaveform: View {
             withAnimation(.spring(response: 0.15, dampingFraction: 0.7)) {
                 smoothLevel = newValue
             }
+            syncAnimationTimerCadence()
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isRecording ? "Particle audio waveform, recording" : "Particle audio waveform, idle")
+        .accessibilityValue("\(Int(smoothLevel * 100)) percent audio level")
     }
 
     // MARK: - Initialization
@@ -145,6 +158,28 @@ struct ParticleVortexWaveform: View {
     // MARK: - Animation Loop
 
     private func startAnimation() {
+        scheduleAnimationTimer(interval: timerInterval(for: smoothLevel))
+    }
+
+    private func stopAnimation() {
+        displayLink?.invalidate()
+        displayLink = nil
+    }
+
+    private func timerInterval(for level: Float) -> TimeInterval {
+        level < idleAudioThreshold ? idleTimerInterval : activeTimerInterval
+    }
+
+    private func syncAnimationTimerCadence() {
+        guard displayLink != nil else { return }
+        let desired = timerInterval(for: smoothLevel)
+        if abs((displayLink?.timeInterval ?? 0) - desired) > 0.001 {
+            scheduleAnimationTimer(interval: desired)
+        }
+    }
+
+    private func scheduleAnimationTimer(interval: TimeInterval) {
+        stopAnimation()
         // Schedule the animation timer explicitly on `RunLoop.main` with
         // `.common` mode:
         //
@@ -161,20 +196,15 @@ struct ParticleVortexWaveform: View {
         //     audit.
         //
         // `assumeIsolated` is preferred over `Task { @MainActor in … }`
-        // because this timer fires 60× per second; Task dispatch would
+        // because this timer fires up to 60× per second; Task dispatch would
         // allocate + queue-hop every frame and drop animation frames.
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { _ in
+        let timer = Timer(timeInterval: interval, repeats: true) { _ in
             MainActor.assumeIsolated {
                 updateParticles()
             }
         }
         RunLoop.main.add(timer, forMode: .common)
         displayLink = timer
-    }
-
-    private func stopAnimation() {
-        displayLink?.invalidate()
-        displayLink = nil
     }
 
     private func updateParticles() {
@@ -219,6 +249,7 @@ struct ParticleVortexWaveform: View {
 
             particles[i] = particle
         }
+        syncAnimationTimerCadence()
     }
 
     // MARK: - Drawing
@@ -254,13 +285,17 @@ struct ParticleVortexWaveform: View {
         )
     }
 
+    @discardableResult
     private func drawParticle(
         context: GraphicsContext,
         particle: Particle,
         center: CGPoint,
         maxRadius: CGFloat,
-        time: Double
-    ) {
+        time: Double,
+        fillBudget: Int
+    ) -> Int {
+        var fillsUsed = 0
+        guard fillBudget > 0 else { return 0 }
         let currentRadius = maxRadius * particle.radius
 
         // Calculate position with Bezier-like curve influence
@@ -286,9 +321,11 @@ struct ParticleVortexWaveform: View {
         let baseSize: CGFloat = 4 + CGFloat(smoothLevel) * 6
         let particleSize = baseSize * particle.size
 
-        // Draw glow/trail effect
-        let trailLength = 3 + Int(Double(smoothLevel) * 4)
+        // Draw glow/trail effect (capped trail segments — PRF-7)
+        let requestedTrail = 3 + Int(Double(smoothLevel) * 4)
+        let trailLength = min(requestedTrail, maxTrailSegments, fillBudget - 2)
         for trailIndex in 0..<trailLength {
+            guard fillsUsed < fillBudget else { break }
             let trailFactor = 1.0 - Double(trailIndex) / Double(trailLength)
             let trailAngle = particle.angle - Double(trailIndex) * 0.05 * (1 + Double(smoothLevel))
             let trailRadius = adjustedRadius * (1 - Double(trailIndex) * 0.02)
@@ -307,8 +344,10 @@ struct ParticleVortexWaveform: View {
                 )),
                 with: .color(particleColor.opacity(trailOpacity))
             )
+            fillsUsed += 1
         }
 
+        guard fillsUsed < fillBudget else { return fillsUsed }
         // Draw main particle with glow
         var glowContext = context
         glowContext.blendMode = .plusLighter
@@ -333,6 +372,9 @@ struct ParticleVortexWaveform: View {
                 endRadius: glowSize / 2
             )
         )
+        fillsUsed += 1
+
+        guard fillsUsed < fillBudget else { return fillsUsed }
 
         // Core particle
         context.fill(
@@ -344,6 +386,9 @@ struct ParticleVortexWaveform: View {
             )),
             with: .color(particleColor.opacity(particle.opacity))
         )
+        fillsUsed += 1
+
+        guard fillsUsed < fillBudget else { return fillsUsed }
 
         // Bright center highlight
         let highlightSize = particleSize * 0.4
@@ -356,6 +401,8 @@ struct ParticleVortexWaveform: View {
             )),
             with: .color(.white.opacity(particle.opacity * 0.7))
         )
+        fillsUsed += 1
+        return fillsUsed
     }
 
     private func calculateHue(for particle: Particle, time: Double) -> Double {

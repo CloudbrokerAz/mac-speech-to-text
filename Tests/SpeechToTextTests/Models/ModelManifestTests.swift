@@ -155,7 +155,7 @@ struct ModelManifestTests {
         // path (test runs from the project root) so this test exercises
         // the actual checked-in manifest rather than a duplicate fixture.
         let manifestPath = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent("Resources/Models/gemma-4-e4b-it-4bit/manifest.json")
+            .appendingPathComponent("Sources/Resources/Models/gemma-4-e4b-it-4bit/manifest.json")
         guard FileManager.default.fileExists(atPath: manifestPath.path) else {
             // CI / Xcode test schemes may run from a different cwd. Skip
             // cleanly — production wiring (`AppState.makeLLMPipeline`)
@@ -169,11 +169,11 @@ struct ModelManifestTests {
         #expect(manifest.files.count == 8)
         let computedTotal = manifest.files.reduce(into: Int64(0)) { $0 += $1.size }
         #expect(computedTotal == manifest.totalBytes)
-        // The big binary file MUST have a sha256 — it's where tampering
-        // would matter. Smaller config files may rely on revision pinning.
-        // Threshold raised vs the v1 Gemma 3 manifest: Gemma 4 E4B is
-        // ~5.2 GB on disk (vs 2.6 GB), so a regression that pointed at
-        // the wrong artifact would be caught earlier.
+        // Every manifest entry must carry a sha256 — config/prompt files
+        // are integrity-checked the same as weights (SEC-12).
+        for file in manifest.files {
+            #expect(file.sha256?.isEmpty == false, "missing sha256 for \(file.path)")
+        }
         let bigFile = manifest.files.first(where: { $0.path == "model.safetensors" })
         #expect(bigFile?.sha256?.isEmpty == false)
         #expect(bigFile?.size ?? 0 > 5_000_000_000)

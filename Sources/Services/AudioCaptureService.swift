@@ -31,8 +31,6 @@ final class AudioBufferProcessor: @unchecked Sendable {
         self.processorId = UUID().uuidString.prefix(8).description
         self.nativeSampleRate = nativeFormat.sampleRate
 
-        print("[DEBUG] AudioBufferProcessor[\(processorId)] created: nativeRate=\(Int(nativeSampleRate))Hz, targetRate=\(Constants.Audio.sampleRate)Hz")
-        fflush(stdout)
         AppLogger.debug(AppLogger.audio, "AudioBufferProcessor[\(processorId)] created: nativeRate=\(Int(nativeSampleRate))Hz")
     }
 
@@ -343,8 +341,6 @@ class AudioCaptureService {
 
         AppLogger.debug(AppLogger.audio, "[\(serviceId)] Retrieving all samples...")
         let samples = await streamingBuffer.allSamples
-        print("[DEBUG] stopCapture: \(samples.count) samples at \(Int(nativeSampleRate))Hz")
-        fflush(stdout)
         AppLogger.info(AppLogger.audio, "[\(serviceId)] Retrieved \(samples.count) samples at \(Int(nativeSampleRate))Hz")
 
         // Clear state

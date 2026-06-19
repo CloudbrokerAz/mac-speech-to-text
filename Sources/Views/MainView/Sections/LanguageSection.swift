@@ -665,8 +665,7 @@ final class LanguageSectionViewModel {
         do {
             try settingsService.save(settings)
         } catch {
-            // Log error but don't crash
-            print("Failed to save language settings: \(error)")
+            AppLogger.service.error("Failed to save language settings: \(error.localizedDescription, privacy: .public)")
         }
     }
 

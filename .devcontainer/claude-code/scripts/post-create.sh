@@ -42,8 +42,9 @@ fi
 
 # 1. Configure Terraform credentials
 echo "[1/4] Configuring Terraform credentials..."
-mkdir -p ~/.terraform.d
-cat > ~/.terraform.d/credentials.tfrc.json << EOF
+if [ -n "${TFE_TOKEN:-}" ]; then
+  mkdir -p ~/.terraform.d
+  cat > ~/.terraform.d/credentials.tfrc.json << EOF
 {
   "credentials": {
     "app.terraform.io": {
@@ -52,7 +53,11 @@ cat > ~/.terraform.d/credentials.tfrc.json << EOF
   }
 }
 EOF
-echo "      Terraform credentials configured"
+  chmod 600 ~/.terraform.d/credentials.tfrc.json
+  echo "      Terraform credentials configured"
+else
+  echo "      TFE_TOKEN unset — skipping Terraform credentials"
+fi
 
 # 2. Install and build Claude hooks for Langfuse tracing
 echo "[2/4] Setting up Claude hooks..."

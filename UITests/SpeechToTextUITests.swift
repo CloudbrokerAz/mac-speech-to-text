@@ -47,115 +47,79 @@ final class SpeechToTextUITests: XCTestCase {
         }
     }
 
-    // MARK: - Welcome View Tests (Single-Screen Onboarding)
-    // @see WelcomeFlowTests for comprehensive tests
+    // MARK: - First Launch / Home Section Tests
+    // Unified MainView replaces the removed WelcomeView surface
 
-    /// Test that welcome view appears on first launch
+    /// Test that MainView with HomeSection appears on first launch
     func testOnboardingAppearsOnFirstLaunch() throws {
         app.launch()
 
-        // Wait for welcome view using accessibility identifier
-        let welcomeView = app.otherElements["welcomeView"]
-        let welcomeViewExists = welcomeView.waitForExistence(timeout: 5)
+        let mainView = app.otherElements["mainView"]
+        let homeSection = app.otherElements["homeSection"]
+        let mainWindow = app.windows.matching(
+            NSPredicate(format: "identifier == 'mainWindow'")
+        ).firstMatch
 
-        // Fallback: check for welcome title
-        let welcomeTitle = app.staticTexts["welcomeTitle"]
-        let titleExists = welcomeTitle.waitForExistence(timeout: 2)
-
-        // Fallback: check for app title text
-        let appTitle = app.staticTexts["Speech to Text"]
-        let appTitleExists = appTitle.waitForExistence(timeout: 2)
+        let mainViewExists = mainView.waitForExistence(timeout: 5)
+        let homeSectionExists = homeSection.waitForExistence(timeout: 2)
+        let mainWindowExists = mainWindow.waitForExistence(timeout: 2)
 
         XCTAssertTrue(
-            welcomeViewExists || titleExists || appTitleExists,
-            "Welcome view should appear on first launch"
+            mainViewExists || homeSectionExists || mainWindowExists,
+            "MainView / HomeSection should appear on first launch"
         )
     }
 
-    /// Test welcome view elements are present (single-screen flow)
+    /// Test first-launch home section elements are present
     func testOnboardingNavigation() throws {
         setupPermissionDialogHandler()
         app.launch()
 
-        // Wait for welcome view
-        let welcomeView = app.otherElements["welcomeView"]
-        let welcomeViewExists = welcomeView.waitForExistence(timeout: 5)
+        let homeSection = app.otherElements["homeSection"]
+        let homeSectionExists = homeSection.waitForExistence(timeout: 5)
 
-        // Fallback check for app title
-        let appTitle = app.staticTexts["Speech to Text"]
-        let appTitleExists = appTitle.waitForExistence(timeout: 2)
+        let mainView = app.otherElements["mainView"]
+        let mainViewExists = mainView.waitForExistence(timeout: 2)
 
         XCTAssertTrue(
-            welcomeViewExists || appTitleExists,
-            "Welcome view should appear"
+            homeSectionExists || mainViewExists,
+            "Home section should appear on first launch"
         )
 
-        // Verify welcome icon is present
-        let welcomeIcon = app.images["welcomeIcon"]
-        if welcomeIcon.waitForExistence(timeout: 2) {
-            XCTAssertTrue(welcomeIcon.exists, "Welcome icon should be visible")
-        }
-
-        // Check for microphone section - either grant button or test button
+        // Permission cards live in HomeSection — look for microphone-related UI
         let grantMicButton = app.buttons["grantMicrophoneButton"]
         let testMicButton = app.buttons["testMicrophoneButton"]
         let micSectionExists = grantMicButton.waitForExistence(timeout: 2)
             || testMicButton.waitForExistence(timeout: 2)
 
-        // Microphone section should exist in some form
         if !micSectionExists {
-            // Look for microphone-related text
             let micText = app.staticTexts.matching(
                 NSPredicate(format: "label CONTAINS[c] 'microphone'")
             ).firstMatch
             XCTAssertTrue(
                 micText.waitForExistence(timeout: 2),
-                "Microphone section should be visible"
+                "Microphone permission section should be visible"
             )
         }
-
-        // Verify Get Started button exists (the single CTA in the new UI)
-        let getStartedButton = app.buttons["getStartedButton"]
-        XCTAssertTrue(
-            getStartedButton.waitForExistence(timeout: 3),
-            "Get Started button should be visible in single-screen welcome"
-        )
     }
 
-    /// Test welcome view completion dismisses the view
+    /// Test that first-launch MainView stays open (no separate dismiss step)
     func testOnboardingCompletion() throws {
-        // Pre-grant permissions for this test
         app.launchArguments.append("--skip-permission-checks")
         app.launch()
 
-        // Wait for welcome view
-        let welcomeView = app.otherElements["welcomeView"]
-        let welcomeViewExists = welcomeView.waitForExistence(timeout: 5)
+        let mainWindow = app.windows.matching(
+            NSPredicate(format: "identifier == 'mainWindow'")
+        ).firstMatch
+        let homeSection = app.otherElements["homeSection"]
 
-        // Fallback check
-        let appTitle = app.staticTexts["Speech to Text"]
-        let windowVisible = welcomeViewExists || appTitle.waitForExistence(timeout: 2)
+        let windowVisible = mainWindow.waitForExistence(timeout: 5)
+            || homeSection.waitForExistence(timeout: 2)
 
-        XCTAssertTrue(windowVisible, "Welcome view should appear")
-
-        // Find and tap the Get Started button
-        let getStartedButton = app.buttons["getStartedButton"]
+        XCTAssertTrue(windowVisible, "Main window / home section should appear on first launch")
         XCTAssertTrue(
-            getStartedButton.waitForExistence(timeout: 3),
-            "Get Started button should be visible"
-        )
-
-        getStartedButton.tap()
-
-        // Welcome view should close after tapping Get Started
-        // Use a predicate to wait for disappearance
-        let disappeared = NSPredicate(format: "exists == false")
-        let expectation = XCTNSPredicateExpectation(predicate: disappeared, object: welcomeView)
-        let result = XCTWaiter.wait(for: [expectation], timeout: 5)
-
-        XCTAssertTrue(
-            result == .completed || !welcomeView.exists,
-            "Welcome view should close after tapping Get Started"
+            mainWindow.exists || homeSection.exists,
+            "MainView should remain open after first launch (no Get Started dismiss)"
         )
     }
 

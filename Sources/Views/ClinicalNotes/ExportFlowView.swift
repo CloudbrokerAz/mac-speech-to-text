@@ -120,7 +120,7 @@ struct ExportFlowView: View {
                 .keyboardShortcut(.cancelAction)
                 .accessibilityIdentifier("exportFlow.confirm.cancel")
 
-                Button("Confirm export") {
+                Button(ClinicalL10n.exportConfirmTitle) {
                     viewModel.confirm()
                 }
                 .buttonStyle(.borderedProminent)

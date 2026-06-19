@@ -221,8 +221,8 @@ mkdir -p "${DEST_DIR}"
 # Per-file iteration
 # =============================================================================
 
-# Stream tab-separated `path<TAB>size<TAB>sha256` rows. Empty sha256 means
-# size-only verification (matches ModelDownloader.fileSatisfiesManifest).
+# Stream tab-separated `path<TAB>size<TAB>sha256` rows. Empty sha256 is a hard
+# error (exit 3) — every manifest entry must carry a hash (TST-8).
 # Same argv-not-interpolated discipline as read_manifest_field above.
 FILE_STREAM="$(python3 -c '
 import json, sys
@@ -248,6 +248,10 @@ verify_sha256() {
     # $1 = path, $2 = expected hex
     local path="$1"
     local expected="$2"
+    if [ -z "${expected}" ]; then
+        print_error "missing sha256 for ${path} — manifest entry must carry a hash"
+        return 1
+    fi
     local actual_lc expected_lc
     actual_lc="$(shasum -a 256 "${path}" | awk '{print $1}' | tr 'A-Z' 'a-z')"
     expected_lc="$(echo "${expected}" | tr 'A-Z' 'a-z')"
@@ -255,10 +259,15 @@ verify_sha256() {
 }
 
 download_file() {
-    # $1 = relative path, $2 = expected size, $3 = expected sha256 (may be empty)
+    # $1 = relative path, $2 = expected size, $3 = expected sha256
     local rel_path="$1"
     local expected_size="$2"
     local expected_sha="$3"
+
+    if [ -z "${expected_sha}" ]; then
+        print_error "missing sha256 for ${rel_path} — manifest entry must carry a hash"
+        exit 3
+    fi
 
     local dest="${DEST_DIR}/${rel_path}"
     local partial="${dest}.partial"
@@ -268,13 +277,12 @@ download_file() {
 
     # Idempotency: file already complete + verified.
     if [ -f "${dest}" ] && verify_size "${dest}" "${expected_size}"; then
-        if [ -z "${expected_sha}" ]; then
-            print_success "verified (size only): ${rel_path}"
-            return 0
-        fi
         if verify_sha256 "${dest}" "${expected_sha}"; then
             print_success "verified: ${rel_path}"
             return 0
+        fi
+        if [ -z "${expected_sha}" ]; then
+            exit 3
         fi
         print_warning "sha256 mismatch on existing ${rel_path}; re-downloading"
         rm -f "${dest}"
@@ -307,12 +315,14 @@ download_file() {
         exit 3
     fi
 
-    if [ -n "${expected_sha}" ]; then
-        if ! verify_sha256 "${partial}" "${expected_sha}"; then
-            print_error "sha256 mismatch for ${rel_path}"
+    if ! verify_sha256 "${partial}" "${expected_sha}"; then
+        if [ -z "${expected_sha}" ]; then
             rm -f "${partial}"
             exit 3
         fi
+        print_error "sha256 mismatch for ${rel_path}"
+        rm -f "${partial}"
+        exit 3
     fi
 
     mv -f "${partial}" "${dest}"

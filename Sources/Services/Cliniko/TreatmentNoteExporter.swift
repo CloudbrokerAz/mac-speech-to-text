@@ -1,5 +1,4 @@
 import Foundation
-import os.log
 
 /// Posts a `treatment_note` to Cliniko and records a metadata-only
 /// audit entry on success.
@@ -79,7 +78,6 @@ actor TreatmentNoteExporter {
     private let manipulations: ManipulationsRepository
     private let appVersion: String
     private let now: @Sendable () -> Date
-    private let logger = Logger(subsystem: "com.speechtotext", category: "TreatmentNoteExporter")
 
     /// Marketing version for the active build, with a deterministic
     /// fallback when running outside an `.app` bundle (i.e. during
@@ -150,7 +148,7 @@ actor TreatmentNoteExporter {
             // PHI: the type name is structural and non-PHI; the
             // underlying error message can echo CodingKey paths so we
             // never log it directly.
-            logger.error("TreatmentNoteExporter: request encode failed type=TreatmentNotePayload")
+            AppLogger.cliniko.error("TreatmentNoteExporter: request encode failed type=TreatmentNotePayload")
             throw Failure.requestEncodeFailed
         }
 
@@ -162,7 +160,7 @@ actor TreatmentNoteExporter {
             // 2xx + undecodable body. The note may have landed on
             // Cliniko's side — we just lost track of its id. Surface
             // a typed signal so the UI doesn't auto-retry.
-            logger.error("TreatmentNoteExporter: 2xx body undecodable type=TreatmentNoteCreated")
+            AppLogger.cliniko.error("TreatmentNoteExporter: 2xx body undecodable type=TreatmentNoteCreated")
             throw Failure.responseUndecodable
         }
 
@@ -197,7 +195,7 @@ actor TreatmentNoteExporter {
             // PHI: `clinikoStatus` is a 2xx Int (observed, not
             // hardcoded — see #58); nothing about the failure carries
             // patient data.
-            logger.error("TreatmentNoteExporter: audit-write failed status=\(record.clinikoStatus, privacy: .public)")
+            AppLogger.cliniko.error("TreatmentNoteExporter: audit-write failed status=\(record.clinikoStatus, privacy: .public)")
             auditPersisted = false
         }
 

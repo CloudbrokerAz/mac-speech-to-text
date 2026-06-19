@@ -20,7 +20,7 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/FluidInference/FluidAudio.git",
-            branch: "main"
+            revision: "82a17b90d2b54c82b4562b776b0b61fb0ff964fe"
         ),
         .package(
             url: "https://github.com/nalexn/ViewInspector.git",
@@ -73,6 +73,7 @@ let package = Package(
             exclude: [],
             resources: [
                 .process("Resources/app_logov2.png"),
+                .process("Resources/Localizable.xcstrings"),
                 .copy("Resources/Models"),
                 .copy("Resources/Manipulations"),
                 .copy("Resources/Prompts")

@@ -5,8 +5,29 @@ import OSLog
 /// Actor provides thread-safe access to shared mutable state
 actor StatisticsService {
     /// UserDefaults is thread-safe, marked nonisolated(unsafe) for actor access
-    private nonisolated(unsafe) let userDefaults: UserDefaults
-    private let statsKey = "com.speechtotext.statistics"
+    private nonisolated(unsafe) let userDefaults: UserDefaults // swiftlint:disable:this nonisolated_unsafe_warning
+    private let legacyStatsKey = "com.speechtotext.statistics"
+    private let statsKeyPrefix = "com.speechtotext.statistics.day."
+
+    private let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }()
+
+    private let decoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }()
+
+    private let dayKeyFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate]
+        return formatter
+    }()
+
+    private var didMigrateLegacyBlob = false
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
@@ -14,7 +35,8 @@ actor StatisticsService {
 
     /// Record a completed session
     func recordSession(_ session: RecordingSession) throws {
-        var todayStats = getTodayStats()
+        let today = Calendar.current.startOfDay(for: Date())
+        var todayStats = loadStats(for: today) ?? UsageStatistics(date: today)
 
         todayStats.totalSessions += 1
 
@@ -39,12 +61,12 @@ actor StatisticsService {
         }
 
         // Update language breakdown
-        if let index = todayStats.languageBreakdown.firstIndex(where: { $0.languageCode == session.language }) {
+        if let index = todayStats.languageBreakdown.firstIndex(where: { $0.languageCode == session.language.rawValue }) {
             todayStats.languageBreakdown[index].sessionCount += 1
             todayStats.languageBreakdown[index].wordCount += session.wordCount
         } else {
             todayStats.languageBreakdown.append(
-                LanguageStats(languageCode: session.language, sessionCount: 1, wordCount: session.wordCount)
+                LanguageStats(languageCode: session.language.rawValue, sessionCount: 1, wordCount: session.wordCount)
             )
         }
 
@@ -69,14 +91,9 @@ actor StatisticsService {
 
     /// Get statistics for a specific date
     func getStatsForDate(_ date: Date) -> UsageStatistics {
-        let allStats = loadAllStats()
+        migrateLegacyStatsIfNeeded()
         let startOfDay = Calendar.current.startOfDay(for: date)
-
-        if let stats = allStats.first(where: { Calendar.current.isDate($0.date, inSameDayAs: startOfDay) }) {
-            return stats
-        }
-
-        return UsageStatistics(date: startOfDay)
+        return loadStats(for: startOfDay) ?? UsageStatistics(date: startOfDay)
     }
 
     /// Get aggregated statistics across different periods
@@ -109,7 +126,11 @@ actor StatisticsService {
 
     /// Clear all statistics
     func clearAll() {
-        userDefaults.removeObject(forKey: statsKey)
+        migrateLegacyStatsIfNeeded()
+        for key in allDayStorageKeys() {
+            userDefaults.removeObject(forKey: key)
+        }
+        userDefaults.removeObject(forKey: legacyStatsKey)
     }
 
     /// Clear statistics older than retention period
@@ -123,47 +144,83 @@ actor StatisticsService {
         let allStats = loadAllStats()
         let recentStats = allStats.filter { $0.date >= cutoffDate }
 
-        try saveAllStats(recentStats)
+        for key in allDayStorageKeys() {
+            userDefaults.removeObject(forKey: key)
+        }
+        for stats in recentStats {
+            try saveStats(stats)
+        }
     }
 
     // MARK: - Private Helpers
 
-    private func loadAllStats() -> [UsageStatistics] {
-        guard let data = userDefaults.data(forKey: statsKey) else {
-            return []
-        }
+    private func dayStorageKey(for date: Date) -> String {
+        let startOfDay = Calendar.current.startOfDay(for: date)
+        return statsKeyPrefix + dayKeyFormatter.string(from: startOfDay)
+    }
+
+    private func allDayStorageKeys() -> [String] {
+        userDefaults.dictionaryRepresentation().keys.filter { $0.hasPrefix(statsKeyPrefix) }
+    }
+
+    private func migrateLegacyStatsIfNeeded() {
+        guard !didMigrateLegacyBlob else { return }
+        didMigrateLegacyBlob = true
+
+        guard let data = userDefaults.data(forKey: legacyStatsKey) else { return }
 
         do {
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            return try decoder.decode([UsageStatistics].self, from: data)
+            let legacyStats = try decoder.decode([UsageStatistics].self, from: data)
+            for stats in legacyStats {
+                try saveStats(stats)
+            }
+            userDefaults.removeObject(forKey: legacyStatsKey)
+            AppLogger.analytics.info("Migrated legacy statistics blob to per-day keys")
         } catch {
-            AppLogger.analytics.error("Failed to decode statistics: \(error.localizedDescription, privacy: .public). Returning empty array. Historical statistics may be lost.")
-            // Backup corrupted data for potential recovery
-            let backupKey = "\(statsKey).corrupted"
-            userDefaults.set(data, forKey: backupKey)
-            AppLogger.analytics.info("Corrupted statistics data backed up to key: \(backupKey, privacy: .public)")
-            return []
+            AppLogger.analytics.error(
+                "Failed to migrate legacy statistics: \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 
-    private func saveAllStats(_ stats: [UsageStatistics]) throws {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(stats)
-        userDefaults.set(data, forKey: statsKey)
+    private func loadAllStats() -> [UsageStatistics] {
+        migrateLegacyStatsIfNeeded()
+        return allDayStorageKeys().compactMap { key in
+            guard let data = userDefaults.data(forKey: key) else { return nil }
+            do {
+                return try decoder.decode(UsageStatistics.self, from: data)
+            } catch {
+                AppLogger.analytics.error(
+                    "Failed to decode statistics for key \(key, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                )
+                return nil
+            }
+        }
+        .sorted { $0.date < $1.date }
+    }
+
+    private func loadStats(for date: Date) -> UsageStatistics? {
+        migrateLegacyStatsIfNeeded()
+        let key = dayStorageKey(for: date)
+        guard let data = userDefaults.data(forKey: key) else { return nil }
+
+        do {
+            return try decoder.decode(UsageStatistics.self, from: data)
+        } catch {
+            AppLogger.analytics.error(
+                "Failed to decode statistics for key \(key, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            let backupKey = "\(key).corrupted"
+            userDefaults.set(data, forKey: backupKey)
+            AppLogger.analytics.info("Corrupted statistics data backed up to key: \(backupKey, privacy: .public)")
+            return nil
+        }
     }
 
     private func saveStats(_ stats: UsageStatistics) throws {
-        var allStats = loadAllStats()
-
-        // Remove existing stats for this date
-        allStats.removeAll { Calendar.current.isDate($0.date, inSameDayAs: stats.date) }
-
-        // Add new stats
-        allStats.append(stats)
-
-        try saveAllStats(allStats)
+        let key = dayStorageKey(for: stats.date)
+        let data = try encoder.encode(stats)
+        userDefaults.set(data, forKey: key)
     }
 
     private func merge(_ lhs: UsageStatistics, with rhs: UsageStatistics) -> UsageStatistics {

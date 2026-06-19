@@ -26,9 +26,6 @@ struct SiriStyleRingWaves: View {
     /// Smooth audio level
     @State private var smoothLevel: Float = 0
 
-    /// Individual bar levels for varied animation
-    @State private var barLevels: [Float] = Array(repeating: 0, count: 24)
-
     var body: some View {
         Canvas { context, size in
             let center = CGPoint(x: size.width / 2, y: size.height / 2)
@@ -45,15 +42,16 @@ struct SiriStyleRingWaves: View {
                 )
             }
 
-            // Draw radial audio bars
-            for i in 0..<barCount {
+            // Draw radial audio bars — variation derived from time phase (PRF-7)
+            for index in 0..<barCount {
+                let barLevel = CGFloat(deterministicBarLevel(index: index, baseLevel: smoothLevel, time: time))
                 drawAudioBar(
                     context: context,
                     center: center,
-                    index: i,
+                    index: index,
                     minRadius: minRadius,
                     maxRadius: maxRadius,
-                    barLevel: CGFloat(barLevels[i]),
+                    barLevel: barLevel,
                     time: time
                 )
             }
@@ -73,28 +71,22 @@ struct SiriStyleRingWaves: View {
             }
         }
         .onChange(of: audioLevel) { _, newValue in
-            // Smooth the overall level
             withAnimation(.spring(response: 0.1, dampingFraction: 0.7)) {
                 smoothLevel = newValue
             }
-
-            // Update individual bar levels with variation
-            updateBarLevels(baseLevel: newValue)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isRecording ? "Radial audio waveform, recording" : "Radial audio waveform, idle")
+        .accessibilityValue("\(Int(smoothLevel * 100)) percent audio level")
     }
 
     // MARK: - Bar Level Animation
 
-    private func updateBarLevels(baseLevel: Float) {
-        for i in 0..<barCount {
-            // Create variation based on bar position and randomness
-            let variation = Float.random(in: 0.6...1.4)
-            let positionFactor = 1.0 - abs(Float(i - barCount / 2)) / Float(barCount / 2) * 0.3
-
-            withAnimation(.spring(response: 0.08 + Double(i) * 0.005, dampingFraction: 0.6)) {
-                barLevels[i] = baseLevel * variation * positionFactor
-            }
-        }
+    /// Deterministic per-bar variation from the shared time phase — no RNG or per-bar springs (PRF-7).
+    private func deterministicBarLevel(index: Int, baseLevel: Float, time: Double) -> Float {
+        let variation = 0.6 + 0.4 * Float((sin(time * 2.5 + Double(index) * 0.7) + 1) / 2)
+        let positionFactor = 1.0 - abs(Float(index - barCount / 2)) / Float(barCount / 2) * 0.3
+        return baseLevel * variation * positionFactor
     }
 
     // MARK: - Drawing Functions
@@ -270,8 +262,8 @@ struct SiriStyleRingWaves: View {
             )
 
             // Surrounding dots (audio wave hint)
-            for i in 0..<3 {
-                let dotAngle = Double(i) * 2 * .pi / 3 - .pi / 2
+            for dotIndex in 0..<3 {
+                let dotAngle = Double(dotIndex) * 2 * .pi / 3 - .pi / 2
                 let dotDist = innerRadius * 0.4
                 let dotX = center.x + cos(dotAngle) * dotDist
                 let dotY = center.y + sin(dotAngle) * dotDist

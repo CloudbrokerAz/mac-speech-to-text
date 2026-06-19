@@ -32,6 +32,9 @@ struct PatientPickerView: View {
             appointmentPane
                 .frame(minWidth: 280)
         }
+        .accessibilityIdentifier("patientPickerView")
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Patient and appointment picker")
         .padding(20)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
         .animation(.spring(response: 0.5, dampingFraction: 0.7), value: viewModel.searchPhase)
@@ -42,11 +45,12 @@ struct PatientPickerView: View {
 
     private var searchPane: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Patient")
+            Text(ClinicalL10n.patientPickerTitle)
                 .font(.headline)
                 .foregroundStyle(.primary)
+                .accessibilityAddTraits(.isHeader)
 
-            TextField("Search by name", text: $searchText)
+            TextField(ClinicalL10n.patientSearchPlaceholder, text: $searchText)
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: searchText) { _, newValue in
                     viewModel.updateQuery(newValue)

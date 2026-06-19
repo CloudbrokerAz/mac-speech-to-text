@@ -13,6 +13,9 @@ struct MainView: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
+    /// App-wide state for global error surfacing (#ARC-6).
+    @Bindable private var appState: AppState
+
     // MARK: - Focus State
 
     /// Focus state for keyboard navigation in sidebar
@@ -49,12 +52,14 @@ struct MainView: View {
         viewModel: MainViewModel = MainViewModel(),
         settingsService: SettingsService = SettingsService(),
         permissionService: PermissionService = PermissionService(),
-        modelStatusViewModel: ClinicalNotesModelStatusViewModel? = nil
+        modelStatusViewModel: ClinicalNotesModelStatusViewModel? = nil,
+        appState: AppState = AppState()
     ) {
         self._viewModel = State(initialValue: viewModel)
         self.settingsService = settingsService
         self.permissionService = permissionService
         self.modelStatusViewModel = modelStatusViewModel
+        self._appState = Bindable(wrappedValue: appState)
     }
 
     // MARK: - Body
@@ -134,6 +139,17 @@ struct MainView: View {
         .background(backgroundGradient)
         .frame(minWidth: 900, minHeight: 820)
         .accessibilityIdentifier("mainView")
+        .overlay(alignment: .top) {
+            if let message = appState.errorMessage {
+                AppStateErrorBanner(message: message) {
+                    appState.errorMessage = nil
+                }
+                .padding(.top, 12)
+                .padding(.horizontal, 16)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: appState.errorMessage != nil)
         .onAppear {
             initializeViewModels()
             // Defer the @FocusState write to the next runloop pass so it
@@ -342,6 +358,46 @@ struct MainView: View {
                 AboutSectionPlaceholder()
             }
         }
+    }
+}
+
+// MARK: - App State Error Banner (#ARC-6)
+
+/// Surfaces `AppState.errorMessage` at the top of the main window so
+/// initialization / settings failures are visible outside the menu bar.
+private struct AppStateErrorBanner: View {
+    let message: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Color.amberPrimary)
+
+            Text(message)
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundStyle(.primary)
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss error")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.amberPrimary.opacity(0.35), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
+        .accessibilityIdentifier("appStateErrorBanner")
     }
 }
 

@@ -38,7 +38,7 @@ final class ReviewScreenRenderTests: XCTestCase {
     private func makeViewModel(populated: Bool = false) -> ReviewViewModel {
         let store = SessionStore()
         if populated {
-            var recording = RecordingSession(language: "en", state: .completed)
+            var recording = RecordingSession(language: .en, state: .completed)
             recording.transcribedText = "Patient reports R-neck pain x 3/52."
             store.start(from: recording)
             var notes = StructuredNotes()
@@ -63,7 +63,7 @@ final class ReviewScreenRenderTests: XCTestCase {
     /// the editors are interactive.
     private func makeViewModel(loadState: ClinicalNotesDraftStatus) -> ReviewViewModel {
         let store = SessionStore()
-        var recording = RecordingSession(language: "en", state: .completed)
+        var recording = RecordingSession(language: .en, state: .completed)
         recording.transcribedText = "Patient reports lower back pain."
         store.start(from: recording)
         switch loadState {

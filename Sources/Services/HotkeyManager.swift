@@ -8,13 +8,7 @@ class HotkeyManager {
     // MARK: - State Tracking
 
     private var keyPressStartTime: Date?
-    private var isProcessing: Bool = false
-    private var isRecordingToggleMode: Bool = false
-
-    /// Tracks whether a clinical-notes recording session is currently active (#91).
-    /// Kept separate from `isProcessing` so the clinical-notes chord cannot interleave
-    /// with hold-to-record / toggle-recording — and vice versa.
-    private var isRecordingClinicalNotes: Bool = false
+    private var activeSession: HotkeyRecordingSession = .idle
 
     // MARK: - Callbacks
 
@@ -58,13 +52,16 @@ class HotkeyManager {
     var currentTimeProvider: () -> Date = { Date() }
 
     /// Exposes processing state for testing
-    var isCurrentlyProcessing: Bool { isProcessing }
+    var isCurrentlyProcessing: Bool { activeSession.isGeneralDictationActive }
 
     /// Exposes toggle mode state for testing
-    var isCurrentlyInToggleMode: Bool { isRecordingToggleMode }
+    var isCurrentlyInToggleMode: Bool { activeSession.isToggleMode }
 
     /// Exposes clinical-notes recording state for testing (#91)
-    var isCurrentlyRecordingClinicalNotes: Bool { isRecordingClinicalNotes }
+    var isCurrentlyRecordingClinicalNotes: Bool { activeSession.isClinicalNotesActive }
+
+    /// Active hotkey session kind (#ARC-10).
+    var activeHotkeyRecordingSession: HotkeyRecordingSession { activeSession }
 
     // MARK: - Lifecycle
 
@@ -106,7 +103,7 @@ class HotkeyManager {
         // and KeyboardShortcuts.disable requires MainActor
         if !hasShutdown {
             // Log warning if shutdown wasn't called - indicates a bug in the caller
-            print("[WARNING] HotkeyManager deallocated without calling shutdown() - hotkeys may not be properly disabled")
+            AppLogger.app.warning("HotkeyManager deallocated without calling shutdown() - hotkeys may not be properly disabled")
         }
     }
 
@@ -120,17 +117,13 @@ class HotkeyManager {
         // NOTE: Do NOT call KeyboardShortcuts.getShortcut() here - it crashes due to
         // Bundle.module not being available in executable targets.
 
-        print("[DEBUG] HotkeyManager: setupHotkey() called")
         AppLogger.app.debug("HotkeyManager: setupHotkey() called")
 
         // First, explicitly enable the shortcut to ensure Carbon hotkey is registered
-        print("[DEBUG] HotkeyManager: About to enable .holdToRecord shortcut...")
         KeyboardShortcuts.enable(.holdToRecord)
-        print("[DEBUG] HotkeyManager: Enabled .holdToRecord shortcut")
         AppLogger.app.debug("HotkeyManager: Enabled .holdToRecord shortcut")
 
         KeyboardShortcuts.onKeyDown(for: .holdToRecord) { [weak self] in
-            print("[DEBUG] HotkeyManager: onKeyDown callback triggered for holdToRecord!")
             AppLogger.app.debug("HotkeyManager: onKeyDown callback triggered")
             Task { @MainActor in
                 await self?.handleKeyDown()
@@ -176,10 +169,8 @@ class HotkeyManager {
     private func setupClinicalNotesHotkey() {
         KeyboardShortcuts.enable(.clinicalNotesRecord)
         AppLogger.app.debug("HotkeyManager: Enabled .clinicalNotesRecord shortcut")
-        AppLogger.app.info("[#109-probe] setupClinicalNotesHotkey: post-enable isEnabled=\(KeyboardShortcuts.isEnabled(for: .clinicalNotesRecord), privacy: .public)")
 
         KeyboardShortcuts.onKeyDown(for: .clinicalNotesRecord) { [weak self] in
-            AppLogger.app.info("[#109-probe] onKeyDown fired for .clinicalNotesRecord (Carbon → KeyboardShortcuts dispatcher reached)")
             Task { @MainActor in
                 await self?.handleClinicalNotesKeyPress()
             }
@@ -204,95 +195,56 @@ class HotkeyManager {
 
     /// Handle toggle key press - starts or stops recording in toggle mode (internal for testability)
     func handleToggleKeyPress() async {
-        // If already in toggle mode, stop recording (even if isProcessing is true)
-        if isRecordingToggleMode {
-            isProcessing = false
-            isRecordingToggleMode = false
-            await onRecordingStop?(0) // Duration not tracked for toggle mode
+        if activeSession == .toggle {
+            activeSession = .idle
+            await onRecordingStop?(0)
             return
         }
 
-        // Guard: don't start toggle mode if hold mode or clinical-notes mode is in progress
-        guard !isProcessing, !isRecordingClinicalNotes else { return }
+        guard activeSession == .idle else { return }
 
-        // Start recording in toggle mode
-        isProcessing = true
-        isRecordingToggleMode = true
+        activeSession = .toggle
         await onRecordingStart?()
     }
 
-    /// Handle clinical-notes key press (#91) - alternates between start/stop using a
-    /// dedicated state flag so the chord cannot interleave with hold-to-record /
-    /// toggle-recording sessions.
     func handleClinicalNotesKeyPress() async {
-        AppLogger.app.info("[#109-probe] handleClinicalNotesKeyPress entered: isRecordingClinicalNotes=\(self.isRecordingClinicalNotes, privacy: .public) isProcessing=\(self.isProcessing, privacy: .public) isEnabled=\(KeyboardShortcuts.isEnabled(for: .clinicalNotesRecord), privacy: .public)")
-
-        // If a clinical-notes session is active, stop it.
-        if isRecordingClinicalNotes {
-            AppLogger.app.info("[#109-probe] handleClinicalNotesKeyPress → STOP branch (chord state was active)")
-            isRecordingClinicalNotes = false
+        if activeSession == .clinicalNotes {
+            activeSession = .idle
             await onClinicalNotesRecordingStop?()
             return
         }
 
-        // Guard: don't start a clinical-notes session if hold or toggle mode is in flight.
-        // The general-dictation flow owns the modal/overlay surface in those states.
-        guard !isProcessing else {
+        guard activeSession == .idle else {
             AppLogger.app.debug("HotkeyManager: Ignoring clinical-notes keyPress - general dictation in flight")
             return
         }
 
-        AppLogger.app.info("[#109-probe] handleClinicalNotesKeyPress → START branch (firing onClinicalNotesRecordingStart)")
-        isRecordingClinicalNotes = true
+        activeSession = .clinicalNotes
         await onClinicalNotesRecordingStart?()
     }
 
-    /// Notify HotkeyManager that the clinical-notes modal has closed so the
-    /// chord state flag stays in sync with reality. Called from the modal's
-    /// `.onDisappear` in `AppDelegate`. Required because the modal can close
-    /// for reasons that don't go through the chord-stop callback — most
-    /// commonly the in-modal **Done** button (which transcribes via the same
-    /// `viewModel.stopRecording()` path the chord uses, but bypasses
-    /// `handleClinicalNotesKeyPress`). Without this call, the next chord
-    /// press sees a stale `isRecordingClinicalNotes == true`, takes the
-    /// "stop" branch, fires a no-op stop callback (no active modal), and
-    /// the user perceives the chord as broken until they press it again.
-    /// Idempotent — safe to call from any close path.
     func clinicalNotesSessionEnded() {
-        AppLogger.app.info("[#109-probe] clinicalNotesSessionEnded entered: was isRecordingClinicalNotes=\(self.isRecordingClinicalNotes, privacy: .public) isEnabled=\(KeyboardShortcuts.isEnabled(for: .clinicalNotesRecord), privacy: .public)")
-        if isRecordingClinicalNotes {
-            isRecordingClinicalNotes = false
+        if activeSession == .clinicalNotes {
+            activeSession = .idle
             AppLogger.app.debug("HotkeyManager: clinicalNotesSessionEnded - state reset")
         }
     }
 
-    // MARK: - Key Event Handlers (internal for testability)
-
-    /// Handle key down event - starts recording if not already processing and not in cooldown
     func handleKeyDown() async {
-        AppLogger.app.debug("HotkeyManager: handleKeyDown() - isProcessing=\(self.isProcessing)")
+        AppLogger.app.debug("HotkeyManager: handleKeyDown() - activeSession=\(String(describing: self.activeSession), privacy: .public)")
 
-        // Guard: already processing
-        guard !isProcessing else {
-            AppLogger.app.debug("HotkeyManager: Ignoring keyDown - already processing")
+        guard activeSession == .idle else {
+            AppLogger.app.debug("HotkeyManager: Ignoring keyDown - session already active")
             return
         }
 
-        // Guard: clinical-notes session in flight owns the modal — don't double-trigger
-        guard !isRecordingClinicalNotes else {
-            AppLogger.app.debug("HotkeyManager: Ignoring keyDown - clinical notes session active")
-            return
-        }
-
-        // Guard: in cooldown period
         let now = currentTimeProvider()
         guard now.timeIntervalSince(lastActionTime) > cooldownInterval else {
             AppLogger.app.debug("HotkeyManager: Ignoring keyDown - in cooldown")
             return
         }
 
-        // Start recording
-        isProcessing = true
+        activeSession = .hold
         keyPressStartTime = now
         AppLogger.app.debug("HotkeyManager: keyDown - starting recording")
 
@@ -303,25 +255,23 @@ class HotkeyManager {
         }
     }
 
-    /// Handle key up event - stops recording and invokes appropriate callback
     func handleKeyUp() async {
-        // Don't process keyUp if we're in toggle mode
-        guard !isRecordingToggleMode else { return }
+        guard activeSession != .toggle else { return }
 
-        guard isProcessing, let startTime = keyPressStartTime else {
-            AppLogger.app.debug("HotkeyManager: Ignoring keyUp - not processing")
+        guard activeSession == .hold, let startTime = keyPressStartTime else {
+            AppLogger.app.debug("HotkeyManager: Ignoring keyUp - not processing hold session")
             return
         }
 
-        // Calculate hold duration and apply cooldown immediately
         let now = currentTimeProvider()
         let duration = now.timeIntervalSince(startTime)
-        lastActionTime = now // Apply cooldown immediately on key release
+        lastActionTime = now
 
-        // Use defer to ensure state is always cleaned up
         defer {
             keyPressStartTime = nil
-            isProcessing = false
+            if activeSession == .hold {
+                activeSession = .idle
+            }
         }
 
         AppLogger.app.debug("HotkeyManager: keyUp - duration: \(duration)s")
@@ -342,21 +292,13 @@ class HotkeyManager {
         }
     }
 
-    // MARK: - Public Methods
-
-    /// Cancel any in-progress recording without invoking callbacks
     func cancel() {
-        let wasProcessing = isProcessing
-        let wasToggleMode = isRecordingToggleMode
-        let wasClinicalNotes = isRecordingClinicalNotes
-
-        isProcessing = false
+        let previous = activeSession
+        activeSession = .idle
         keyPressStartTime = nil
-        isRecordingToggleMode = false
-        isRecordingClinicalNotes = false
 
-        if wasProcessing || wasToggleMode || wasClinicalNotes {
-            AppLogger.app.debug("HotkeyManager: Recording cancelled (wasProcessing=\(wasProcessing), wasToggleMode=\(wasToggleMode), wasClinicalNotes=\(wasClinicalNotes))")
+        if previous != .idle {
+            AppLogger.app.debug("HotkeyManager: Recording cancelled (was=\(String(describing: previous), privacy: .public))")
         }
     }
 }

@@ -23,16 +23,28 @@ struct AudioBuffer: Sendable {
         self.duration = Double(samples.count) / Double(sampleRate * channels)
         self.timestamp = timestamp
 
-        // Calculate peak amplitude (handle Int16.min overflow: abs(-32768) would overflow)
-        self.peakAmplitude = samples.map { $0 == Int16.min ? Int16.max : abs($0) }.max() ?? 0
+        let metrics = Self.computeMetrics(samples: samples)
+        self.peakAmplitude = metrics.peak
+        self.rmsLevel = metrics.rms
+    }
 
-        // Calculate RMS level
-        if samples.isEmpty {
-            self.rmsLevel = 0.0
-        } else {
-            let sumOfSquares = samples.reduce(0.0) { $0 + pow(Double($1), 2) }
-            self.rmsLevel = sqrt(sumOfSquares / Double(samples.count))
+    /// Single-pass peak + RMS without libm `pow()` per sample (PRF-12).
+    static func computeMetrics(samples: [Int16]) -> (peak: Int16, rms: Double) {
+        guard !samples.isEmpty else { return (0, 0) }
+
+        var peak: Int16 = 0
+        var sumSquares: Double = 0
+
+        for sample in samples {
+            let magnitude: Int16 = sample == Int16.min ? Int16.max : abs(sample)
+            if magnitude > peak {
+                peak = magnitude
+            }
+            let value = Double(sample)
+            sumSquares += value * value
         }
+
+        return (peak, sqrt(sumSquares / Double(samples.count)))
     }
 
     var isValid: Bool {

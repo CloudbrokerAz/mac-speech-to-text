@@ -103,7 +103,7 @@ struct ClinikoAppointmentDTO: Decodable, Sendable {
                 // breaking the picker UX (the slot still renders; the
                 // most-likely-this-recording slot-containing rule
                 // simply degrades to nearest-startsAt).
-                Self.logger.error("ClinikoAppointmentDTO: ends_at parse failed; degrading to nil")
+                AppLogger.cliniko.error("ClinikoAppointmentDTO: ends_at parse failed; degrading to nil")
                 endsAtDate = nil
             }
         } else {
@@ -122,11 +122,7 @@ struct ClinikoAppointmentDTO: Decodable, Sendable {
         )
     }
 
-    /// File-scoped logger. Tag is a constant; never carries PHI.
-    private static let logger = os.Logger(
-        subsystem: "com.speechtotext",
-        category: "ClinikoAppointmentDTO"
-    )
+    /// File-scoped logger via `AppLogger.cliniko` (#ARC-7).
 }
 
 /// Top-level envelope for `GET /individual_appointments?...`. Cliniko's

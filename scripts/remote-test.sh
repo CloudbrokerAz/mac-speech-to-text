@@ -115,37 +115,27 @@ detect_sync_method() {
 
 # Sync code using rsync
 sync_rsync() {
-    local dry_run_flag=""
-    [[ "${DRY_RUN:-false}" == "true" ]] && dry_run_flag="--dry-run"
-
-    # Build rsync exclude list
-    local excludes=(
-        ".git"
-        ".build"
-        "*.xcodeproj"
-        "*.xcworkspace"
-        "DerivedData"
-        ".DS_Store"
-        "*.swp"
-        "*.swo"
-        ".env"
-        ".env.*"
-        "node_modules"
-        "__pycache__"
-    )
-
-    local exclude_args=""
-    for pattern in "${excludes[@]}"; do
-        exclude_args="${exclude_args} --exclude=${pattern}"
-    done
-
-    local rsync_cmd="rsync -avz --progress --delete ${dry_run_flag} ${exclude_args} ${LOCAL_PROJECT_PATH}/ ${SSH_HOST}:${REMOTE_PROJECT_PATH}/"
+    local dry_run_flag=()
+    [[ "${DRY_RUN:-false}" == "true" ]] && dry_run_flag=(--dry-run)
 
     if [[ "${VERBOSE:-false}" == "true" ]]; then
-        print_status "Rsync command: ${rsync_cmd}"
+        print_status "Rsync: ${LOCAL_PROJECT_PATH}/ -> ${SSH_HOST}:${REMOTE_PROJECT_PATH}/"
     fi
 
-    eval "${rsync_cmd}"
+    rsync -avz --progress --delete "${dry_run_flag[@]}" \
+        --exclude='.git' \
+        --exclude='.build' \
+        --exclude='*.xcodeproj' \
+        --exclude='*.xcworkspace' \
+        --exclude='DerivedData' \
+        --exclude='.DS_Store' \
+        --exclude='*.swp' \
+        --exclude='*.swo' \
+        --exclude='.env' \
+        --exclude='.env.*' \
+        --exclude='node_modules' \
+        --exclude='__pycache__' \
+        "${LOCAL_PROJECT_PATH}/" "${SSH_HOST}:${REMOTE_PROJECT_PATH}/"
 }
 
 # Sync code using git (commit locally, pull on remote)
@@ -168,16 +158,19 @@ sync_git() {
         STASH_CREATED=true
     fi
 
-    # Push current branch
+    # Push current branch; only reset remote after a successful push.
     print_status "Pushing to origin/${current_branch}..."
     if ! git push origin "${current_branch}" 2>&1; then
         print_warning "Push failed, trying with --force-with-lease..."
-        git push --force-with-lease origin "${current_branch}" 2>&1 || true
+        if ! git push --force-with-lease origin "${current_branch}" 2>&1; then
+            print_error "Failed to push branch ${current_branch}; aborting remote sync"
+            return 2
+        fi
     fi
 
-    # Pull on remote
+    # Pull on remote — branch name is quoted to avoid word-splitting/injection.
     print_status "Pulling on remote..."
-    ssh "${SSH_HOST}" "cd ${REMOTE_PROJECT_PATH} && git fetch origin && git checkout ${current_branch} && git reset --hard origin/${current_branch}"
+    ssh "${SSH_HOST}" "cd $(printf '%q' "${REMOTE_PROJECT_PATH}") && git fetch origin && git checkout $(printf '%q' "${current_branch}") && git reset --hard $(printf '%q' "origin/${current_branch}")"
 
     # Restore stash if created
     if [[ "${STASH_CREATED:-false}" == "true" ]]; then
@@ -197,8 +190,19 @@ sync_scp() {
         return 0
     fi
 
+    local old_umask tmp_archive remote_archive_name
+    old_umask=$(umask)
+    umask 077
+    tmp_archive=$(mktemp "${TMPDIR:-/tmp}/remote-test-sync.XXXXXX.tar.gz")
+    umask "${old_umask}"
+    remote_archive_name=$(basename "${tmp_archive}")
+
+    cleanup_local() {
+        rm -f "${tmp_archive}"
+    }
+    trap cleanup_local RETURN
+
     # Create temp archive excluding build artifacts
-    local tmp_archive="/tmp/remote-test-sync-$$.tar.gz"
     tar --exclude='.git' \
         --exclude='.build' \
         --exclude='DerivedData' \
@@ -207,15 +211,11 @@ sync_scp() {
         --exclude='.DS_Store' \
         -czf "${tmp_archive}" \
         -C "${LOCAL_PROJECT_PATH}" \
-        Sources Tests Package.swift 2>/dev/null || true
+        Sources Tests Package.swift
 
-    # Copy and extract on remote
-    scp "${tmp_archive}" "${SSH_HOST}:/tmp/"
-    ssh "${SSH_HOST}" "cd ${REMOTE_PROJECT_PATH} && tar -xzf /tmp/$(basename ${tmp_archive})"
-
-    # Cleanup
-    rm -f "${tmp_archive}"
-    ssh "${SSH_HOST}" "rm -f /tmp/$(basename ${tmp_archive})"
+    # Copy and extract on remote with a private temp file + cleanup trap
+    scp "${tmp_archive}" "${SSH_HOST}:/tmp/${remote_archive_name}"
+    ssh "${SSH_HOST}" "umask 077; remote_archive=\$(mktemp /tmp/remote-test-sync.XXXXXX.tar.gz); trap 'rm -f \"\${remote_archive}\"' EXIT; mv /tmp/${remote_archive_name} \"\${remote_archive}\"; cd $(printf '%q' "${REMOTE_PROJECT_PATH}") && tar -xzf \"\${remote_archive}\""
 
     return 0
 }

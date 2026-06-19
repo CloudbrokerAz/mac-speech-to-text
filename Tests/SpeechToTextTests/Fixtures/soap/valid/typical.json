@@ -1,0 +1,10 @@
+{
+  "subjective": "Synthetic patient reports neck stiffness for three days.",
+  "objective": "Reduced cervical rotation to the right.",
+  "assessment": "Cervical facet restriction — mechanical pattern.",
+  "plan": "Follow up in one week; home stretching prescribed.",
+  "manipulations": [
+    { "name": "Diversified HVLA", "confidence": 0.91 }
+  ],
+  "excluded_content": ["casual conversation about weekend plans"]
+}

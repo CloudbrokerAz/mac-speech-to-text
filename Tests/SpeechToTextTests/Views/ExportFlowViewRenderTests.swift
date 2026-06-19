@@ -28,7 +28,7 @@ final class ExportFlowViewRenderTests: XCTestCase {
 
     private func makeStore() -> SessionStore {
         let store = SessionStore()
-        var recording = RecordingSession(language: "en", state: .completed)
+        var recording = RecordingSession(language: .en, state: .completed)
         recording.transcribedText = "Synthetic transcript."
         store.start(from: recording)
         store.setDraftNotes(StructuredNotes(

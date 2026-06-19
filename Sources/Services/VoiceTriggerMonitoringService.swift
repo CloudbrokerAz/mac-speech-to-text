@@ -83,18 +83,41 @@ final class VoiceTriggerMonitoringService {
     @ObservationIgnored private let serviceId: String
 
     /// Flag to prevent double state transitions
-    @ObservationIgnored private var isTransitioning: Bool = false
+    @ObservationIgnored private var internalGuard: VoiceTriggerInternalGuard = .none
+
+    /// Synchronous guard against multiple silence/max-duration timers
+    /// enqueueing `handleSilenceTimeout` before the first handler runs
+    /// (CON-5). Set before spawning the handler Task; cleared in defer.
+    /// Folded into `internalGuard` (#ARC-10).
 
     /// Current voice trigger configuration (cached)
     @ObservationIgnored private var configuration: VoiceTriggerConfiguration = .default
 
     // nonisolated copies for deinit access (deinit cannot access MainActor-isolated state)
-    @ObservationIgnored private nonisolated(unsafe) var deinitSilenceTimer: Timer?
-    @ObservationIgnored private nonisolated(unsafe) var deinitMaxDurationTimer: Timer?
+    @ObservationIgnored private nonisolated(unsafe) var deinitSilenceTimer: Timer? // swiftlint:disable:this nonisolated_unsafe_warning
+    @ObservationIgnored private nonisolated(unsafe) var deinitMaxDurationTimer: Timer? // swiftlint:disable:this nonisolated_unsafe_warning
 
     /// Recovery task that transitions from error state back to monitoring
     /// Stored so it can be cancelled during stopMonitoring()
     @ObservationIgnored private var recoveryTask: Task<Void, Never>?
+
+    /// Ordered frame delivery for wake-word processing (CON-2). Per-buffer
+    /// `Task` spawns had no FIFO guarantee; a single consumer drains this
+    /// stream sequentially so sherpa's streaming decoder sees frames in order.
+    @ObservationIgnored private var frameStreamContinuation: AsyncStream<[Float]>.Continuation?
+    @ObservationIgnored private var frameConsumerTask: Task<Void, Never>?
+
+    /// Push callback for discrete state transitions (PRF-10).
+    @ObservationIgnored var onStateChange: (@MainActor (VoiceTriggerState, VoiceTriggerState) -> Void)?
+
+    /// Idle-eviction task for FluidAudio after monitoring without transcription (PRF-8).
+    @ObservationIgnored private var fluidAudioIdleEvictionTask: Task<Void, Never>?
+
+    /// Audio frame payload extracted on the audio thread before MainActor hop.
+    private enum IncomingAudioFrame {
+        case floatSamples([Float], sampleRate: Double)
+        case int16Samples([Int16], sampleRate: Double)
+    }
 
     // MARK: - Initialization
 
@@ -116,8 +139,13 @@ final class VoiceTriggerMonitoringService {
     }
 
     deinit {
-        deinitSilenceTimer?.invalidate()
-        deinitMaxDurationTimer?.invalidate()
+        // CON-6: Timers are scheduled on RunLoop.main; invalidation must
+        // happen on that thread via `stopMonitoring()` before release.
+        // AppDelegate and test tearDown await `stopMonitoring()` explicitly.
+        // Shadow refs are cleared here only to break retain cycles — no
+        // `invalidate()` from a potentially off-main deinit path.
+        deinitSilenceTimer = nil
+        deinitMaxDurationTimer = nil
         AppLogger.service.debug("VoiceTriggerMonitoringService[\(self.serviceId, privacy: .public)] deallocated")
     }
 
@@ -132,7 +160,7 @@ final class VoiceTriggerMonitoringService {
     func startMonitoring() async throws {
         AppLogger.info(AppLogger.service, "[\(serviceId)] startMonitoring() called, state=\(state.description)")
 
-        guard !isTransitioning else {
+        guard internalGuard != .transitioning else {
             AppLogger.warning(AppLogger.service, "[\(serviceId)] startMonitoring: transition in progress")
             throw VoiceTriggerError.wakeWordInitFailed("Transition already in progress")
         }
@@ -142,8 +170,8 @@ final class VoiceTriggerMonitoringService {
             throw VoiceTriggerError.wakeWordInitFailed("Already monitoring")
         }
 
-        isTransitioning = true
-        defer { isTransitioning = false }
+        internalGuard = .transitioning
+        defer { internalGuard = .none }
 
         // Load configuration
         let settings = settingsService.load()
@@ -176,6 +204,8 @@ final class VoiceTriggerMonitoringService {
             // Initialize wake word service with model and keywords
             try await wakeWordService.initialize(modelPath: modelPath, keywords: activeKeywords)
 
+            startFrameConsumer()
+
             // Start audio capture for wake word processing
             // Pass both level callback (for visualization) and buffer callback (for wake word detection)
             //
@@ -191,49 +221,36 @@ final class VoiceTriggerMonitoringService {
                     // Extract Sendable values on the audio thread before crossing into MainActor.
                     // AVAudioPCMBuffer is non-Sendable; mirrors AudioBufferProcessor.process
                     // (see AudioCaptureService.swift) and .claude/references/concurrency.md §3.
-                    //
-                    // Precision note: when the buffer arrives in floatChannelData form, the
-                    // wake-word path used to consume raw Float samples directly; it now goes
-                    // Float→Int16→Float (clamp ±1.0, ×Int16.max, ÷32768). Sherpa-onnx quantises
-                    // internally so the ~16-bit fidelity loss is benign in practice, and the
-                    // capture path was already Int16-quantising. Issue #83 explicitly required
-                    // reusing the AudioBufferProcessor pattern rather than inventing a new one.
                     let frameLength = Int(buffer.frameLength)
                     let sampleRate = buffer.format.sampleRate
-                    let samples: [Int16]
+
                     if let floatData = buffer.floatChannelData {
-                        let floatSamples = UnsafeBufferPointer(start: floatData[0], count: frameLength)
-                        samples = floatSamples.map { sample in
-                            let clamped = max(-1.0, min(1.0, sample))
-                            return Int16(clamped * Float(Int16.max))
+                        let floatSamples = Array(UnsafeBufferPointer(start: floatData[0], count: frameLength))
+                        Task { @MainActor in
+                            self?.handleAudioBuffer(.floatSamples(floatSamples, sampleRate: sampleRate))
                         }
                     } else if let int16Data = buffer.int16ChannelData {
-                        samples = Array(UnsafeBufferPointer(start: int16Data[0], count: frameLength))
+                        let samples = Array(UnsafeBufferPointer(start: int16Data[0], count: frameLength))
+                        Task { @MainActor in
+                            self?.handleAudioBuffer(.int16Samples(samples, sampleRate: sampleRate))
+                        }
                     } else {
-                        // Surface the dropped frame the same way AudioBufferProcessor.process does
-                        // (see AudioCaptureService.swift:71). Format value is structural metadata,
-                        // not PHI, so logging is safe; OSLog is thread-safe so we don't need a hop.
                         AppLogger.warning(
                             AppLogger.service,
                             "[\(capturedServiceId)] Unsupported audio format in buffer — frame dropped"
                         )
-                        return
-                    }
-                    Task { @MainActor in
-                        self?.handleAudioBuffer(samples: samples, sampleRate: sampleRate)
                     }
                 }
             )
 
             // Transition to monitoring state
-            AppLogger.stateChange(AppLogger.service, from: state, to: VoiceTriggerState.monitoring, context: "startMonitoring")
-            state = .monitoring
+            transition(to: .monitoring, context: "startMonitoring")
 
             AppLogger.info(AppLogger.service, "[\(serviceId)] Voice trigger monitoring started")
 
         } catch {
             AppLogger.error(AppLogger.service, "[\(serviceId)] Failed to start monitoring: \(error.localizedDescription)")
-            state = .error(.wakeWordInitFailed(error.localizedDescription))
+            transition(to: .error(.wakeWordInitFailed(error.localizedDescription)), context: "startMonitoringFailed")
             throw VoiceTriggerError.wakeWordInitFailed(error.localizedDescription)
         }
     }
@@ -263,9 +280,16 @@ final class VoiceTriggerMonitoringService {
         recoveryTask?.cancel()
         recoveryTask = nil
 
+        internalGuard = .none
+
+        cancelFluidAudioIdleEviction()
+
+        stopFrameConsumer()
+
         // Stop services - await to prevent race conditions on restart
         await wakeWordService.shutdown()
         _ = try? await audioService.stopCapture()
+        await fluidAudioService.shutdown()
 
         // Clear state
         currentKeyword = nil
@@ -274,8 +298,7 @@ final class VoiceTriggerMonitoringService {
         audioLevel = 0.0
 
         // Transition to idle
-        AppLogger.stateChange(AppLogger.service, from: state, to: VoiceTriggerState.idle, context: "stopMonitoring")
-        state = .idle
+        transition(to: .idle, context: "stopMonitoring")
 
         AppLogger.debug(AppLogger.service, "[\(serviceId)] Voice trigger monitoring stopped")
     }
@@ -295,60 +318,76 @@ final class VoiceTriggerMonitoringService {
     ///   - samples: Audio samples already extracted from the buffer on the audio thread
     ///   - sampleRate: Native sample rate the buffer arrived at, in Hz
     private var audioBufferCount = 0
-    func handleAudioBuffer(samples: [Int16], sampleRate: Double) {
+    private func handleAudioBuffer(_ frame: IncomingAudioFrame) {
         audioBufferCount += 1
         if audioBufferCount % 100 == 1 {
             AppLogger.trace(AppLogger.service, "[\(serviceId)] handleAudioBuffer called \(audioBufferCount) times, state=\(state.description)")
         }
-        // Already on MainActor via caller's Task dispatch - no need for another Task wrapper
         switch self.state {
         case .monitoring:
-            // Convert Int16 samples to Float (resampled to 16 kHz) for wake-word detection
-            let floatSamples = self.convertInt16SamplesToFloat(samples, sourceRate: sampleRate)
+            let energy = normalizedEnergy(of: frame)
+            guard energy >= Constants.Audio.talkingThreshold else { return }
+
+            let floatSamples = floatSamplesForWakeWord(from: frame)
             guard !floatSamples.isEmpty else { return }
 
             if audioBufferCount % 100 == 1 {
-                AppLogger.trace(AppLogger.service, "[\(serviceId)] Sending \(floatSamples.count) samples to wake word service")
+                AppLogger.trace(AppLogger.service, "[\(serviceId)] Enqueuing \(floatSamples.count) samples for wake word service")
             }
 
-            // Route to wake word detection (async operation requires Task)
-            Task { [weak self] in
-                guard let self else { return }
-                if let result = await self.wakeWordService.processFrame(floatSamples) {
-                    AppLogger.info(AppLogger.service, "[\(self.serviceId)] Wake word DETECTED: \(result.detectedKeyword)")
-                    self.handleWakeWordDetected(keyword: result.detectedKeyword)
-                }
-            }
+            frameStreamContinuation?.yield(floatSamples)
 
         case .capturing:
-            // Accumulate samples for transcription
-            self.accumulateSamples(samples, sampleRate: sampleRate)
+            accumulateFrame(frame)
 
         default:
-            // Ignore audio in other states
             break
         }
     }
 
     /// Convert Int16 audio samples to Float samples normalized to [-1.0, 1.0] at 16kHz
-    ///
-    /// Wake-word detection (sherpa-onnx keyword spotting) requires Float samples at exactly
-    /// 16 kHz. Resampling uses simple linear interpolation via `resampleToTarget`.
-    ///
-    /// - Parameters:
-    ///   - samples: Int16 samples extracted from the audio buffer on the audio thread
-    ///   - sourceRate: Native sample rate of the samples in Hz (e.g. 48000)
-    /// - Returns: Float samples at 16kHz suitable for wake word processing
     private func convertInt16SamplesToFloat(_ samples: [Int16], sourceRate: Double) -> [Float] {
         let targetSampleRate = Double(Constants.VoiceTrigger.sampleRate)
         var floatSamples = samples.map { Float($0) / 32768.0 }
 
-        // Resample to 16kHz if native rate differs
         if abs(sourceRate - targetSampleRate) > 1.0 {
             floatSamples = resampleToTarget(floatSamples, from: sourceRate, to: targetSampleRate)
         }
 
         return floatSamples
+    }
+
+    /// Normalized RMS energy in 0…1 range for wake-word pre-gating (PRF-11).
+    private func normalizedEnergy(of frame: IncomingAudioFrame) -> Double {
+        switch frame {
+        case .floatSamples(let samples, _):
+            guard !samples.isEmpty else { return 0 }
+            var sumSquares: Double = 0
+            for sample in samples {
+                let value = Double(sample)
+                sumSquares += value * value
+            }
+            return sqrt(sumSquares / Double(samples.count))
+
+        case .int16Samples(let samples, _):
+            let metrics = AudioBuffer.computeMetrics(samples: samples)
+            return metrics.rms / 32768.0
+        }
+    }
+
+    /// Prepare float samples for sherpa-onnx, preserving native float path when available (PRF-11).
+    private func floatSamplesForWakeWord(from frame: IncomingAudioFrame) -> [Float] {
+        switch frame {
+        case .floatSamples(let samples, let sampleRate):
+            let targetSampleRate = Double(Constants.VoiceTrigger.sampleRate)
+            if abs(sampleRate - targetSampleRate) > 1.0 {
+                return resampleToTarget(samples, from: sampleRate, to: targetSampleRate)
+            }
+            return samples
+
+        case .int16Samples(let samples, let sampleRate):
+            return convertInt16SamplesToFloat(samples, sourceRate: sampleRate)
+        }
     }
 
     /// Resample float audio samples from source rate to target rate using linear interpolation
@@ -387,6 +426,39 @@ final class VoiceTriggerMonitoringService {
 
     // MARK: - Private Methods
 
+    /// Start the ordered frame consumer that feeds `wakeWordService.processFrame`
+    /// sequentially. Must be called after `wakeWordService.initialize` succeeds.
+    private func startFrameConsumer() {
+        stopFrameConsumer()
+
+        let stream = AsyncStream<[Float]> { continuation in
+            self.frameStreamContinuation = continuation
+        }
+
+        let wakeWord = wakeWordService
+        let capturedServiceId = serviceId
+        frameConsumerTask = Task { @MainActor [weak self] in
+            for await floatSamples in stream {
+                guard let self, !Task.isCancelled else { break }
+                if let result = await wakeWord.processFrame(floatSamples) {
+                    AppLogger.info(
+                        AppLogger.service,
+                        "[\(capturedServiceId)] Wake word DETECTED: \(result.detectedKeyword)"
+                    )
+                    self.handleWakeWordDetected(keyword: result.detectedKeyword)
+                }
+            }
+        }
+    }
+
+    /// Tear down the ordered frame consumer and finish the stream.
+    private func stopFrameConsumer() {
+        frameStreamContinuation?.finish()
+        frameStreamContinuation = nil
+        frameConsumerTask?.cancel()
+        frameConsumerTask = nil
+    }
+
     /// Handle audio level updates from capture service
     private func handleAudioLevel(_ level: Double) {
         audioLevel = level
@@ -412,8 +484,7 @@ final class VoiceTriggerMonitoringService {
 
         // Update state - first transition to triggered
         currentKeyword = keyword
-        AppLogger.stateChange(AppLogger.service, from: state, to: VoiceTriggerState.triggered(keyword: keyword), context: "wakeWordDetected")
-        state = .triggered(keyword: keyword)
+        transition(to: .triggered(keyword: keyword), context: "wakeWordDetected")
 
         // Play feedback if enabled
         if configuration.feedbackSoundEnabled {
@@ -421,8 +492,7 @@ final class VoiceTriggerMonitoringService {
         }
 
         // Immediately transition to capturing
-        AppLogger.stateChange(AppLogger.service, from: state, to: VoiceTriggerState.capturing, context: "startCapture")
-        state = .capturing
+        transition(to: .capturing, context: "startCapture")
 
         // Clear previous samples and start fresh capture
         capturedSamples = []
@@ -437,17 +507,24 @@ final class VoiceTriggerMonitoringService {
         AppLogger.debug(AppLogger.service, "[\(serviceId)] Capture started for keyword: \(keyword)")
     }
 
-    /// Accumulate audio samples during capture phase
-    ///
-    /// Samples are already in Int16 form (extracted from `AVAudioPCMBuffer` on the audio thread
-    /// — see the `bufferCallback` closure in `startMonitoring()`).
-    private func accumulateSamples(_ samples: [Int16], sampleRate: Double) {
-        capturedSamples.append(contentsOf: samples)
-        capturedSampleRate = sampleRate
+    private func accumulateFrame(_ frame: IncomingAudioFrame) {
+        switch frame {
+        case .floatSamples(let samples, let sampleRate):
+            let int16Samples = samples.map { sample in
+                let clamped = max(-1.0, min(1.0, sample))
+                return Int16(clamped * Float(Int16.max))
+            }
+            capturedSamples.append(contentsOf: int16Samples)
+            capturedSampleRate = sampleRate
+
+        case .int16Samples(let samples, let sampleRate):
+            capturedSamples.append(contentsOf: samples)
+            capturedSampleRate = sampleRate
+        }
 
         AppLogger.trace(
             AppLogger.service,
-            "[\(serviceId)] Accumulated \(samples.count) samples, total=\(capturedSamples.count)"
+            "[\(serviceId)] Accumulated frame, total=\(capturedSamples.count)"
         )
     }
 
@@ -491,12 +568,29 @@ final class VoiceTriggerMonitoringService {
         }
 
         if silenceDuration >= threshold {
+            guard internalGuard != .handlingTimeout else { return }
+            internalGuard = .handlingTimeout
             silenceLogCounter = 0
             AppLogger.info(
                 AppLogger.service,
                 "[\(serviceId)] Silence threshold reached (\(String(format: "%.1f", silenceDuration))s) - transcribing"
             )
+
+            // Invalidate timers synchronously before the async handler so
+            // further silence ticks cannot enqueue another timeout task.
+            silenceTimer?.invalidate()
+            silenceTimer = nil
+            deinitSilenceTimer = nil
+            maxDurationTimer?.invalidate()
+            maxDurationTimer = nil
+            deinitMaxDurationTimer = nil
+
             Task { @MainActor [weak self] in
+                defer {
+                    if self?.internalGuard == .handlingTimeout {
+                        self?.internalGuard = .none
+                    }
+                }
                 await self?.handleSilenceTimeout()
             }
         }
@@ -512,13 +606,6 @@ final class VoiceTriggerMonitoringService {
 
         AppLogger.info(AppLogger.service, "[\(serviceId)] handleSilenceTimeout()")
 
-        // Stop timers
-        silenceTimer?.invalidate()
-        silenceTimer = nil
-        deinitSilenceTimer = nil
-        maxDurationTimer?.invalidate()
-        maxDurationTimer = nil
-        deinitMaxDurationTimer = nil
         silenceTimeRemaining = nil
 
         // Proceed to transcription if we have audio
@@ -526,8 +613,8 @@ final class VoiceTriggerMonitoringService {
             await transcribeAndInsert()
         } else {
             AppLogger.warning(AppLogger.service, "[\(serviceId)] No audio captured, returning to monitoring")
-            state = .monitoring
             currentKeyword = nil
+            transition(to: .monitoring, context: "noAudioCaptured")
         }
     }
 
@@ -538,8 +625,23 @@ final class VoiceTriggerMonitoringService {
         let timer = Timer.scheduledTimer(withTimeInterval: configuration.maxRecordingDuration, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                guard self.internalGuard != .handlingTimeout else { return }
+                self.internalGuard = .handlingTimeout
                 AppLogger.info(AppLogger.service, "[\(self.serviceId)] Max recording duration reached")
-                await self.handleSilenceTimeout() // Reuse same flow
+
+                self.silenceTimer?.invalidate()
+                self.silenceTimer = nil
+                self.deinitSilenceTimer = nil
+                self.maxDurationTimer?.invalidate()
+                self.maxDurationTimer = nil
+                self.deinitMaxDurationTimer = nil
+
+                defer {
+                    if self.internalGuard == .handlingTimeout {
+                        self.internalGuard = .none
+                    }
+                }
+                await self.handleSilenceTimeout()
             }
         }
         // Explicitly add to main run loop to ensure timer fires correctly
@@ -560,16 +662,13 @@ final class VoiceTriggerMonitoringService {
             "[\(serviceId)] transcribeAndInsert() - \(capturedSamples.count) samples at \(Int(capturedSampleRate))Hz"
         )
 
-        // Transition to transcribing state
-        AppLogger.stateChange(AppLogger.service, from: state, to: VoiceTriggerState.transcribing, context: "transcribeAndInsert")
-        state = .transcribing
+        cancelFluidAudioIdleEviction()
+        transition(to: .transcribing, context: "transcribeAndInsert")
 
         do {
-            // Initialize FluidAudio if needed
             let settings = settingsService.load()
             try await fluidAudioService.initialize(language: settings.language.defaultLanguage)
 
-            // Transcribe
             let result = try await fluidAudioService.transcribe(
                 samples: capturedSamples,
                 sampleRate: capturedSampleRate
@@ -582,21 +681,18 @@ final class VoiceTriggerMonitoringService {
 
             lastTranscribedText = result.text
 
-            // Check if we got meaningful text
             let trimmedText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedText.isEmpty else {
                 AppLogger.warning(AppLogger.service, "[\(serviceId)] Empty transcription, returning to monitoring")
-                state = .monitoring
                 currentKeyword = nil
                 capturedSamples = []
+                transition(to: .monitoring, context: "emptyTranscription")
+                scheduleFluidAudioIdleEviction()
                 return
             }
 
-            // Transition to inserting state
-            AppLogger.stateChange(AppLogger.service, from: state, to: VoiceTriggerState.inserting, context: "insertText")
-            state = .inserting
+            transition(to: .inserting, context: "insertText")
 
-            // Insert text
             let insertResult = await textInsertionService.insertTextWithFallback(trimmedText)
 
             switch insertResult {
@@ -610,35 +706,60 @@ final class VoiceTriggerMonitoringService {
                 AppLogger.warning(AppLogger.service, "[\(serviceId)] Accessibility permission required")
             }
 
-            // Return to monitoring state for next wake word
-            AppLogger.stateChange(AppLogger.service, from: state, to: VoiceTriggerState.monitoring, context: "complete")
-            state = .monitoring
             currentKeyword = nil
             capturedSamples = []
+            transition(to: .monitoring, context: "complete")
+            scheduleFluidAudioIdleEviction()
 
         } catch {
             AppLogger.error(AppLogger.service, "[\(serviceId)] Transcription/insertion failed: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
-            state = .error(.transcriptionFailed(error.localizedDescription))
+            transition(to: .error(.transcriptionFailed(error.localizedDescription)), context: "transcribeFailed")
 
-            // Attempt recovery to monitoring state after brief delay
-            // Cancel any existing recovery task before creating new one to prevent race conditions
             recoveryTask?.cancel()
-            // Store task reference so it can be cancelled in stopMonitoring()
             recoveryTask = Task { @MainActor [weak self] in
                 do {
-                    try await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
                 } catch {
-                    // Task was cancelled
                     return
                 }
                 guard let self, case .error = self.state else { return }
                 AppLogger.debug(AppLogger.service, "[\(self.serviceId)] Recovering from error to monitoring state")
-                self.state = .monitoring
+                self.transition(to: .monitoring, context: "errorRecovery")
                 self.errorMessage = nil
                 self.recoveryTask = nil
+                self.scheduleFluidAudioIdleEviction()
             }
         }
+    }
+
+    /// Push discrete state transitions to observers (PRF-10).
+    private func transition(to newState: VoiceTriggerState, context: String) {
+        let previous = state
+        guard previous != newState else { return }
+        AppLogger.stateChange(AppLogger.service, from: previous, to: newState, context: context)
+        state = newState
+        onStateChange?(previous, newState)
+    }
+
+    /// Release FluidAudio after idle period without transcription (PRF-8).
+    private func scheduleFluidAudioIdleEviction() {
+        fluidAudioIdleEvictionTask?.cancel()
+        let delay = Constants.VoiceTrigger.fluidAudioIdleEvictionSeconds
+        fluidAudioIdleEvictionTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self, !Task.isCancelled else { return }
+            await self.fluidAudioService.shutdown()
+            AppLogger.debug(
+                AppLogger.service,
+                "[\(self.serviceId)] FluidAudio idle-evicted after \(delay)s"
+            )
+        }
+    }
+
+    private func cancelFluidAudioIdleEviction() {
+        fluidAudioIdleEvictionTask?.cancel()
+        fluidAudioIdleEvictionTask = nil
     }
 
     /// Play feedback sound when wake word is detected

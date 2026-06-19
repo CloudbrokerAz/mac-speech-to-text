@@ -12,7 +12,7 @@ final class RecordingSessionTests: XCTestCase {
         XCTAssertEqual(session.state, .idle)
         XCTAssertNil(session.endTime)
         XCTAssertEqual(session.transcribedText, "")
-        XCTAssertEqual(session.language, "en")
+        XCTAssertEqual(session.language, .en)
         XCTAssertEqual(session.confidenceScore, 0.0)
         XCTAssertFalse(session.insertionSuccess)
         XCTAssertNil(session.errorMessage)
@@ -22,8 +22,8 @@ final class RecordingSessionTests: XCTestCase {
     }
 
     func test_initialization_acceptsCustomLanguage() {
-        let session = RecordingSession(language: "de")
-        XCTAssertEqual(session.language, "de")
+        let session = RecordingSession(language: .de)
+        XCTAssertEqual(session.language, .de)
     }
 
     func test_initialization_acceptsCustomState() {
@@ -126,9 +126,19 @@ final class RecordingSessionTests: XCTestCase {
         XCTAssertFalse(session.isValid)
     }
 
-    func test_isValid_returnsFalseWhenLanguageEmpty() {
-        let session = RecordingSession(language: "")
-        XCTAssertFalse(session.isValid)
+    func test_decoding_legacyStringLanguage_mapsToSupportedLanguage() throws {
+        let original = RecordingSession(language: .fr)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(RecordingSession.self, from: data)
+        XCTAssertEqual(decoded.language, .fr)
+    }
+
+    func test_decoding_unknownLegacyLanguage_fallsBackToEnglish() throws {
+        let json = """
+        {"language":"xx","id":"\(UUID().uuidString)","startTime":0,"transcribedText":"","confidenceScore":0,"insertionSuccess":false,"peakAmplitude":0,"segments":[],"state":"idle"}
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(RecordingSession.self, from: json)
+        XCTAssertEqual(decoded.language, .en)
     }
 
     func test_isValid_returnsTrueAtConfidenceBoundaries() {

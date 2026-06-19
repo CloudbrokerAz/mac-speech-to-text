@@ -73,6 +73,38 @@ struct ModelDownloaderTests {
         }
     }
 
+    // MARK: - In-flight coalescing (CON-3)
+
+    @Test("concurrent ensureModelDownloaded coalesces onto a single in-flight task")
+    func concurrentEnsure_coalescesInFlight() async throws {
+        let base = try Self.makeTempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        try await URLProtocolStubGate.shared.withGate {
+            let requestCount = RequestCounter()
+            let config = URLProtocolStub.install { request in
+                requestCount.incrementAndWait()
+                return try Self.makeOKResponder()(request)
+            }
+            defer { URLProtocolStub.reset() }
+
+            let downloader = ModelDownloader(
+                manifest: Self.helloManifest(),
+                baseDirectory: base,
+                session: URLSession(configuration: config)
+            )
+
+            async let first: URL = try downloader.ensureModelDownloaded()
+            try await Task.sleep(for: .milliseconds(10))
+            async let second: URL = try downloader.ensureModelDownloaded()
+
+            let resolvedFirst = try await first
+            let resolvedSecond = try await second
+            #expect(resolvedFirst == resolvedSecond)
+            #expect(requestCount.value() == 1)
+        }
+    }
+
     // MARK: - Idempotency
 
     @Test("second call is a no-op when files already verify")
@@ -105,6 +137,39 @@ struct ModelDownloaderTests {
             )
             let resolved = try await downloader.ensureModelDownloaded()
             #expect(resolved == modelDir)
+        }
+    }
+
+    @Test("verification receipt written on successful ensure")
+    func verificationReceipt_persistedAfterEnsure() async throws {
+        let base = try Self.makeTempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let modelDir = base.appendingPathComponent("hello-model", isDirectory: true)
+        try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
+        let weightsURL = modelDir.appendingPathComponent("weights.bin")
+        try Self.helloPayload.write(to: weightsURL)
+
+        try await URLProtocolStubGate.shared.withGate {
+            let config = URLProtocolStub.install { _ in
+                Issue.record("Downloader should not have made any requests")
+                throw URLError(.cancelled)
+            }
+            defer { URLProtocolStub.reset() }
+
+            let downloader = ModelDownloader(
+                manifest: Self.helloManifest(),
+                baseDirectory: base,
+                session: URLSession(configuration: config)
+            )
+            _ = try await downloader.ensureModelDownloaded()
+
+            let receiptURL = modelDir.appendingPathComponent(ModelVerificationReceipt.fileName)
+            #expect(FileManager.default.fileExists(atPath: receiptURL.path))
+            let data = try Data(contentsOf: receiptURL)
+            let receipt = try JSONDecoder().decode(ModelVerificationReceipt.self, from: data)
+            #expect(receipt.files.count == 1)
+            #expect(receipt.files[0].path == "weights.bin")
         }
     }
 
@@ -514,6 +579,27 @@ struct ModelDownloaderTests {
 }
 
 // MARK: - Helpers
+
+/// Sendable counter for HTTP request assertions in coalescing tests.
+private final class RequestCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    /// Records one request and blocks long enough for a concurrent caller
+    /// to arrive and coalesce onto the in-flight task.
+    func incrementAndWait() {
+        lock.lock()
+        count += 1
+        lock.unlock()
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+
+    func value() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+}
 
 /// Sendable accumulator for `DownloadProgress` events. Synchronous lock
 /// rather than an actor: the downloader's progress callback shape is

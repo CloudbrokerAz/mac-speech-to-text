@@ -16,7 +16,7 @@
 #   - Claude Code CLI (claude) must be available in PATH
 #   - test-screenshots/manifest.json must exist (created by UI tests)
 
-set -e
+set -euo pipefail
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

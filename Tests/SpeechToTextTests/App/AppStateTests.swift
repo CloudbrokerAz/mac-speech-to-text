@@ -116,7 +116,7 @@ final class AppStateTests: XCTestCase {
 
     func test_startRecording_usesDefaultLanguageFromSettings() {
         // Given
-        let expectedLanguage = appState.settings.language.defaultLanguage
+        let expectedLanguage = SupportedLanguage.from(code: appState.settings.language.defaultLanguage) ?? .en
 
         // When
         appState.startRecording()

@@ -455,20 +455,14 @@ struct KeywordEditorSheet: View {
 // MARK: - Previews
 
 #Preview("New Keyword") {
-    KeywordEditorSheet(keyword: .constant(nil)) { keyword in
-        print("Saved new keyword: \(keyword.phrase)")
-    }
+    KeywordEditorSheet(keyword: .constant(nil)) { _ in }
 }
 
 #Preview("Edit Keyword") {
-    KeywordEditorSheet(keyword: .constant(.heyClaudeDefault)) { keyword in
-        print("Updated keyword: \(keyword.phrase)")
-    }
+    KeywordEditorSheet(keyword: .constant(.heyClaudeDefault)) { _ in }
 }
 
 #Preview("Dark Mode") {
-    KeywordEditorSheet(keyword: .constant(nil)) { keyword in
-        print("Saved: \(keyword.phrase)")
-    }
+    KeywordEditorSheet(keyword: .constant(nil)) { _ in }
     .preferredColorScheme(.dark)
 }

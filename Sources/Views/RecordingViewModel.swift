@@ -24,6 +24,9 @@ final class RecordingViewModel {
     /// Real-time audio level (0.0 - 1.0)
     var audioLevel: Double = 0.0
 
+    /// Optional push callback for overlay consumers during hold-to-record (PRF-9).
+    var onAudioLevelPublished: ((Double) -> Void)?
+
     /// Whether recording is active
     var isRecording: Bool = false
 
@@ -68,6 +71,12 @@ final class RecordingViewModel {
     /// modal evaluates this only after transcription completes.
     var isClinicalNotesEnabled: Bool {
         settingsService.load().general.clinicalNotesModeEnabled
+    }
+
+    /// Waveform visualization style from Settings (#ARC-5). Read on demand
+    /// so Theme-section changes apply to the next modal body evaluation.
+    var waveformStyle: WaveformStyleOption {
+        settingsService.load().ui.waveformStyle
     }
 
     /// Whether to overlay the one-time Safety Disclaimer (#12) on the
@@ -139,8 +148,8 @@ final class RecordingViewModel {
     // nonisolated copies for deinit access (deinit cannot access MainActor-isolated state)
     // SAFETY: These are written on MainActor during init/setup, read in deinit after all refs released.
     // The isBeingDeallocated flag prevents notification handlers from running during deallocation.
-    @ObservationIgnored private nonisolated(unsafe) var deinitLanguageSwitchObserver: NSObjectProtocol?
-    @ObservationIgnored private nonisolated(unsafe) var deinitInactivityTimer: Timer?
+    @ObservationIgnored private nonisolated(unsafe) var deinitLanguageSwitchObserver: NSObjectProtocol? // swiftlint:disable:this nonisolated_unsafe_warning
+    @ObservationIgnored private nonisolated(unsafe) var deinitInactivityTimer: Timer? // swiftlint:disable:this nonisolated_unsafe_warning
     /// Thread-safe flag to prevent notification handlers from executing during deallocation.
     /// Uses OSAllocatedUnfairLock to prevent data race between deinit and notification handlers.
     @ObservationIgnored private let isBeingDeallocatedLock = OSAllocatedUnfairLock(initialState: false)
@@ -287,7 +296,7 @@ final class RecordingViewModel {
         currentSession = RecordingSession(
             id: sessionId,
             startTime: Date(),
-            language: settings.language.defaultLanguage,
+            language: SupportedLanguage.from(code: settings.language.defaultLanguage) ?? .en,
             state: .recording
         )
         AppLogger.debug(AppLogger.viewModel, "[\(viewModelId)] Created session \(sessionId.uuidString.prefix(8))")
@@ -1001,16 +1010,28 @@ final class RecordingViewModel {
         await saveStatistics(session: updatedSession)
     }
 
-    /// Handle audio level update - detect talking and manage inactivity timer
-    private func handleAudioLevel(_ level: Double) {
-        audioLevel = level
+    /// Handle audio level update - detect talking and manage inactivity timer.
+    /// UI-facing `audioLevel` writes are throttled to ~30 Hz (#PRF-1) so the
+    /// recording modal body is not invalidated on every audio buffer.
+    private var lastAudioLevelPublish: ContinuousClock.Instant?
+    private let audioLevelPublishInterval: Duration = .milliseconds(33)
 
-        // Detect if user is talking (audio above threshold)
+    private func handleAudioLevel(_ level: Double) {
+        // Detect if user is talking (audio above threshold) — always evaluated.
         if level >= Constants.Audio.talkingThreshold {
             lastTalkingTime = Date()
             AppLogger.trace(AppLogger.viewModel, "[\(viewModelId)] Talking detected, level=\(String(format: "%.3f", level))")
         }
-        // Note: Legacy short-pause silence timer disabled in favor of 30-second inactivity timeout
+
+        let clock = ContinuousClock()
+        let now = clock.now
+        if let last = lastAudioLevelPublish,
+           now < last.advanced(by: audioLevelPublishInterval) {
+            return
+        }
+        lastAudioLevelPublish = now
+        audioLevel = level
+        onAudioLevelPublished?(level)
     }
 
     /// Start the inactivity timer that checks for prolonged silence

@@ -43,7 +43,7 @@ struct ExportFlowViewModelTests {
         )
     ) -> SessionStore {
         let store = SessionStore()
-        var recording = RecordingSession(language: "en", state: .completed)
+        var recording = RecordingSession(language: .en, state: .completed)
         recording.transcribedText = "Synthetic transcript"
         store.start(from: recording)
         if let notes {
@@ -147,24 +147,30 @@ struct ExportFlowViewModelTests {
         timeout: TimeInterval = 5.0,
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        polling: while true {
-            switch viewModel.state {
-            case .failed, .succeeded:
-                return
-            default:
-                // Check the deadline AFTER reading state so a transition
-                // landing on the very last loop iteration is not
-                // misreported as a timeout. `break polling` is a labelled
-                // break — `break` alone would only exit the switch and
-                // re-enter `while true` on the next iteration (Gemini
-                // review on PR #135).
-                if Date() >= deadline { break polling }
-                try await Task.sleep(for: .milliseconds(5))
+        if case .failed = viewModel.state { return }
+        if case .succeeded = viewModel.state { return }
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { @MainActor in
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    switch viewModel.state {
+                    case .failed, .succeeded:
+                        continuation.resume()
+                    default:
+                        viewModel.testUploadDidReachTerminal = {
+                            continuation.resume()
+                        }
+                    }
+                }
             }
+            group.addTask {
+                try await Task.sleep(for: .seconds(timeout))
+                throw TimeoutError()
+            }
+            try await group.next()
+            group.cancelAll()
         }
-        // Final post-loop check picks up a transition that landed on
-        // the last iteration before the deadline tripped.
+
         switch viewModel.state {
         case .failed, .succeeded:
             return
@@ -175,6 +181,8 @@ struct ExportFlowViewModelTests {
             )
         }
     }
+
+    private struct TimeoutError: Error {}
 
     /// Structural-only `ExportFlowState` case name for log
     /// interpolation. Required because `.confirming(ExportSummary)`'s
@@ -253,7 +261,7 @@ struct ExportFlowViewModelTests {
     func enterConfirming_noPatient_fails() async throws {
         try await runGated(responder: { _ in (HTTPURLResponse(), Data()) }) { config in
             let store = SessionStore()
-            store.start(from: RecordingSession(language: "en", state: .completed))
+            store.start(from: RecordingSession(language: .en, state: .completed))
             // No setSelectedPatient call.
             let exporter = self.makeExporter(config: config)
             let viewModel = self.makeViewModel(store: store, exporter: exporter)
@@ -338,7 +346,7 @@ struct ExportFlowViewModelTests {
     func confirm_malformedAppointmentID_fails() async throws {
         try await runGated(responder: { _ in (HTTPURLResponse(), Data()) }) { config in
             let store = SessionStore()
-            store.start(from: RecordingSession(language: "en", state: .completed))
+            store.start(from: RecordingSession(language: .en, state: .completed))
             store.setSelectedPatient(id: OpaqueClinikoID(1001), displayName: "Sample")
             store.setDraftNotes(StructuredNotes(subjective: "s"))
             // Appointment id with a non-numeric rawValue. Production never
@@ -365,7 +373,7 @@ struct ExportFlowViewModelTests {
     func confirm_unsetAppointment_fails() async throws {
         try await runGated(responder: { _ in (HTTPURLResponse(), Data()) }) { config in
             let store = SessionStore()
-            store.start(from: RecordingSession(language: "en", state: .completed))
+            store.start(from: RecordingSession(language: .en, state: .completed))
             store.setSelectedPatient(id: OpaqueClinikoID(1001), displayName: "Sample")
             store.setDraftNotes(StructuredNotes(subjective: "s"))
             // No setSelectedAppointment — picker unset.

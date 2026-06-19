@@ -2,7 +2,7 @@
 # SSH Setup Helper for macOS Remote Development
 # This script helps configure SSH from Linux container to Mac
 
-set -e
+set -euo pipefail
 
 echo "=== SSH Setup for macOS Remote Development ==="
 echo ""

@@ -1,5 +1,4 @@
 import Foundation
-import os.log
 
 /// Metadata-only ledger of every successful Cliniko `treatment_note`
 /// export.
@@ -163,7 +162,6 @@ public actor LocalAuditStore: AuditStore {
     private let fileManager: FileManager
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
-    private let logger = Logger(subsystem: "com.speechtotext", category: "AuditStore")
 
     public init(fileURL: URL, fileManager: FileManager = .default) {
         self.fileURL = fileURL
@@ -177,7 +175,7 @@ public actor LocalAuditStore: AuditStore {
         do {
             line = try encoder.encode(event) + Data([0x0A])  // trailing LF
         } catch {
-            logger.error("AuditStore: encode failed type=AuditRecord")
+            AppLogger.cliniko.error("AuditStore: encode failed type=AuditRecord")
             throw Failure.encodeFailed
         }
         do {
@@ -193,7 +191,7 @@ public actor LocalAuditStore: AuditStore {
             // log inert per `.claude/references/phi-handling.md` — the
             // file path may include the bundle-id which is fine, but
             // any future change to use a per-patient subdir would leak.
-            logger.error("AuditStore: write failed")
+            AppLogger.cliniko.error("AuditStore: write failed")
             throw Failure.writeFailed
         }
     }
@@ -214,7 +212,7 @@ public actor LocalAuditStore: AuditStore {
         do {
             raw = try Data(contentsOf: fileURL)
         } catch {
-            logger.error("AuditStore: read failed")
+            AppLogger.cliniko.error("AuditStore: read failed")
             throw Failure.readFailed
         }
         var records: [AuditRecord] = []
@@ -228,7 +226,7 @@ public actor LocalAuditStore: AuditStore {
                 // Non-PHI: lineIndex is an integer; the bytes themselves
                 // are never logged because they may carry the
                 // opaque-but-sensitive patient_id.
-                logger.error("AuditStore: skipping corrupt line index=\(lineIndex, privacy: .public)")
+                AppLogger.cliniko.error("AuditStore: skipping corrupt line index=\(lineIndex, privacy: .public)")
             }
             lineIndex += 1
         }

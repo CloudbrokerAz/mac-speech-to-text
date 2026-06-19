@@ -96,7 +96,7 @@ struct AppStatePipelineDrainTests {
         // land — see doc comment above. The transcript content is
         // structural-only; this is a test fake.
         var recording = RecordingSession(
-            language: appState.settings.language.defaultLanguage,
+            language: SupportedLanguage.from(code: appState.settings.language.defaultLanguage) ?? .en,
             state: .completed
         )
         recording.transcribedText = "drain-test-seed"

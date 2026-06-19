@@ -75,6 +75,8 @@ enum Constants {
 
     // MARK: - Voice Trigger (sherpa-onnx keyword spotting)
     enum VoiceTrigger {
+        /// Seconds without transcription before evicting the Parakeet ASR model (PRF-8)
+        static let fluidAudioIdleEvictionSeconds: TimeInterval = 60
         /// Default silence threshold after keyword detection (seconds)
         static let defaultSilenceThreshold: TimeInterval = 5.0
         /// Minimum silence threshold (seconds)

@@ -81,3 +81,8 @@ ignore:
 
 # Comment on PRs is handled by codecov/codecov-action in the workflow;
 # keep the default layout.
+#
+# Upload is best-effort in `.github/workflows/ci.yml` (`fail_ci_if_error:
+# false`) so a Codecov outage does not block merges. The `patch` status
+# below remains the coverage merge gate; the workflow artifact preserves
+# lcov for direct review when upload fails.

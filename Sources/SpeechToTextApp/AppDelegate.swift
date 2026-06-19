@@ -92,9 +92,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupMainMenu()
 
         // Initialize global hotkey using KeyboardShortcuts
-        print("[DEBUG] About to call setupGlobalHotkey()")
         setupGlobalHotkey()
-        print("[DEBUG] setupGlobalHotkey() completed")
 
         // Check for app identity change (bundle ID / signing) and reset if needed
         // This handles the case where app is rebuilt with different signing, invalidating permissions
@@ -194,9 +192,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // CRITICAL: Perform synchronous cleanup first to prevent new operations
         // This ensures no new recording sessions can start during shutdown
 
-        // 1. Stop audio level timer immediately (prevents further updates)
-        audioLevelTimer?.invalidate()
-        audioLevelTimer = nil
+        // 1. Clear hold-to-record overlay push callback
+        holdToRecordViewModel.onAudioLevelPublished = nil
 
         // 2. Shutdown and release hotkey manager to prevent new recording triggers
         // Call shutdown() explicitly before releasing to properly disable Carbon hotkeys
@@ -234,13 +231,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         isVoiceMonitoringActive = false
 
         // 5. Stop voice trigger state observation and monitoring
-        voiceTriggerStateTimer?.invalidate()
-        voiceTriggerStateTimer = nil
+        voiceTriggerMonitoringService?.onStateChange = nil
 
         // 6. Stop voice monitoring service synchronously
         // Note: We avoid DispatchSemaphore.wait() on MainActor as it can cause deadlock
         // Instead, we rely on the service's synchronous cleanup where possible
-        // and accept that async cleanup may not complete before termination
+        // and accept that async cleanup may not complete before termination.
+        //
+        // CON-8 tradeoff: `Task.detached` cleanup below frequently won't finish
+        // before the process exits — the targets are `@MainActor`, so detached
+        // buys nothing over `Task { @MainActor … }`. A hardened path would use
+        // `applicationShouldTerminate` → `.terminateLater` + `reply(toApplicationShouldTerminate:)`
+        // to await teardown, but that risks MainActor deadlock if we block on
+        // semaphores here. We deliberately accept best-effort fire-and-forget
+        // cleanup and let the OS reclaim resources on exit.
         let voiceService = voiceTriggerMonitoringService
         voiceTriggerMonitoringService = nil
         // Fire-and-forget cleanup - termination proceeds regardless
@@ -440,29 +444,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Setup global hotkey using KeyboardShortcuts library
     /// The shortcut is user-configurable via Settings > General > Hotkey
     private func setupGlobalHotkey() {
-        print("[DEBUG] setupGlobalHotkey: Creating HotkeyManager...")
         hotkeyManager = HotkeyManager()
-        print("[DEBUG] setupGlobalHotkey: HotkeyManager created: \(hotkeyManager != nil)")
 
         // Configure callbacks for hold-to-record
         hotkeyManager?.onRecordingStart = { [weak self] in
-            print("[DEBUG] onRecordingStart callback fired!")
             await self?.startHoldToRecordSession()
         }
 
         hotkeyManager?.onRecordingStop = { [weak self] duration in
-            print("[DEBUG] onRecordingStop callback fired! duration=\(duration)")
             await self?.stopHoldToRecordSession(holdDuration: duration)
         }
 
         hotkeyManager?.onRecordingCancel = { [weak self] in
-            print("[DEBUG] onRecordingCancel callback fired!")
             await self?.cancelHoldToRecordSession()
         }
 
         // Configure callback for voice monitoring toggle
         hotkeyManager?.onVoiceMonitoringToggle = { [weak self] in
-            print("[DEBUG] onVoiceMonitoringToggle callback fired!")
             await self?.toggleVoiceMonitoring()
         }
 
@@ -479,7 +477,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             await self?.stopClinicalNotesRecordingFromHotkey()
         }
 
-        print("[DEBUG] setupGlobalHotkey: All callbacks configured")
         AppLogger.app.info("Global hotkey initialized via KeyboardShortcuts")
 
         // Initial gate for the clinical-notes shortcut (#91): disable unless the
@@ -637,8 +634,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Start voice trigger monitoring
     private func startVoiceMonitoring() async {
-        print("[DEBUG] startVoiceMonitoring called")
-        fflush(stdout)
         AppLogger.app.info("Starting voice trigger monitoring")
 
         // Ensure service is initialized
@@ -705,49 +700,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Voice Trigger State Observation
 
-    /// Timer for polling voice trigger state changes
-    private var voiceTriggerStateTimer: Timer?
-    /// Last observed voice trigger state (to detect changes)
+    /// Last observed voice trigger state (for transition handling)
     private var lastObservedVoiceTriggerState: VoiceTriggerState = .idle
-    /// Guard to prevent concurrent checkVoiceTriggerStateChange() execution
-    private var isCheckingVoiceTriggerState: Bool = false
 
-    /// Start observing voice trigger state changes
+    /// Start observing voice trigger state changes via push callback (PRF-10)
     private func startObservingVoiceTriggerState() {
-        // Use a timer to poll state changes since @Observable doesn't have built-in KVO
-        // Poll every 100ms for responsive UI updates
-        voiceTriggerStateTimer?.invalidate()
-        voiceTriggerStateTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.checkVoiceTriggerStateChange()
-            }
+        guard let service = voiceTriggerMonitoringService else { return }
+        lastObservedVoiceTriggerState = service.state
+
+        service.onStateChange = { [weak self] previous, current in
+            self?.handleVoiceTriggerStateChanged(from: previous, to: current)
         }
     }
 
     /// Stop observing voice trigger state changes
     private func stopObservingVoiceTriggerState() {
-        voiceTriggerStateTimer?.invalidate()
-        voiceTriggerStateTimer = nil
+        voiceTriggerMonitoringService?.onStateChange = nil
     }
 
-    /// Check if voice trigger state has changed and notify if so
-    private func checkVoiceTriggerStateChange() {
-        // Guard against concurrent execution (timer fires could overlap with slow operations)
-        guard !isCheckingVoiceTriggerState else { return }
-        isCheckingVoiceTriggerState = true
-        defer { isCheckingVoiceTriggerState = false }
-
-        guard let service = voiceTriggerMonitoringService else { return }
-
-        let currentState = service.state
-        if currentState != lastObservedVoiceTriggerState {
-            let previousState = lastObservedVoiceTriggerState
-            lastObservedVoiceTriggerState = currentState
-            postVoiceTriggerStateChange(currentState)
-
-            // Show/hide glass overlay based on state transitions
-            handleVoiceTriggerStateUI(from: previousState, to: currentState)
-        }
+    /// Handle a pushed voice trigger state transition
+    private func handleVoiceTriggerStateChanged(from previous: VoiceTriggerState, to current: VoiceTriggerState) {
+        lastObservedVoiceTriggerState = current
+        postVoiceTriggerStateChange(current)
+        handleVoiceTriggerStateUI(from: previous, to: current)
     }
 
     /// Handle UI updates for voice trigger state changes
@@ -756,15 +731,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .triggered, .capturing:
             // Show recording overlay when wake word triggers capture
             if !previousState.isCapturing {
-                print("[DEBUG] Showing glass overlay for voice trigger capture")
-                fflush(stdout)
                 glassOverlayController.showRecording()
             }
 
         case .transcribing:
             // Show transcribing state
-            print("[DEBUG] Showing transcribing state")
-            fflush(stdout)
             glassOverlayController.showTranscribing()
 
         case .inserting:
@@ -774,8 +745,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .monitoring, .idle:
             // Hide overlay when returning to monitoring or idle
             if previousState.isCapturing || previousState == .transcribing || previousState == .inserting {
-                print("[DEBUG] Hiding glass overlay")
-                fflush(stdout)
                 glassOverlayController.hideOverlay()
             }
 
@@ -801,8 +770,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         AppLogger.app.debug("Cancelling hold-to-record session (duration too short)")
 
-        // Stop audio level updates
-        stopRealAudioLevelUpdates()
+        // Stop audio level push callback
+        holdToRecordViewModel.onAudioLevelPublished = nil
 
         // Cancel the recording
         await holdToRecordViewModel.cancelRecording()
@@ -814,8 +783,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Resume voice monitoring if we paused it
         // IMPORTANT: Reset flag BEFORE await to prevent double-resume race condition
         if pausedVoiceMonitoringForManualRecording {
-            print("[DEBUG] Resuming voice monitoring after cancelled recording...")
-            fflush(stdout)
             pausedVoiceMonitoringForManualRecording = false  // Reset BEFORE await
             await startVoiceMonitoring()
         }
@@ -832,23 +799,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // If we pause voice monitoring before checking the guard, a second hotkey press could
         // slip through while stopVoiceMonitoring() is awaited, causing state desync.
         guard !isHoldToRecordSessionActive else {
-            print("[DEBUG] START IGNORED: session already active")
-            fflush(stdout)
             AppLogger.app.warning("Hold-to-record session already active, ignoring start request")
             return
         }
 
         // Mark session as active immediately to prevent concurrent starts
         isHoldToRecordSessionActive = true
-        print("[DEBUG] Starting new session...")
-        fflush(stdout)
 
         // If voice monitoring is active, pause it temporarily for manual recording
         // IMPORTANT: Set flag BEFORE await to prevent race conditions where session
         // completes before stopVoiceMonitoring() finishes
         if isVoiceMonitoringActive {
-            print("[DEBUG] Pausing voice monitoring for manual recording...")
-            fflush(stdout)
             AppLogger.app.info("Pausing voice monitoring for manual hold-to-record")
             pausedVoiceMonitoringForManualRecording = true  // Set BEFORE await
             await stopVoiceMonitoring()
@@ -863,23 +824,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Start actual audio recording via RecordingViewModel
         do {
-            print("[DEBUG] Calling startRecording...")
             try await holdToRecordViewModel.startRecording()
-            print("[DEBUG] startRecording succeeded!")
 
-            // Connect real audio levels to overlay visualization
-            startRealAudioLevelUpdates()
+            // Push audio levels directly from the capture callback (PRF-9)
+            holdToRecordViewModel.onAudioLevelPublished = { [weak self] level in
+                self?.glassOverlayController.updateAudioLevel(Float(level))
+            }
             AppLogger.app.debug("Hold-to-record session started successfully")
         } catch {
-            print("[DEBUG] startRecording FAILED: \(error)")
             AppLogger.app.error("Failed to start hold-to-record: \(error.localizedDescription, privacy: .public)")
             glassOverlayController.hideOverlay()
             isHoldToRecordSessionActive = false
 
             // Resume voice monitoring if we paused it (fix: was missing before)
             if pausedVoiceMonitoringForManualRecording {
-                print("[DEBUG] Resuming voice monitoring after failed recording start...")
-                fflush(stdout)
                 pausedVoiceMonitoringForManualRecording = false  // Reset BEFORE await
                 await startVoiceMonitoring()
             }
@@ -890,17 +848,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func stopHoldToRecordSession(holdDuration: TimeInterval) async {
         // Session guard: ignore stop if no session is active
         guard isHoldToRecordSessionActive else {
-            print("[DEBUG] STOP IGNORED: no active session")
-            fflush(stdout)
             AppLogger.app.warning("No hold-to-record session active, ignoring stop request")
             return
         }
-        print("[DEBUG] Stopping session (duration: \(holdDuration)s)...")
-        fflush(stdout)
         AppLogger.app.debug("Stopping hold-to-record session (duration: \(holdDuration)s)")
 
-        // Stop real audio level updates
-        stopRealAudioLevelUpdates()
+        // Stop real audio level push callback
+        holdToRecordViewModel.onAudioLevelPublished = nil
 
         // Check if recording is actually active
         guard holdToRecordViewModel.isRecording else {
@@ -910,8 +864,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             // Resume voice monitoring if we paused it (fix: was missing before)
             if pausedVoiceMonitoringForManualRecording {
-                print("[DEBUG] Resuming voice monitoring after session with inactive recording...")
-                fflush(stdout)
                 pausedVoiceMonitoringForManualRecording = false  // Reset BEFORE await
                 await startVoiceMonitoring()
             }
@@ -923,13 +875,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Stop recording and perform actual transcription via RecordingViewModel
         do {
-            print("[DEBUG] Calling onHotkeyReleased...")
             try await holdToRecordViewModel.onHotkeyReleased()
-            print("[DEBUG] onHotkeyReleased completed successfully!")
-            print("[DEBUG] Transcribed text: '\(holdToRecordViewModel.transcribedText)'")
             AppLogger.app.info("Hold-to-record transcription completed successfully")
         } catch {
-            print("[DEBUG] onHotkeyReleased FAILED: \(error)")
             AppLogger.app.error("Hold-to-record transcription failed: \(error.localizedDescription, privacy: .public)")
             // Ensure recording is cancelled on failure
             await holdToRecordViewModel.cancelRecording()
@@ -942,36 +890,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Resume voice monitoring if we paused it
         // IMPORTANT: Reset flag BEFORE await to prevent double-resume race condition
         if pausedVoiceMonitoringForManualRecording {
-            print("[DEBUG] Resuming voice monitoring after manual recording...")
-            fflush(stdout)
             pausedVoiceMonitoringForManualRecording = false  // Reset BEFORE await
             await startVoiceMonitoring()
         }
-    }
-
-    // MARK: - Real Audio Level Updates
-
-    private var audioLevelTimer: Timer?
-
-    /// Start updating overlay with real audio levels from RecordingViewModel
-    private func startRealAudioLevelUpdates() {
-        audioLevelTimer?.invalidate()
-        // Timer callback uses Task { @MainActor in } pattern for thread-safe access.
-        // This is safer than MainActor.assumeIsolated which can trap if called from wrong thread.
-        audioLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor [weak self] in
-                guard let self, self.holdToRecordViewModel.isRecording else { return }
-                let level = Float(self.holdToRecordViewModel.audioLevel)
-                self.glassOverlayController.updateAudioLevel(level)
-            }
-        }
-    }
-
-    /// Stop real audio level updates
-    private func stopRealAudioLevelUpdates() {
-        audioLevelTimer?.invalidate()
-        audioLevelTimer = nil
     }
 
     // MARK: - Welcome / Onboarding

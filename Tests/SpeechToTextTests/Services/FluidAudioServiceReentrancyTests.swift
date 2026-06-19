@@ -220,4 +220,52 @@ struct FluidAudioServiceReentrancyTests {
             "queued caller must throw .notInitialized at the await site (drained), not after running runTranscribe"
         )
     }
+
+    /// CON-4: concurrent `initialize` callers coalesce onto one in-flight
+    /// task. Uses `simulatedError = .modelLoading` so the body fails fast
+    /// after the simulated delay without touching the real FluidAudio SDK,
+    /// and counts `runInitialize` body entries instead of wall-clock
+    /// bounds (CI runners jitter enough to flake tight timing assertions).
+    @Test(
+        "Concurrent initialize coalesces onto single in-flight task",
+        .tags(.slow)
+    )
+    func concurrentInitialize_coalescesInFlight() async {
+        let service = FluidAudioService(
+            simulatedError: .modelLoading,
+            initializeSimulatedDelay: .milliseconds(100)
+        )
+        let callCount = 4
+
+        let errors: [Error?] = await withTaskGroup(of: Error?.self) { group in
+            for _ in 0..<callCount {
+                group.addTask {
+                    do {
+                        try await service.initialize(language: "en")
+                        return nil
+                    } catch {
+                        return error
+                    }
+                }
+            }
+            var collected: [Error?] = []
+            for await error in group { collected.append(error) }
+            return collected
+        }
+
+        #expect(errors.count == callCount)
+        for error in errors {
+            if case .initializationFailed = error as? FluidAudioError {
+                // pass
+            } else {
+                Issue.record("Expected .initializationFailed, got \(String(describing: error))")
+            }
+        }
+
+        let invocationCount = await service.runInitializeInvocationCount
+        #expect(
+            invocationCount == 1,
+            "expected coalesced initialize (one runInitialize body), got \(invocationCount)"
+        )
+    }
 }

@@ -98,7 +98,7 @@ actor FluidAudioService: FluidAudioServiceProtocol {
     /// every caller (`initialize`, `runTranscribe`, `shutdown`) is
     /// itself actor-isolated, so accesses are serialised by the actor's
     /// own execution turns. See the type-level "Maintenance contract".
-    private nonisolated(unsafe) var asrManager: AsrManager?
+    private nonisolated(unsafe) var asrManager: AsrManager? // swiftlint:disable:this nonisolated_unsafe_warning
 
     /// Single-flight serialisation for `transcribe()`. The flag is set
     /// while a `runTranscribe` body is executing; reentrant callers
@@ -118,11 +118,21 @@ actor FluidAudioService: FluidAudioServiceProtocol {
     private var transcribeInFlight: Bool = false
     private var transcribeWaiters: [CheckedContinuation<Void, Error>] = []
 
+    /// Coalesces concurrent `initialize` callers onto one load task (CON-4).
+    /// Without this, two overlapping callers both pass `guard !isInitialized`
+    /// before the first `await AsrModels.downloadAndLoad` and each run the
+    /// full multi-hundred-MB model fetch.
+    private var initializeInFlight: Task<Void, Error>?
+
     private var currentLanguage: String = "en"
     private var models: AsrModels?
     private var isInitialized = false
     private let serviceId: String
     private var transcriptionCount: Int = 0
+
+    /// Test-only: times `runInitialize` body entered. Lets coalescing
+    /// tests assert single-flight behaviour without wall-clock bounds.
+    internal var runInitializeInvocationCount: Int = 0
 
     /// Simulated error for testing (from launch arguments)
     private let simulatedError: SimulatedErrorType?
@@ -134,6 +144,13 @@ actor FluidAudioService: FluidAudioServiceProtocol {
     /// `.zero` in production via the public `init()`.
     private let transcribeSimulatedDelay: Duration
 
+    /// Test-only delay injected at the top of `runInitialize` (after slot
+    /// acquisition). When non-zero, the active initialize holds the
+    /// in-flight task long enough for coalescing tests to force a second
+    /// caller onto the wait path. Always `.zero` in production via the
+    /// public `init()`.
+    private let initializeSimulatedDelay: Duration
+
     init() {
         self.init(simulatedError: LaunchArguments.simulatedError)
     }
@@ -144,11 +161,13 @@ actor FluidAudioService: FluidAudioServiceProtocol {
     /// past the slot synchronously).
     internal init(
         simulatedError: SimulatedErrorType?,
-        transcribeSimulatedDelay: Duration = .zero
+        transcribeSimulatedDelay: Duration = .zero,
+        initializeSimulatedDelay: Duration = .zero
     ) {
         serviceId = UUID().uuidString.prefix(8).description
         self.simulatedError = simulatedError
         self.transcribeSimulatedDelay = transcribeSimulatedDelay
+        self.initializeSimulatedDelay = initializeSimulatedDelay
         AppLogger.service.debug("FluidAudioService[\(self.serviceId, privacy: .public)] created")
         if let error = simulatedError {
             AppLogger.service.debug("FluidAudioService[\(self.serviceId, privacy: .public)] will simulate error: \(error.rawValue, privacy: .public)")
@@ -157,7 +176,28 @@ actor FluidAudioService: FluidAudioServiceProtocol {
 
     /// Initialize FluidAudio with specified language
     func initialize(language: String = "en") async throws {
+        if let inFlight = initializeInFlight {
+            try await inFlight.value
+            return
+        }
+
+        let task = Task<Void, Error> {
+            try await self.runInitialize(language: language)
+        }
+        initializeInFlight = task
+        defer { initializeInFlight = nil }
+        try await task.value
+    }
+
+    /// Body of `initialize(language:)`. Always reached via the in-flight
+    /// task coalescer above — never call directly.
+    private func runInitialize(language: String) async throws {
+        runInitializeInvocationCount += 1
         AppLogger.info(AppLogger.service, "[\(serviceId)] initialize(language: \(language)) called")
+
+        // Test-only: hold the in-flight task long enough for coalescing
+        // tests to force a second caller onto the shared task.
+        try await applyInitializeSimulatedDelay()
 
         // Check for simulated model loading error
         if simulatedError == .modelLoading {
@@ -374,7 +414,7 @@ actor FluidAudioService: FluidAudioServiceProtocol {
 
             AppLogger.info(
                 AppLogger.service,
-                "[\(serviceId)] transcribe #\(transcriptionId): completed in \(durationMs)ms, confidence=\(confidence), text=\"\(result.text.prefix(50))...\""
+                "[\(serviceId)] transcribe #\(transcriptionId): completed in \(durationMs)ms, confidence=\(confidence), chars=\(result.text.count)"
             )
 
             return TranscriptionResult(
@@ -398,6 +438,13 @@ actor FluidAudioService: FluidAudioServiceProtocol {
     private func applyTranscribeSimulatedDelay() async throws {
         guard transcribeSimulatedDelay != .zero else { return }
         try await Task.sleep(for: transcribeSimulatedDelay)
+    }
+
+    /// Test-only seam used by `runInitialize` to hold the in-flight task
+    /// for `initializeSimulatedDelay` before doing any work.
+    private func applyInitializeSimulatedDelay() async throws {
+        guard initializeSimulatedDelay != .zero else { return }
+        try await Task.sleep(for: initializeSimulatedDelay)
     }
 
     /// Switch to a different language
@@ -449,6 +496,7 @@ actor FluidAudioService: FluidAudioServiceProtocol {
         asrManager = nil
         models = nil
         isInitialized = false
+        initializeInFlight = nil
         currentLanguage = "en"
         AppLogger.debug(AppLogger.service, "[\(serviceId)] Shutdown complete")
     }

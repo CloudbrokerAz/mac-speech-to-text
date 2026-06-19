@@ -308,35 +308,11 @@ struct LiquidGlassRecordingModal: View {
     // MARK: - Central Visualization
 
     private var centralVisualization: some View {
-        ZStack {
-            // Aurora waveform background
-            AuroraWaveform(
-                audioLevel: Float(viewModel.audioLevel),
-                isRecording: viewModel.isRecording
-            )
-            .frame(height: 90)
-            .mask(
-                LinearGradient(
-                    colors: [.clear, .white, .white, .clear],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-
-            // Central morphing orb (optional - comment out if too busy)
-            if viewModel.isRecording {
-                LiquidOrbWaveform(
-                    audioLevel: Float(viewModel.audioLevel),
-                    isRecording: true
-                )
-                .frame(width: 70, height: 70)
-                .opacity(0.6)
-            }
-        }
-        .frame(height: 100)
-        .accessibilityIdentifier("waveformView")
-        .accessibilityLabel("Audio waveform")
-        .accessibilityValue("\(Int(viewModel.audioLevel * 100))% audio level")
+        RecordingModalWaveformSection(
+            waveformStyle: viewModel.waveformStyle,
+            audioLevel: Float(viewModel.audioLevel),
+            isRecording: viewModel.isRecording
+        )
     }
 
     // MARK: - Status Section
@@ -889,6 +865,28 @@ struct LiquidGlassRecordingModal: View {
             return
         }
         postGenerateNotesAndDismiss(transcript: transcript)
+    }
+}
+
+// MARK: - Leaf waveform section (#PRF-1)
+
+/// Isolates `audioLevel` reads so the modal's top-level body is not
+/// invalidated on every audio-buffer write. Accessibility value is static
+/// while recording — level detail lives in the waveform views.
+private struct RecordingModalWaveformSection: View {
+    let waveformStyle: WaveformStyleOption
+    let audioLevel: Float
+    let isRecording: Bool
+
+    var body: some View {
+        WaveformVisualization(
+            style: waveformStyle,
+            audioLevel: audioLevel,
+            isRecording: isRecording
+        )
+        .frame(height: 100)
+        .accessibilityIdentifier("waveformView")
+        .accessibilityLabel("Audio waveform")
     }
 }
 

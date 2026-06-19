@@ -1,0 +1,8 @@
+{
+  "subjective": "Synthetic subjective.",
+  "objective": "Synthetic objective.",
+  "assessment": "Synthetic assessment.",
+  "plan": "Synthetic plan.",
+  "manipulations": [{ "name": "Activator", "confidence": "not-a-number" }],
+  "excluded_content": []
+}

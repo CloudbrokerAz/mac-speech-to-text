@@ -11,6 +11,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 # Force every JavaScript action (including transitives we can't bump
 # directly — notably pre-commit/action@v3.0.1 which depends on
 # actions/cache@v4 internally and has no newer release) to run on
@@ -26,7 +29,7 @@ jobs:
     runs-on: macos-15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install SwiftLint
         run: brew install swiftlint
@@ -39,14 +42,14 @@ jobs:
     runs-on: macos-15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           # Need history back to the PR base so pre-commit can diff against it
           # and only check files changed in this PR.
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: '3.12'
 
@@ -85,7 +88,7 @@ jobs:
       # pre-commit exists to catch developers who bypass the local hook with
       # `--no-verify`, not to block PRs on pre-existing legacy files.
       - name: Run pre-commit on changed files
-        uses: pre-commit/action@v3.0.1
+        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:
           extra_args: --from-ref ${{ steps.range.outputs.base_ref }} --to-ref HEAD
 
@@ -93,9 +96,12 @@ jobs:
     name: Build and Test
     runs-on: macos-15
     needs: [lint, pre-commit]
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Select Xcode version
         # Xcode 16.4 ships Swift 6.1 (Xcode 16.2 ships 6.0.3, which fails to
@@ -109,7 +115,7 @@ jobs:
           swift --version
 
       - name: Cache Swift Package Manager dependencies
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             .build
@@ -119,7 +125,7 @@ jobs:
             spm-${{ runner.os }}-
 
       - name: Cache sherpa-onnx xcframework
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: Frameworks/sherpa-onnx.xcframework
           key: sherpa-onnx-v1.12.20-${{ runner.os }}
@@ -152,10 +158,10 @@ jobs:
 
       # Unit tests — the GitHub Actions runner has no microphone, no
       # Accessibility (TCC) grant, no display server, and no user keychain.
-      # Classes that exercise those APIs are skipped here and run on the
-      # remote Mac via the pre-push hook instead. The by-name skip list is
-      # temporary; it migrates to a tag filter once the Swift Testing tag
-      # scheme lands (see the testing framework EPIC).
+      # Hardware-dependent and host-sensitive classes are skipped here and
+      # run on the remote Mac via the pre-push hook instead. Keep this list
+      # in lockstep with `.claude/references/testing-conventions.md` §
+      # "CI skip list (current)" until #31 lands `--skip-tag requiresHardware`.
       #
       # Skipped classes and why:
       #   AudioCaptureServiceTests          AVAudioEngine.start (real mic)
@@ -163,9 +169,10 @@ jobs:
       #   TextInsertionServiceTests         CGEventPost + display server
       #   VoiceTriggerMonitoringServiceTests transitively needs real mic
       #   WakeWordServiceTests              reads real WAV fixtures from models
-      #   KeychainSecureStoreTests          real macOS Keychain — Swift Testing suite
-      #                                     tagged .requiresHardware; will migrate to
-      #                                     --skip-tag requiresHardware once #31 lands.
+      #   KeychainSecureStoreTests          real macOS Keychain — Swift Testing
+      #                                     suite tagged .requiresHardware
+      #   GeneralSectionPersistenceTests    shared-UserDefaults race under
+      #                                     --parallel (fix tracked in #32)
       #   SafetyDisclaimerSnapshotTests     PNG goldens recorded on macOS-26 dev /
       #   ReviewScreenSnapshotTests         remote-Mac pre-push host; CI runner is
       #                                     macos-15 so font hinting + Core Animation
@@ -186,6 +193,7 @@ jobs:
             --skip VoiceTriggerMonitoringServiceTests \
             --skip WakeWordServiceTests \
             --skip KeychainSecureStoreTests \
+            --skip GeneralSectionPersistenceTests \
             --skip SafetyDisclaimerSnapshotTests \
             --skip ReviewScreenSnapshotTests 2>&1 | tee test.log
 
@@ -225,24 +233,23 @@ jobs:
             --ignore-filename-regex='(\.build|Tests|UITests|Frameworks|checkouts)/' \
             "${TEST_BIN}" | tail -3
 
-      # Codecov upload is a hard gate on PRs: if the upload fails (token
-      # revoked, Codecov outage, malformed lcov), the job fails so we
-      # don't silently ship a PR with missing coverage visibility.
-      # Coverage is also attached as the `coverage-report` workflow
-      # artifact below so a reviewer can inspect it directly.
+      # Codecov upload is best-effort: a third-party outage must not block
+      # merges when all tests pass. Coverage is still exported above and
+      # attached as the `coverage-report` workflow artifact; the Codecov PR
+      # status check (`codecov.yml` patch gate) remains the merge signal.
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() && hashFiles('coverage.lcov') != '' }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.lcov
-          fail_ci_if_error: true
+          fail_ci_if_error: false
           flags: unit
           disable_search: true
 
       - name: Upload coverage artifact
         if: ${{ !cancelled() && hashFiles('coverage.lcov') != '' }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: coverage-report
           path: coverage.lcov
@@ -281,6 +288,9 @@ jobs:
     name: Build Release
     runs-on: macos-15
     needs: test
+    permissions:
+      contents: read
+      actions: write
     # Skip on PRs — `test` already runs `swift build -c release` (line 151),
     # so `Build Release` only adds value when we actually want to publish a
     # downloadable release-build artifact. That use case is a `push: main` /
@@ -291,7 +301,7 @@ jobs:
     if: github.event_name != 'pull_request'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Select Xcode version
         # Xcode 16.4 ships Swift 6.1 (Xcode 16.2 ships 6.0.3, which fails to
@@ -300,7 +310,7 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
 
       - name: Cache Swift Package Manager dependencies
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             .build
@@ -310,7 +320,7 @@ jobs:
             spm-${{ runner.os }}-
 
       - name: Cache sherpa-onnx xcframework
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: Frameworks/sherpa-onnx.xcframework
           key: sherpa-onnx-v1.12.20-${{ runner.os }}
@@ -326,7 +336,7 @@ jobs:
           swift build -c release 2>&1 | tee build.log
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: release-build
           path: .build/release/

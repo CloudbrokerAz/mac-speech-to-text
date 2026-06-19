@@ -275,6 +275,15 @@ final class VoiceTriggerMonitoringServiceTests: XCTestCase {
         XCTAssertTrue(called)
     }
 
+    func test_stopMonitoring_shutsDownFluidAudioService() async throws {
+        try await setupAndStartMonitoring()
+
+        await sut.stopMonitoring()
+
+        let called = await mockFluidAudioService.shutdownCalled
+        XCTAssertTrue(called)
+    }
+
     // MARK: - Helper Methods
 
     private func setupAndStartMonitoring() async throws {
@@ -328,6 +337,7 @@ actor MockWakeWordService: WakeWordServiceProtocol {
 actor MockFluidAudioService: FluidAudioServiceProtocol {
     private var _initializeCalled = false
     private var _transcribeCalled = false
+    private var _shutdownCalled = false
     var mockResult = TranscriptionResult(text: "Mock transcription", confidence: 0.9, durationMs: 1000)
     private var isInitialized = false
     private var currentLanguage = "en"
@@ -335,6 +345,7 @@ actor MockFluidAudioService: FluidAudioServiceProtocol {
     // Public accessors for test assertions
     var initializeCalled: Bool { _initializeCalled }
     var transcribeCalled: Bool { _transcribeCalled }
+    var shutdownCalled: Bool { _shutdownCalled }
 
     func initialize(language: String) async throws {
         _initializeCalled = true
@@ -364,6 +375,7 @@ actor MockFluidAudioService: FluidAudioServiceProtocol {
     }
 
     func shutdown() {
+        _shutdownCalled = true
         isInitialized = false
     }
 }

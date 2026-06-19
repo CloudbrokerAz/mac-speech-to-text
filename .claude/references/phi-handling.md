@@ -17,7 +17,7 @@ of whether HIPAA applies directly — treat everything as sensitive.
 
 ## Where PHI may live
 
-Exactly two places:
+Exactly two places in normal operation:
 
 1. **In-memory within the active `ClinicalSession`.** Cleared on export
    success, app quit, or the inactivity-timeout threshold. Never
@@ -26,6 +26,16 @@ Exactly two places:
 2. **The HTTPS body at the moment of `POST /treatment_notes`.** Goes
    directly from the doctor's Mac to the doctor's Cliniko tenant over
    TLS. Nowhere else.
+
+**Documented exception — clipboard fallback (SEC-7):** when the
+practitioner uses Export → "Copy to clipboard" (Cliniko unavailable or
+opt-in fallback), the composed SOAP body is written to
+`NSPasteboard.general` via `ClinicalNotesPasteboard.copySOAPNote`.
+That write is marked `org.nspasteboard.ConcealedType` and
+`org.nspasteboard.TransientType`, and auto-clears after 60 seconds if
+the pasteboard has not been replaced. Treat this as a **short-lived,
+user-initiated third surface** — not a persistence layer. Do not log the
+body; do not extend the timeout without revisiting this policy.
 
 ---
 
@@ -87,6 +97,27 @@ logs are for ops, not debugging.
 - Treat them as logs: no PHI interpolation.
 - Prefer `guard … else { fatalError("SessionStore: active session lost") }`
   over `fatalError("Session \(session.id) for \(session.patientName) lost")`.
+
+---
+
+## App sandbox (SEC-17 — closed as wontfix)
+
+The shipping `.app` runs **with App Sandbox disabled**. That is intentional:
+menu-bar integration, global hotkeys, Accessibility-driven text insertion,
+and local microphone capture require entitlements a sandboxed build cannot
+hold without breaking the core product.
+
+**Threat-model implication:** sandbox-off widens the blast radius of any
+in-memory PHI handling bug — a compromised or mis-logging code path can
+reach more of the process address space and adjacent TCC-granted surfaces
+(pasteboard, filesystem outside the container) than a sandboxed app would
+allow. This raises the stakes on the discipline elsewhere in this document
+(transcript never logged, session-only storage, metadata-only audit rows)
+rather than motivating a sandbox toggle. Release builds correctly omit
+`get-task-allow`; debug-only entitlements stay out of shipped artifacts.
+
+No engineering action is planned for SEC-17 beyond documenting the tradeoff
+here.
 
 ---
 
